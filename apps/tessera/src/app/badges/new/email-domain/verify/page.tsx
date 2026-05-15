@@ -2,7 +2,6 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { headers } from "next/headers";
 
-import { auth } from "@/auth";
 import {
   Card,
   CardContent,
@@ -11,6 +10,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { getCurrentSession } from "@/lib/session";
 import { consumeMagicLinkToken } from "@/server/wizard";
 
 interface PageProps {
@@ -21,7 +21,7 @@ export default async function EmailDomainVerifyPage({
   searchParams,
 }: PageProps) {
   const { token } = await searchParams;
-  const session = await auth();
+  const session = await getCurrentSession();
 
   if (!session?.user) {
     return (

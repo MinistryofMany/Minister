@@ -35,6 +35,12 @@ model User {
   displayName String?
   avatarUrl   String?
 
+  // Monotonic counter embedded in every issued session JWT. Bumping it
+  // invalidates all outstanding JWTs for this user on their next
+  // protected request — that's how "sign out everywhere" works given
+  // we store sessions in JWTs rather than DB rows.
+  sessionGeneration Int @default(0)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

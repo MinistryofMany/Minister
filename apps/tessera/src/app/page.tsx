@@ -1,6 +1,5 @@
 import { redirect } from "next/navigation";
 
-import { auth } from "@/auth";
 import {
   Card,
   CardContent,
@@ -9,9 +8,14 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { SignInForm } from "@/components/sign-in-form";
+import { getCurrentSession } from "@/lib/session";
 
 export default async function HomePage() {
-  const session = await auth();
+  // Use getCurrentSession (not raw auth()) so a stale-but-cryptographically-
+  // valid JWT — i.e. the user whose sessionGeneration was bumped server-side
+  // — sees the sign-in form here instead of being redirected to /profile,
+  // where they'd be redirected back to / by the staleness check, looping.
+  const session = await getCurrentSession();
   if (session?.user) redirect("/profile");
 
   return (

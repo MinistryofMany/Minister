@@ -2,11 +2,11 @@
 
 import { headers } from "next/headers";
 
-import { auth } from "@/auth";
+import { getCurrentSession } from "@/lib/session";
 import { startWizard, submitStep } from "@/server/wizard";
 
 async function requireUserId(): Promise<string> {
-  const session = await auth();
+  const session = await getCurrentSession();
   if (!session?.user?.id) throw new Error("Not signed in");
   return session.user.id;
 }

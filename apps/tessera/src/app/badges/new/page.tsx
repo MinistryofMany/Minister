@@ -1,7 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 
-import { auth } from "@/auth";
 import {
   Card,
   CardContent,
@@ -9,10 +8,11 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { getCurrentSession } from "@/lib/session";
 import { listPlugins } from "@/plugins/registry";
 
 export default async function BadgePluginsList() {
-  const session = await auth();
+  const session = await getCurrentSession();
   if (!session?.user) redirect("/");
 
   const plugins = listPlugins();

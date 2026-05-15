@@ -14,30 +14,50 @@ import type { NextAuthConfig } from "next-auth";
 export const authConfig: NextAuthConfig = {
   providers: [],
   pages: { signIn: "/" },
-  session: { strategy: "jwt" },
+  session: {
+    strategy: "jwt",
+    // Sliding 24h window. The JWT is re-issued at most once per hour
+    // (updateAge) and each re-issue resets the 24h clock — so an active
+    // user stays signed in indefinitely, an idle one is logged out
+    // after 24h of inactivity. Tessera is wallet-shaped: bursty use, not
+    // daily, so 24h hits the right point on the security/UX curve.
+    maxAge: 24 * 60 * 60,
+    updateAge: 60 * 60,
+  },
   callbacks: {
-    // First sign-in: stash the User id on the JWT so future requests
-    // don't need an adapter call to recover it.
+    // First sign-in: stash the User id AND the user's current
+    // sessionGeneration on the JWT. The adapter has already loaded the
+    // User row at this point, so `user.sessionGeneration` is in hand —
+    // no extra DB query needed (which matters: this callback is in the
+    // edge-safe config, and we can't reach Prisma here).
     jwt({ token, user }) {
-      if (user) token.id = user.id;
+      if (user) {
+        token.id = user.id;
+        token.gen = user.sessionGeneration ?? 0;
+      }
       return token;
     },
-    // Reading a session — propagate the id from the token onto
-    // session.user so callers see `session.user.id` exactly like they
-    // did under DB strategy.
+    // Reading a session — surface both `id` and `sessionGeneration` so
+    // the Node-side getCurrentSession() helper has what it needs to do
+    // the DB-backed staleness check.
     session({ session, token }) {
       if (session.user && typeof token.id === "string") {
         session.user.id = token.id;
+      }
+      if (typeof token.gen === "number") {
+        session.sessionGeneration = token.gen;
       }
       return session;
     },
   },
 };
 
-// Type augmentation. The session callback above promises `session.user.id`
-// is a string after sign-in. We don't augment the JWT module — the
-// runtime guard (`typeof token.id === "string"`) in the callback is the
-// boundary check; the rest of the codebase only ever sees `session.user`.
+// Type augmentations. The session callback promises:
+//   - `session.user.id` is a string after sign-in
+//   - `session.sessionGeneration` is the gen snapshot from the JWT
+// User gets `sessionGeneration` so the jwt callback can read it from the
+// adapter-loaded row without an unsafe cast. Both are runtime-guarded
+// in the callback; the rest of the codebase only ever sees `session`.
 declare module "next-auth" {
   interface Session {
     user: {
@@ -46,5 +66,10 @@ declare module "next-auth" {
       email?: string | null;
       image?: string | null;
     };
+    sessionGeneration?: number;
+  }
+
+  interface User {
+    sessionGeneration?: number;
   }
 }

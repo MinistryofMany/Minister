@@ -1,10 +1,10 @@
+import { headers } from "next/headers";
 import { notFound, redirect } from "next/navigation";
 
-import { auth } from "@/auth";
 import { WizardClient } from "@/components/wizard-client";
+import { getCurrentSession } from "@/lib/session";
 import { getPlugin } from "@/plugins/registry";
 import { loadWizard, startWizard } from "@/server/wizard";
-import { headers } from "next/headers";
 
 interface PageProps {
   params: Promise<{ pluginId: string }>;
@@ -18,7 +18,7 @@ export default async function PluginWizardPage({
   const { pluginId } = await params;
   const { wsid } = await searchParams;
 
-  const session = await auth();
+  const session = await getCurrentSession();
   if (!session?.user) redirect("/");
   const userId = session.user.id;
 

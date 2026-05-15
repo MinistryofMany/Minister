@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 
-import { auth } from "@/auth";
+import { RevokeAllButton } from "@/components/revoke-all-button";
+import { SignOutButton } from "@/components/sign-out-button";
 import {
   Card,
   CardContent,
@@ -8,10 +9,10 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { SignOutButton } from "@/components/sign-out-button";
+import { getCurrentSession } from "@/lib/session";
 
 export default async function SettingsPage() {
-  const session = await auth();
+  const session = await getCurrentSession();
   if (!session?.user) redirect("/");
   return (
     <div className="mx-auto flex max-w-2xl flex-col gap-6 px-4 py-12">
@@ -26,10 +27,14 @@ export default async function SettingsPage() {
       <Card>
         <CardHeader>
           <CardTitle>Session</CardTitle>
-          <CardDescription>End your current session on this device.</CardDescription>
+          <CardDescription>
+            End your current session on this device, or revoke all
+            sessions across every device.
+          </CardDescription>
         </CardHeader>
-        <CardContent>
+        <CardContent className="flex flex-wrap gap-3">
           <SignOutButton />
+          <RevokeAllButton />
         </CardContent>
       </Card>
     </div>

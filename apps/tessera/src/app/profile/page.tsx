@@ -2,7 +2,6 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { Plus } from "lucide-react";
 
-import { auth } from "@/auth";
 import { BadgeGrid } from "@/components/badge-grid";
 import { RegisterPasskeyButton } from "@/components/register-passkey-button";
 import { Button } from "@/components/ui/button";
@@ -14,9 +13,10 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { loadUserBadges } from "@/lib/badges";
+import { getCurrentSession } from "@/lib/session";
 
 export default async function ProfilePage() {
-  const session = await auth();
+  const session = await getCurrentSession();
   if (!session?.user) redirect("/");
 
   const badges = await loadUserBadges(session.user.id);

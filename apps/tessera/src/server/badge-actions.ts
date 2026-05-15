@@ -3,9 +3,9 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
-import { auth } from "@/auth";
 import { audit } from "@/lib/audit";
 import { prisma } from "@/lib/prisma";
+import { getCurrentSession } from "@/lib/session";
 
 class UnauthorizedError extends Error {
   constructor() {
@@ -15,7 +15,7 @@ class UnauthorizedError extends Error {
 }
 
 async function requireUserId(): Promise<string> {
-  const session = await auth();
+  const session = await getCurrentSession();
   if (!session?.user?.id) throw new UnauthorizedError();
   return session.user.id;
 }
