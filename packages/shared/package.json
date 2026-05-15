@@ -13,6 +13,9 @@
     "typecheck": "tsc --noEmit",
     "lint": "echo 'noop'"
   },
+  "dependencies": {
+    "zod": "^3.24.1"
+  },
   "devDependencies": {
     "typescript": "^5.6.3"
   }

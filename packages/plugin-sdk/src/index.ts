@@ -1,3 +1,163 @@
-// Stage 2: Plugin interface (PluginManifest, WizardStep, IssuedBadge, etc.)
-// per the design in CLAUDE.md. Empty during Stage 0.
-export {};
+// Plugin interface for Tessera badge plugins. Mirrors the shape sketched
+// in CLAUDE.md. Plugins live in-process under
+// `apps/tessera/src/plugins/<id>/` and are registered via a central
+// registry — no dynamic loading.
+
+export type WizardStepKind =
+  | "form"
+  | "redirect"
+  | "extension-action"
+  | "magic-link"
+  | "info";
+
+// ---------------------------------------------------------------------------
+// Per-kind payload shapes. The wizard UI dispatches to a built-in
+// renderer for each kind, so most plugins write zero React.
+// ---------------------------------------------------------------------------
+
+export interface FormFieldDef {
+  name: string;
+  label: string;
+  type: "text" | "email" | "select" | "number";
+  placeholder?: string;
+  helpText?: string;
+  required?: boolean;
+  options?: Array<{ value: string; label: string }>;
+}
+
+export interface FormStepPayload {
+  title: string;
+  description?: string;
+  fields: FormFieldDef[];
+  submitLabel?: string;
+}
+
+export interface RedirectStepPayload {
+  url: string;
+  description?: string;
+}
+
+export interface ExtensionActionStepPayload {
+  // What the extension should do (e.g. TLSNotary a specific endpoint).
+  // Shape is plugin-defined; the extension is expected to know how to
+  // interpret it.
+  action: string;
+  params: Record<string, unknown>;
+  description?: string;
+}
+
+export interface MagicLinkStepPayload {
+  // What recipient the link was sent to, for display.
+  sentTo: string;
+  description?: string;
+  // Echoed back to the plugin from the link click. Treated as opaque by
+  // the wizard runtime.
+  expectedToken?: string;
+}
+
+export interface InfoStepPayload {
+  title: string;
+  body: string;
+  continueLabel?: string;
+}
+
+export type StepPayload =
+  | FormStepPayload
+  | RedirectStepPayload
+  | ExtensionActionStepPayload
+  | MagicLinkStepPayload
+  | InfoStepPayload;
+
+export interface WizardStep<Kind extends WizardStepKind = WizardStepKind> {
+  id: string;
+  kind: Kind;
+  payload: Kind extends "form"
+    ? FormStepPayload
+    : Kind extends "redirect"
+      ? RedirectStepPayload
+      : Kind extends "extension-action"
+        ? ExtensionActionStepPayload
+        : Kind extends "magic-link"
+          ? MagicLinkStepPayload
+          : Kind extends "info"
+            ? InfoStepPayload
+            : never;
+}
+
+// ---------------------------------------------------------------------------
+// Wizard state + plugin shape
+// ---------------------------------------------------------------------------
+
+export interface PluginManifest {
+  id: string;
+  name: string;
+  description: string;
+  badgeTypes: string[];
+  requiresExtension: boolean;
+  iconKey?: string;
+}
+
+export interface WizardState {
+  pluginId: string;
+  userId: string;
+  currentStep: WizardStep;
+  // Accumulated per-step data. Server-side only — never sent to the
+  // client unless the plugin explicitly includes it in payload.
+  data: Record<string, unknown>;
+}
+
+export interface IssuedBadge {
+  type: string;
+  // Denormalized display attributes — saved on Badge.attributes for
+  // querying/UI. Must not contain anything sensitive; the VC payload is
+  // the authoritative artifact.
+  attributes: Record<string, unknown>;
+  // Claims that will go into the credentialSubject of the VC. Must
+  // satisfy the badge type's Zod schema (the issuance runtime validates
+  // before signing).
+  claims: Record<string, unknown>;
+  expiresAt?: Date;
+  eligibilities?: Array<{
+    badgeType: string;
+    eligibleAt: Date;
+    fuzzDays: number;
+  }>;
+}
+
+export interface PluginAuditLogger {
+  log(action: string, metadata: Record<string, unknown>): Promise<void>;
+}
+
+export interface MailMessage {
+  to: string;
+  subject: string;
+  text: string;
+  html?: string;
+}
+
+export interface PluginContext {
+  userId: string;
+  // Origin the user is hitting the app on. Plugins need this to build
+  // magic-link callback URLs, OAuth redirect URIs, etc.
+  origin: string;
+  audit: PluginAuditLogger;
+  // Transport for plugin-originated emails (verification links, etc.).
+  // Concrete implementation is provided by apps/tessera so plugins don't
+  // depend on a specific mailer.
+  sendMail(message: MailMessage): Promise<void>;
+}
+
+export type HandleStepResult =
+  | { kind: "continue"; state: WizardState }
+  | { kind: "complete"; badges: IssuedBadge[] }
+  | { kind: "error"; message: string };
+
+export interface Plugin {
+  manifest: PluginManifest;
+  startWizard(ctx: PluginContext): Promise<WizardState>;
+  handleStep(
+    state: WizardState,
+    input: unknown,
+    ctx: PluginContext,
+  ): Promise<HandleStepResult>;
+}
