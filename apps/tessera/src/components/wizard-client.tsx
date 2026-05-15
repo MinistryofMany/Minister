@@ -6,6 +6,7 @@ import type {
   FormStepPayload,
   InfoStepPayload,
   MagicLinkStepPayload,
+  RedirectStepPayload,
   WizardState,
 } from "@tessera/plugin-sdk";
 
@@ -66,6 +67,8 @@ export function WizardClient({ sessionId, initialState }: Props) {
         />
       ) : step.kind === "magic-link" ? (
         <MagicLinkStep payload={step.payload as MagicLinkStepPayload} />
+      ) : step.kind === "redirect" ? (
+        <RedirectStep payload={step.payload as RedirectStepPayload} />
       ) : step.kind === "info" ? (
         <InfoStep
           payload={step.payload as InfoStepPayload}
@@ -133,6 +136,30 @@ function FormStep({
             {pending ? "Working…" : (payload.submitLabel ?? "Continue")}
           </Button>
         </form>
+      </CardContent>
+    </>
+  );
+}
+
+function RedirectStep({ payload }: { payload: RedirectStepPayload }) {
+  // Manual click rather than auto-navigation: avoids tight loops if
+  // the upstream provider bounces back here (e.g. user denies on
+  // their side and gets re-redirected). Also lets the user read the
+  // description and decide.
+  return (
+    <>
+      <CardHeader>
+        <CardTitle>Continue elsewhere</CardTitle>
+        <CardDescription>
+          {payload.description ??
+            "We'll send you to an external provider to complete this step. Come back here to finish."}
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-3">
+        <Button asChild>
+          <a href={payload.url}>Continue</a>
+        </Button>
+        <p className="break-all text-xs text-neutral-500">{payload.url}</p>
       </CardContent>
     </>
   );

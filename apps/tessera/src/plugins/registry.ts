@@ -1,10 +1,16 @@
 import type { Plugin } from "@tessera/plugin-sdk";
 
 import { emailDomainPlugin } from "./email-domain";
+import { githubPlugin } from "./github";
 
 // In-process registry — CLAUDE.md explicitly forbids dynamic loading.
 // Add a plugin by importing it and appending here.
-const PLUGINS: Plugin[] = [emailDomainPlugin];
+//
+// Plugins whose required env is missing are still registered (the
+// plugin list page shows them) but startWizard throws — the user sees
+// "GitHub plugin is not configured" rather than the plugin silently
+// vanishing.
+const PLUGINS: Plugin[] = [emailDomainPlugin, githubPlugin];
 
 const byId = new Map(PLUGINS.map((p) => [p.manifest.id, p]));
 

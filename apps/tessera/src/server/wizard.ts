@@ -81,11 +81,16 @@ export async function startWizard(
     where: { userId, pluginId, completedAt: null },
   });
 
+  // Lift pendingToken on the initial step too — plugins like github
+  // open with a redirect step whose state must be addressable by the
+  // callback route. The submitStep path below does the same for
+  // subsequent continue steps.
   const row = await prisma.wizardSession.create({
     data: {
       userId,
       pluginId,
       state: serializeState(state),
+      pendingToken: pendingTokenFor(state),
       expiresAt: nowPlusMinutes(SESSION_TTL_MINUTES),
     },
   });
@@ -160,36 +165,41 @@ export async function submitStep(
   }
 }
 
-// Magic-link callback path. Looks up the session by token, hands the
-// token back to the plugin which knows to "complete" once it sees the
-// step's expected value.
-export async function consumeMagicLinkToken(
-  token: string,
-  userId: string,
-  origin: string,
-): Promise<
+// Generic callback path: resolve a wizard session by its pendingToken
+// (set by the runtime from magic-link's expectedToken or redirect's
+// expectedState), then submit the caller-supplied input to the plugin.
+//
+// Caller is whatever endpoint received the round trip: magic-link
+// verify page → input = { token }; OAuth callback → input = { code }.
+// The plugin decides what to do with the input shape.
+export async function resumeViaPendingToken(args: {
+  token: string;
+  userId: string;
+  origin: string;
+  input: Record<string, unknown>;
+}): Promise<
   | { kind: "complete"; badgeIds: string[]; pluginId: string }
   | { kind: "continue"; pluginId: string; sessionId: string }
   | { kind: "error"; message: string }
 > {
   const row = await prisma.wizardSession.findUnique({
-    where: { pendingToken: token },
+    where: { pendingToken: args.token },
   });
-  if (!row) return { kind: "error", message: "Verification link is invalid or already used" };
-  if (row.userId !== userId) {
+  if (!row) return { kind: "error", message: "Link is invalid or already used" };
+  if (row.userId !== args.userId) {
     return {
       kind: "error",
-      message: "Verification link belongs to a different account. Sign in as that user and click the link again.",
+      message: "Link belongs to a different account. Sign in as that user and click the link again.",
     };
   }
   if (row.expiresAt < new Date()) {
-    return { kind: "error", message: "Verification link has expired" };
+    return { kind: "error", message: "Link has expired" };
   }
   if (row.completedAt) {
-    return { kind: "error", message: "Verification link is already used" };
+    return { kind: "error", message: "Link is already used" };
   }
 
-  const result = await submitStep(row.id, userId, origin, { token });
+  const result = await submitStep(row.id, args.userId, args.origin, args.input);
   if (result.kind === "complete") {
     return { kind: "complete", badgeIds: result.badgeIds, pluginId: row.pluginId };
   }
@@ -199,15 +209,43 @@ export async function consumeMagicLinkToken(
   return result;
 }
 
+// Backwards-compat shim — pre-Stage-5 the only caller was the email
+// magic-link verify page. Identical to resumeViaPendingToken but with
+// the original positional signature and a fixed `{ token }` input.
+export async function consumeMagicLinkToken(
+  token: string,
+  userId: string,
+  origin: string,
+) {
+  return resumeViaPendingToken({
+    token,
+    userId,
+    origin,
+    input: { token },
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
+// Resolve the indexed `pendingToken` for the current step, if any. Two
+// step kinds use it:
+//   - magic-link: payload.expectedToken (carried in email link)
+//   - redirect:   payload.expectedState (carried in OAuth state param)
+// Both end up in the same column because both are looked up the same
+// way: callback route resolves session by token/state == pendingToken.
 function pendingTokenFor(state: WizardState): string | null {
-  if (state.currentStep.kind !== "magic-link") return null;
-  const t = (state.currentStep.payload as { expectedToken?: unknown })
-    .expectedToken;
-  return typeof t === "string" ? t : null;
+  const step = state.currentStep;
+  if (step.kind === "magic-link") {
+    const t = (step.payload as { expectedToken?: unknown }).expectedToken;
+    return typeof t === "string" ? t : null;
+  }
+  if (step.kind === "redirect") {
+    const t = (step.payload as { expectedState?: unknown }).expectedState;
+    return typeof t === "string" ? t : null;
+  }
+  return null;
 }
 
 async function issueBadgesAndComplete(args: {

@@ -35,6 +35,12 @@ export interface FormStepPayload {
 export interface RedirectStepPayload {
   url: string;
   description?: string;
+  // Random opaque value the plugin issues alongside the redirect.
+  // Stored as WizardSession.pendingToken so the callback route can
+  // resolve the session by ?state=<token>. Required for OAuth / SAML
+  // round trips; can be omitted if the plugin doesn't need to
+  // correlate the callback to a specific in-flight wizard.
+  expectedState?: string;
 }
 
 export interface ExtensionActionStepPayload {
