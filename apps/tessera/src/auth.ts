@@ -34,6 +34,27 @@ export const authConfig: NextAuthConfig = {
   pages: {
     signIn: "/",
   },
+  callbacks: {
+    // DB-strategy sessions don't include `user.id` by default. Surface
+    // it so server components and actions can scope queries by user
+    // without an extra DB roundtrip.
+    session({ session, user }) {
+      if (session.user) session.user.id = user.id;
+      return session;
+    },
+  },
 };
 
 export const { handlers, auth, signIn, signOut } = NextAuth(authConfig);
+
+// Type augmentation matches the session callback above.
+declare module "next-auth" {
+  interface Session {
+    user: {
+      id: string;
+      name?: string | null;
+      email?: string | null;
+      image?: string | null;
+    };
+  }
+}

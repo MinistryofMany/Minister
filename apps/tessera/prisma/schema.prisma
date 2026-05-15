@@ -42,10 +42,11 @@ model User {
   sessions       Session[]
   authenticators Authenticator[]
 
-  badges        Badge[]
-  eligibilities Eligibility[]
-  shareLinks    ShareLink[]
-  oidcClients   OidcClient[]
+  badges         Badge[]
+  eligibilities  Eligibility[]
+  shareLinks     ShareLink[]
+  oidcClients    OidcClient[]
+  wizardSessions WizardSession[]
 }
 
 model Account {
@@ -204,4 +205,26 @@ model AuditLog {
 
   @@index([userId, createdAt])
   @@index([action, createdAt])
+}
+
+// Per-user, per-plugin wizard run. Persists across requests (and email
+// magic-link round-trips) without depending on cookies. Cleaned up when
+// completed or when expiresAt passes.
+model WizardSession {
+  id           String    @id @default(cuid())
+  userId       String
+  pluginId     String
+  state        Json
+  // When the current step is a `magic-link`, this is the random token
+  // embedded in the email URL. Unique so a link can be resolved back to
+  // its wizard session.
+  pendingToken String?   @unique
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  completedAt  DateTime?
+  expiresAt    DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, pluginId])
 }
