@@ -1,8 +1,19 @@
-# Stage 0 compose: postgres + tessera.
+# Tessera dev compose.
 #
-# Magic-link emails are printed to the tessera container's stdout in dev
-# (per Stage 0 config), so no mailhog service is needed. notary, ws-proxy,
-# and tlsn-verifier are listed but commented out — they land in Stage 6.
+# - postgres     : application database
+# - tessera      : Next.js app (port 3000)
+# - tessera-seed : one-shot, runs the OIDC seed script with the
+#                  deterministic demo-client credentials. Idempotent.
+#
+# The demo-client (apps/demo-client) is run on the host with
+# `pnpm --filter @tessera/demo-client dev` so the OIDC issuer URL it
+# sees matches the URL the discovery doc advertises (both
+# http://localhost:3000). The credentials it uses match what
+# tessera-seed inserts.
+#
+# Magic-link emails are printed to the tessera container's stdout in
+# dev (no mailhog). notary, ws-proxy, tlsn-verifier are commented out
+# until Stage 6.
 
 services:
   postgres:
@@ -41,26 +52,41 @@ services:
     ports:
       - "3000:3000"
 
+  # Idempotent: upserts the demo client by clientId. Runs to completion
+  # and exits. `restart: "no"` so it doesn't keep re-running.
+  tessera-seed:
+    build:
+      context: .
+      dockerfile: apps/tessera/Dockerfile
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://tessera:tessera@postgres:5432/tessera?schema=public
+    # Run db push first so we don't race the tessera service for
+    # schema creation. Both calls are idempotent; if the tessera
+    # service already pushed, this is a no-op.
+    command:
+      - sh
+      - -c
+      - >
+        pnpm prisma db push --skip-generate &&
+        pnpm oidc:seed-client
+        --name "Demo client"
+        --redirect-uri http://localhost:3100/api/auth/callback/tessera
+        --scope openid
+        --scope profile
+        --scope badge:email-domain
+        --client-id ${DEMO_CLIENT_ID:-tc_demo}
+        --client-secret ${DEMO_CLIENT_SECRET:-dev-only-demo-client-secret-replace-me}
+
   # ---------------------------------------------------------------------------
   # Stage 6 — TLSNotary stack. Uncomment when implementing.
   # ---------------------------------------------------------------------------
-  # notary:
-  #   build:
-  #     context: ./services/notary
-  #   ports:
-  #     - "7047:7047"
-  #
-  # ws-proxy:
-  #   build:
-  #     context: ./services/ws-proxy
-  #   ports:
-  #     - "55688:55688"
-  #
-  # tlsn-verifier:
-  #   build:
-  #     context: ./services/tlsn-verifier
-  #   ports:
-  #     - "7048:7048"
+  # notary:        { build: { context: ./services/notary }, ports: ["7047:7047"] }
+  # ws-proxy:      { build: { context: ./services/ws-proxy }, ports: ["55688:55688"] }
+  # tlsn-verifier: { build: { context: ./services/tlsn-verifier }, ports: ["7048:7048"] }
 
 volumes:
   postgres_data:
