@@ -190,12 +190,15 @@ model OidcClient {
 }
 
 model OidcAuthorizationCode {
-  code                String   @id
+  code                String    @id
   clientId            String
   userId              String
   redirectUri         String
   scopes              String[]
   approvedBadgeIds    String[]
+  // Required by OIDC Core §3.1.2.1 — echoed back in id_token so RPs can
+  // detect replay across user agents.
+  nonce               String
   codeChallenge       String
   codeChallengeMethod String
   expiresAt           DateTime

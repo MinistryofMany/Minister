@@ -1,5 +1,6 @@
 "use client";
 
+import { useSearchParams } from "next/navigation";
 import { useState } from "react";
 import { signIn as signInReact } from "next-auth/react";
 import { signIn as signInWebAuthn } from "next-auth/webauthn";
@@ -7,7 +8,22 @@ import { signIn as signInWebAuthn } from "next-auth/webauthn";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
+// Whitelist allowed callback prefixes. NextAuth requires callbackUrls
+// to be on the same origin anyway, but defense-in-depth: only return
+// to paths we know we own. /oidc/authorize is the obvious one
+// (mid-OIDC flow); /profile etc. are also acceptable post-sign-in
+// landings.
+function safeCallbackUrl(from: string | null): string | undefined {
+  if (!from) return undefined;
+  if (!from.startsWith("/")) return undefined;
+  if (from.startsWith("//")) return undefined; // protocol-relative
+  return from;
+}
+
 export function SignInForm() {
+  const searchParams = useSearchParams();
+  const callbackUrl = safeCallbackUrl(searchParams.get("from"));
+
   const [email, setEmail] = useState("");
   const [emailSent, setEmailSent] = useState(false);
   const [emailError, setEmailError] = useState<string | null>(null);
@@ -18,6 +34,7 @@ export function SignInForm() {
     const result = await signInReact("email", {
       email,
       redirect: false,
+      callbackUrl,
     });
     if (result?.error) {
       setEmailError(result.error);
@@ -27,7 +44,7 @@ export function SignInForm() {
   }
 
   async function handlePasskey() {
-    await signInWebAuthn("passkey");
+    await signInWebAuthn("passkey", callbackUrl ? { callbackUrl } : undefined);
   }
 
   return (
