@@ -74,21 +74,18 @@ export type StepPayload =
   | MagicLinkStepPayload
   | InfoStepPayload;
 
-export interface WizardStep<Kind extends WizardStepKind = WizardStepKind> {
-  id: string;
-  kind: Kind;
-  payload: Kind extends "form"
-    ? FormStepPayload
-    : Kind extends "redirect"
-      ? RedirectStepPayload
-      : Kind extends "extension-action"
-        ? ExtensionActionStepPayload
-        : Kind extends "magic-link"
-          ? MagicLinkStepPayload
-          : Kind extends "info"
-            ? InfoStepPayload
-            : never;
-}
+// Discriminated union on `kind`. A `switch (step.kind)` narrows the
+// payload type automatically — no casts at the call sites.
+export type WizardStep =
+  | { id: string; kind: "form"; payload: FormStepPayload }
+  | { id: string; kind: "redirect"; payload: RedirectStepPayload }
+  | {
+      id: string;
+      kind: "extension-action";
+      payload: ExtensionActionStepPayload;
+    }
+  | { id: string; kind: "magic-link"; payload: MagicLinkStepPayload }
+  | { id: string; kind: "info"; payload: InfoStepPayload };
 
 // ---------------------------------------------------------------------------
 // Wizard state + plugin shape

@@ -12,6 +12,7 @@ import { getIssuer } from "@/lib/issuer";
 import { sendMail } from "@/lib/mailer";
 import { prisma } from "@/lib/prisma";
 import { getPlugin } from "@/plugins/registry";
+import { pendingTokenFor } from "@/server/wizard-helpers";
 
 const SESSION_TTL_MINUTES = 60;
 
@@ -228,25 +229,6 @@ export async function consumeMagicLinkToken(
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-// Resolve the indexed `pendingToken` for the current step, if any. Two
-// step kinds use it:
-//   - magic-link: payload.expectedToken (carried in email link)
-//   - redirect:   payload.expectedState (carried in OAuth state param)
-// Both end up in the same column because both are looked up the same
-// way: callback route resolves session by token/state == pendingToken.
-function pendingTokenFor(state: WizardState): string | null {
-  const step = state.currentStep;
-  if (step.kind === "magic-link") {
-    const t = (step.payload as { expectedToken?: unknown }).expectedToken;
-    return typeof t === "string" ? t : null;
-  }
-  if (step.kind === "redirect") {
-    const t = (step.payload as { expectedState?: unknown }).expectedState;
-    return typeof t === "string" ? t : null;
-  }
-  return null;
-}
 
 async function issueBadgesAndComplete(args: {
   sessionId: string;

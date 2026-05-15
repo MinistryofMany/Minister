@@ -5,7 +5,6 @@ import { z } from "zod";
 import type { Plugin } from "@tessera/plugin-sdk";
 
 const STEP_AUTHORIZE = "github-authorize";
-const STEP_EXCHANGE = "github-exchange";
 
 const GITHUB_AUTHORIZE_URL = "https://github.com/login/oauth/authorize";
 const GITHUB_TOKEN_URL = "https://github.com/login/oauth/access_token";
@@ -199,8 +198,3 @@ export const githubPlugin: Plugin = {
     };
   },
 };
-
-// Defensive: this file is imported eagerly by the registry, so we hold
-// off on any startup-time fetches. Touching env at top level is fine —
-// it's read at startWizard call time only.
-export const _ = STEP_EXCHANGE; // keep the import set tidy

@@ -12,6 +12,7 @@
     "dev": "pnpm --filter @tessera/app dev",
     "build": "pnpm -r build",
     "lint": "pnpm -r lint",
+    "test": "pnpm -r --workspace-concurrency=1 test",
     "typecheck": "pnpm -r typecheck",
     "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md,yml,yaml}\"",
     "format:check": "prettier --check \"**/*.{ts,tsx,js,jsx,json,md,yml,yaml}\"",
@@ -22,6 +23,7 @@
   },
   "devDependencies": {
     "prettier": "^3.3.3",
-    "typescript": "^5.6.3"
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.8"
   }
 }

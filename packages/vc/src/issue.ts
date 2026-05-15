@@ -48,7 +48,18 @@ export async function issueVc<TClaims extends Record<string, unknown>>(
 
   if (options.jti) builder = builder.setJti(options.jti);
   if (options.notBefore) builder = builder.setNotBefore(options.notBefore);
-  builder = builder.setExpirationTime(options.expiresIn ?? "1y");
+  builder = builder.setExpirationTime(coerceExpiresIn(options.expiresIn));
 
   return builder.sign(issuer.privateKey);
+}
+
+// jose's setExpirationTime treats bare numbers as *absolute* epoch
+// seconds (1970-relative), which is almost never what callers want.
+// `IssueOptions.expiresIn` is documented as "duration from now" — when
+// we get a number, hand jose a "<n>s" string so it does the right
+// thing. Strings are passed through (jose supports "1y", "30d", etc.).
+function coerceExpiresIn(value: IssueOptions["expiresIn"]): string {
+  if (value === undefined) return "1y";
+  if (typeof value === "number") return `${value}s`;
+  return value;
 }

@@ -305,12 +305,14 @@ export interface PluginManifest {
 export type WizardStepKind =
   | "form" | "redirect" | "extension-action" | "magic-link" | "info";
 
-export interface WizardStep {
-  id: string;
-  kind: WizardStepKind;
-  payload: FormStepPayload | RedirectStepPayload | ExtensionActionStepPayload
-         | MagicLinkStepPayload | InfoStepPayload;   // shape determined by kind
-}
+// Discriminated union on `kind`: switch(step.kind) narrows payload to
+// the exact per-kind type. No `as` casts at the call sites.
+export type WizardStep =
+  | { id: string; kind: "form"; payload: FormStepPayload }
+  | { id: string; kind: "redirect"; payload: RedirectStepPayload }
+  | { id: string; kind: "extension-action"; payload: ExtensionActionStepPayload }
+  | { id: string; kind: "magic-link"; payload: MagicLinkStepPayload }
+  | { id: string; kind: "info"; payload: InfoStepPayload };
 
 export interface WizardState {
   pluginId: string;
@@ -436,7 +438,7 @@ Why a separate Rust sidecar over WASM in Node: simpler operationally, pins one t
 - Server actions for app-internal mutations. Raw Next.js route handlers for OIDC endpoints (Stage 3+, need full header/status/caching control).
 - Use `getCurrentSession()` / `requireSession()` (from `src/lib/session.ts`), not raw `auth()`, anywhere that gates user-specific content.
 - The RSC server→client boundary is a JSON-only serializer — class instances (e.g. Zod schemas) don't cross. When a server component renders a client component, build a plain-object view type at the seam (`BadgeMetaView` is an example). TypeScript won't catch this; it surfaces only at runtime.
-- Tests: Vitest for unit, Playwright for end-to-end (deferred until Stage 4).
+- Tests: Vitest for unit tests (co-located `*.test.ts` next to source), Playwright for end-to-end. Run `pnpm test` at the repo root. The pure-function logic is heavily covered; DB-touching code stays integration-tested via Playwright.
 - ESLint + Prettier with project defaults.
 - Conventional commits. Cipher is the AI committer (`Cipher <cipher@heart.engineering>`).
 - No `any`. No `@ts-ignore` / `@ts-expect-error` without an inline justification comment.

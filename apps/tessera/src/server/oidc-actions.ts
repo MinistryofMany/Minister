@@ -13,6 +13,7 @@ import {
 import { verifyOidcRequest } from "@/lib/oidc-request-token";
 import { prisma } from "@/lib/prisma";
 import { getCurrentSession } from "@/lib/session";
+import { effectiveScopes } from "@/server/wizard-helpers";
 
 const ApproveInput = z.object({
   requestToken: z.string().min(1),
@@ -135,41 +136,6 @@ export async function denyConsent(
       request.state,
     ),
   );
-}
-
-// Reduce the requested scope set to what the user actually agreed to
-// disclose. Drops badge:<type> scopes the user gave nothing for, and
-// drops profile if they didn't tick the toggle.
-function effectiveScopes(
-  requestedScopes: string[],
-  args: {
-    approveProfile: boolean;
-    approvedBadgeIds: string[];
-    userBadges: Array<{ id: string; type: string }>;
-  },
-): string[] {
-  const out: string[] = [];
-  for (const scope of requestedScopes) {
-    if (scope === "openid") {
-      out.push(scope);
-      continue;
-    }
-    if (scope === "profile") {
-      if (args.approveProfile) out.push(scope);
-      continue;
-    }
-    if (scope.startsWith("badge:")) {
-      const type = scope.slice("badge:".length);
-      const anyApproved = args.userBadges.some(
-        (b) => b.type === type && args.approvedBadgeIds.includes(b.id),
-      );
-      if (anyApproved) out.push(scope);
-      continue;
-    }
-    // Unknown scopes shouldn't reach here (validation rejected them),
-    // but be conservative and drop them.
-  }
-  return out;
 }
 
 async function loadBadgeTypesForUser(

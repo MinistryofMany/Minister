@@ -9,6 +9,9 @@ import type {
   RedirectStepPayload,
   WizardState,
 } from "@tessera/plugin-sdk";
+// Per-kind payload types are still imported so the per-step renderer
+// signatures are explicit; the dispatcher above relies on the union
+// narrowing rather than `as` casts.
 
 import { Button } from "@/components/ui/button";
 import {
@@ -60,18 +63,14 @@ export function WizardClient({ sessionId, initialState }: Props) {
       ) : null}
 
       {step.kind === "form" ? (
-        <FormStep
-          payload={step.payload as FormStepPayload}
-          pending={pending}
-          onSubmit={handleSubmit}
-        />
+        <FormStep payload={step.payload} pending={pending} onSubmit={handleSubmit} />
       ) : step.kind === "magic-link" ? (
-        <MagicLinkStep payload={step.payload as MagicLinkStepPayload} />
+        <MagicLinkStep payload={step.payload} />
       ) : step.kind === "redirect" ? (
-        <RedirectStep payload={step.payload as RedirectStepPayload} />
+        <RedirectStep payload={step.payload} />
       ) : step.kind === "info" ? (
         <InfoStep
-          payload={step.payload as InfoStepPayload}
+          payload={step.payload}
           pending={pending}
           onSubmit={() => handleSubmit({})}
         />

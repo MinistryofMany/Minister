@@ -1,4 +1,4 @@
-import { createHash, createHmac } from "node:crypto";
+import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 
 import { SignJWT } from "jose";
 
@@ -32,16 +32,24 @@ export function pairwiseSub(userId: string, clientId: string): string {
 }
 
 // PKCE: verify the code_verifier received on /token matches the
-// code_challenge stored at /authorize. S256: challenge = base64url(SHA-256(verifier))
+// code_challenge stored at /authorize.
+// S256: challenge = base64url(SHA-256(verifier)).
+// Compare in constant time. The challenge was public to anyone who
+// sniffed /authorize, but the verifier is supposed to be a secret
+// known only to the RP — defense-in-depth.
 export function verifyPkceS256(
   codeVerifier: string,
   storedChallenge: string,
 ): boolean {
-  const hash = createHash("sha256").update(codeVerifier).digest();
-  const computed = hash.toString("base64url");
-  // Same length, fixed string compare — timing leak isn't meaningful
-  // here (challenge is public to anyone who sniffed /authorize).
-  return computed === storedChallenge;
+  const computed = createHash("sha256").update(codeVerifier).digest();
+  let stored: Buffer;
+  try {
+    stored = Buffer.from(storedChallenge, "base64url");
+  } catch {
+    return false;
+  }
+  if (stored.length !== computed.length) return false;
+  return timingSafeEqual(computed, stored);
 }
 
 export interface IdTokenClaims {
