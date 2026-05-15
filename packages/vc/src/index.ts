@@ -1,3 +1,13 @@
-// Stage 1: VC issuance/verification, DID document, Tessera signing key
-// management. Empty during Stage 0.
-export {};
+export type {
+  Issuer,
+  CredentialSubject,
+  VerifiableCredentialClaim,
+  VerifiedCredential,
+  IssueOptions,
+  DidDocument,
+} from "./types";
+
+export { buildDid, buildKid, buildUserDid, getDidDocument } from "./did";
+export { loadIssuer, _resetIssuerCache } from "./key";
+export { issueVc, tesseraCredentialType } from "./issue";
+export { verifyVc, VcVerificationError } from "./verify";
