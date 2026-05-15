@@ -48,11 +48,12 @@ model User {
   sessions       Session[]
   authenticators Authenticator[]
 
-  badges         Badge[]
-  eligibilities  Eligibility[]
-  shareLinks     ShareLink[]
-  oidcClients    OidcClient[]
-  wizardSessions WizardSession[]
+  badges            Badge[]
+  eligibilities     Eligibility[]
+  shareLinks        ShareLink[]
+  oidcClients       OidcClient[]
+  oidcAccessTokens  OidcAccessToken[]
+  wizardSessions    WizardSession[]
 }
 
 model Account {
@@ -203,6 +204,32 @@ model OidcAuthorizationCode {
   codeChallengeMethod String
   expiresAt           DateTime
   consumedAt          DateTime?
+}
+
+// Issued access tokens — keyed by the random `jti` embedded in the
+// access JWT. The JWT itself carries scope + client_id but no raw user
+// id; /userinfo resolves userId via lookup on this row. This keeps the
+// pairwise pseudonymous `sub` mechanism intact even when RPs decode
+// their access tokens.
+//
+// Separate from OidcAuthorizationCode because the lifetimes differ
+// (60s vs 1h) and the lookup keys differ (code vs jti).
+model OidcAccessToken {
+  jti              String    @id
+  userId           String
+  user             User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  clientId         String
+  scopes           String[]
+  // Subset of badges the user consented to disclose on the originating
+  // /oidc/authorize. Denormalized from the (now-consumed) auth code so
+  // /userinfo can return them without that row still existing.
+  approvedBadgeIds String[]
+  issuedAt         DateTime  @default(now())
+  expiresAt        DateTime
+  revokedAt        DateTime?
+
+  @@index([userId, clientId])
+  @@index([expiresAt])
 }
 
 model AuditLog {

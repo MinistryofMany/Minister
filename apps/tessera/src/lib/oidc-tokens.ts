@@ -80,22 +80,20 @@ export async function mintIdToken(
 }
 
 export interface AccessTokenClaims {
+  jti: string;          // random; key into the OidcAccessToken row
   sub: string;          // pairwise pseudonymous identifier, same as ID token
-  userId: string;       // resolved user id — needed by /userinfo to look up data
   clientId: string;
   scopes: string[];
 }
 
 // RFC 9068 (JWT Profile for OAuth 2.0 Access Tokens). Signed with the
-// same Ed25519 key as ID tokens; RPs can verify via /.well-known/jwks.json.
+// same Ed25519 key as ID tokens; RPs verify via /.well-known/jwks.json.
 //
-// Trade-off (stage-9 hardening): we embed `tessera_uid` so /userinfo
-// can find the user without a separate token-store lookup. That means
-// any RP holding the access token can decode it and see the raw user
-// id. For Tessera that's not catastrophic — the RP already knows the
-// user via the pairwise sub and (if any badges were disclosed) via
-// the user DID in the VC `sub`. Stage 9 should move to an opaque
-// token + DB store if a stricter posture is needed.
+// We deliberately do NOT include a raw userId in the JWT. /userinfo
+// resolves the principal via OidcAccessToken row lookup keyed by `jti`.
+// This preserves the pairwise pseudonymous `sub` privacy property —
+// two RPs that decode their access tokens see different `sub` and *no*
+// shared underlying identifier.
 export async function mintAccessToken(
   issuer: Issuer,
   claims: AccessTokenClaims,
@@ -104,12 +102,12 @@ export async function mintAccessToken(
     scope: claims.scopes.join(" "),
     client_id: claims.clientId,
     token_use: "access",
-    tessera_uid: claims.userId,
   })
     .setProtectedHeader({ alg: "EdDSA", kid: issuer.kid, typ: "at+jwt" })
     .setIssuer(oidcIssuerUrl())
     .setSubject(claims.sub)
     .setAudience(oidcIssuerUrl())
+    .setJti(claims.jti)
     .setIssuedAt()
     .setExpirationTime(`${ACCESS_TOKEN_TTL_SECONDS}s`)
     .sign(issuer.privateKey);

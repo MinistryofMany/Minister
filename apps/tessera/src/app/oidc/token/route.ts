@@ -1,3 +1,5 @@
+import { randomBytes } from "node:crypto";
+
 import { NextResponse } from "next/server";
 
 import { getIssuer } from "@/lib/issuer";
@@ -148,9 +150,25 @@ export async function POST(request: Request) {
     tessera_badges: tessera_badges.length > 0 ? tessera_badges : undefined,
   });
 
+  // jti links the access JWT to a server-side OidcAccessToken row.
+  // /userinfo resolves user identity via the row, so the JWT itself
+  // carries no raw user id — the pairwise `sub` is the only
+  // user-shaped value an RP that decodes the token sees.
+  const jti = randomBytes(24).toString("base64url");
+  const accessTokenExpiresAt = new Date(Date.now() + ACCESS_TOKEN_TTL * 1000);
+  await prisma.oidcAccessToken.create({
+    data: {
+      jti,
+      userId: user.id,
+      clientId: client.clientId,
+      scopes: stored.scopes,
+      approvedBadgeIds: stored.approvedBadgeIds,
+      expiresAt: accessTokenExpiresAt,
+    },
+  });
   const accessToken = await mintAccessToken(issuer, {
+    jti,
     sub,
-    userId: user.id,
     clientId: client.clientId,
     scopes: stored.scopes,
   });
