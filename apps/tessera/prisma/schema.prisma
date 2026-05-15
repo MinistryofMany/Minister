@@ -1,0 +1,207 @@
+// Tessera — Stage 0 schema.
+//
+// Combines:
+//   * Auth.js (NextAuth v5) required models: User, Account, Session,
+//     VerificationToken, Authenticator (for WebAuthn / passkeys).
+//   * Tessera domain models sketched in CLAUDE.md: Badge, Eligibility,
+//     ShareLink, ShareLinkView, OidcClient, OidcAuthorizationCode, AuditLog.
+//
+// The domain models are defined now (so the initial migration is meaningful)
+// but Stage 0 only touches the auth models. Domain tables stay empty until
+// Stage 1+ wires features against them.
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../src/generated/prisma"
+}
+
+// ---------------------------------------------------------------------------
+// Auth.js models
+// ---------------------------------------------------------------------------
+
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  email         String?   @unique
+  emailVerified DateTime?
+  image         String?
+
+  // Tessera profile overrides (user-curated, independent of upstream auth).
+  displayName String?
+  avatarUrl   String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  accounts       Account[]
+  sessions       Session[]
+  authenticators Authenticator[]
+
+  badges        Badge[]
+  eligibilities Eligibility[]
+  shareLinks    ShareLink[]
+  oidcClients   OidcClient[]
+}
+
+model Account {
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([provider, providerAccountId])
+}
+
+model Session {
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String
+  expires    DateTime
+
+  @@id([identifier, token])
+}
+
+model Authenticator {
+  credentialID         String  @unique
+  userId               String
+  providerAccountId    String
+  credentialPublicKey  String
+  counter              Int
+  credentialDeviceType String
+  credentialBackedUp   Boolean
+  transports           String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([userId, credentialID])
+}
+
+// ---------------------------------------------------------------------------
+// Tessera domain
+// ---------------------------------------------------------------------------
+
+model Badge {
+  id        String @id @default(cuid())
+  userId    String
+  type      String
+  // Denormalized non-sensitive attributes for query/display. The signed
+  // VC in `vcJwt` is the authoritative artifact.
+  attributes Json
+  vcJwt      String
+  issuer     String
+  issuedAt   DateTime  @default(now())
+  expiresAt  DateTime?
+  isPublic   Boolean   @default(false)
+  sortOrder  Int       @default(0)
+  // null = native (issued by Tessera). non-null = identifier of the source
+  // we imported this VC from.
+  importedFrom String?
+  pluginId     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, type])
+}
+
+model Eligibility {
+  id         String   @id @default(cuid())
+  userId     String
+  badgeType  String
+  eligibleAt DateTime
+  // +/- days of fuzz applied at issuance time.
+  fuzzDays Int
+  source   String
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, badgeType])
+}
+
+model ShareLink {
+  id              String    @id @default(cuid())
+  userId          String
+  // URL-safe, >= 128 bits entropy.
+  token           String    @unique
+  badgeIds        String[]
+  expiresAt       DateTime
+  requiresAccount Boolean   @default(false)
+  revokedAt       DateTime?
+  createdAt       DateTime  @default(now())
+
+  user  User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  views ShareLinkView[]
+}
+
+model ShareLinkView {
+  id           String   @id @default(cuid())
+  shareLinkId  String
+  viewerUserId String?
+  viewedAt     DateTime @default(now())
+
+  shareLink ShareLink @relation(fields: [shareLinkId], references: [id], onDelete: Cascade)
+}
+
+model OidcClient {
+  id               String   @id @default(cuid())
+  clientId         String   @unique
+  // Hashed with Argon2id at rest. Null for public clients (PKCE-only).
+  clientSecretHash String?
+  name             String
+  redirectUris     String[]
+  allowedScopes    String[]
+  ownerUserId      String?
+  createdAt        DateTime @default(now())
+
+  owner User? @relation(fields: [ownerUserId], references: [id], onDelete: SetNull)
+}
+
+model OidcAuthorizationCode {
+  code                String   @id
+  clientId            String
+  userId              String
+  redirectUri         String
+  scopes              String[]
+  approvedBadgeIds    String[]
+  codeChallenge       String
+  codeChallengeMethod String
+  expiresAt           DateTime
+  consumedAt          DateTime?
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  userId    String?
+  action    String
+  metadata  Json
+  createdAt DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@index([action, createdAt])
+}
