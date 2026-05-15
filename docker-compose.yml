@@ -1,0 +1,66 @@
+# Stage 0 compose: postgres + tessera.
+#
+# Magic-link emails are printed to the tessera container's stdout in dev
+# (per Stage 0 config), so no mailhog service is needed. notary, ws-proxy,
+# and tlsn-verifier are listed but commented out — they land in Stage 6.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: tessera
+      POSTGRES_PASSWORD: tessera
+      POSTGRES_DB: tessera
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tessera -d tessera"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  tessera:
+    build:
+      context: .
+      dockerfile: apps/tessera/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://tessera:tessera@postgres:5432/tessera?schema=public
+      AUTH_URL: http://localhost:3000
+      AUTH_TRUST_HOST: "true"
+      # Generate with: openssl rand -base64 32
+      AUTH_SECRET: ${AUTH_SECRET:-dev-only-replace-me-with-openssl-rand-base64-32}
+      TESSERA_ISSUER_DOMAIN: ${TESSERA_ISSUER_DOMAIN:-tessera.local}
+      OIDC_PAIRWISE_SECRET: ${OIDC_PAIRWISE_SECRET:-dev-only-replace-me-with-openssl-rand-base64-32}
+    ports:
+      - "3000:3000"
+
+  # ---------------------------------------------------------------------------
+  # Stage 6 — TLSNotary stack. Uncomment when implementing.
+  # ---------------------------------------------------------------------------
+  # notary:
+  #   build:
+  #     context: ./services/notary
+  #   ports:
+  #     - "7047:7047"
+  #
+  # ws-proxy:
+  #   build:
+  #     context: ./services/ws-proxy
+  #   ports:
+  #     - "55688:55688"
+  #
+  # tlsn-verifier:
+  #   build:
+  #     context: ./services/tlsn-verifier
+  #   ports:
+  #     - "7048:7048"
+
+volumes:
+  postgres_data:
