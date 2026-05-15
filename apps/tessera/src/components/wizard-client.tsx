@@ -1,0 +1,187 @@
+"use client";
+
+import { useRouter } from "next/navigation";
+import { useState, useTransition } from "react";
+import type {
+  FormStepPayload,
+  InfoStepPayload,
+  MagicLinkStepPayload,
+  WizardState,
+} from "@tessera/plugin-sdk";
+
+import { Button } from "@/components/ui/button";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { submitStepAction } from "@/server/wizard-actions";
+
+interface Props {
+  sessionId: string;
+  initialState: WizardState;
+}
+
+export function WizardClient({ sessionId, initialState }: Props) {
+  const router = useRouter();
+  const [state, setState] = useState<WizardState>(initialState);
+  const [error, setError] = useState<string | null>(null);
+  const [pending, startTransition] = useTransition();
+
+  function handleSubmit(input: unknown) {
+    setError(null);
+    startTransition(async () => {
+      const result = await submitStepAction(sessionId, input);
+      if (result.kind === "error") {
+        setError(result.message);
+      } else if (result.kind === "complete") {
+        // Badge issued — bounce back to profile with the new badge in
+        // place. router.refresh ensures the badge grid re-fetches.
+        router.push("/profile");
+        router.refresh();
+      } else {
+        setState(result.state);
+      }
+    });
+  }
+
+  const step = state.currentStep;
+
+  return (
+    <Card>
+      {error ? (
+        <div className="mx-6 mt-6 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900/40 dark:bg-red-950/30 dark:text-red-400">
+          {error}
+        </div>
+      ) : null}
+
+      {step.kind === "form" ? (
+        <FormStep
+          payload={step.payload as FormStepPayload}
+          pending={pending}
+          onSubmit={handleSubmit}
+        />
+      ) : step.kind === "magic-link" ? (
+        <MagicLinkStep payload={step.payload as MagicLinkStepPayload} />
+      ) : step.kind === "info" ? (
+        <InfoStep
+          payload={step.payload as InfoStepPayload}
+          pending={pending}
+          onSubmit={() => handleSubmit({})}
+        />
+      ) : (
+        <CardContent className="py-6 text-sm text-neutral-600">
+          Step type <code>{step.kind}</code> isn&apos;t rendered yet — that
+          arrives with the plugin that needs it.
+        </CardContent>
+      )}
+    </Card>
+  );
+}
+
+function FormStep({
+  payload,
+  pending,
+  onSubmit,
+}: {
+  payload: FormStepPayload;
+  pending: boolean;
+  onSubmit(input: Record<string, string>): void;
+}) {
+  return (
+    <>
+      <CardHeader>
+        <CardTitle>{payload.title}</CardTitle>
+        {payload.description ? (
+          <CardDescription>{payload.description}</CardDescription>
+        ) : null}
+      </CardHeader>
+      <CardContent>
+        <form
+          className="flex flex-col gap-3"
+          onSubmit={(e) => {
+            e.preventDefault();
+            const fd = new FormData(e.currentTarget);
+            const input: Record<string, string> = {};
+            payload.fields.forEach((f) => {
+              const v = fd.get(f.name);
+              if (typeof v === "string") input[f.name] = v;
+            });
+            onSubmit(input);
+          }}
+        >
+          {payload.fields.map((field) => (
+            <label key={field.name} className="flex flex-col gap-1 text-sm">
+              <span className="font-medium">{field.label}</span>
+              <Input
+                name={field.name}
+                type={field.type === "number" ? "number" : field.type}
+                placeholder={field.placeholder}
+                required={field.required}
+              />
+              {field.helpText ? (
+                <span className="text-xs text-neutral-500">
+                  {field.helpText}
+                </span>
+              ) : null}
+            </label>
+          ))}
+          <Button type="submit" disabled={pending}>
+            {pending ? "Working…" : (payload.submitLabel ?? "Continue")}
+          </Button>
+        </form>
+      </CardContent>
+    </>
+  );
+}
+
+function MagicLinkStep({ payload }: { payload: MagicLinkStepPayload }) {
+  return (
+    <>
+      <CardHeader>
+        <CardTitle>Check your inbox</CardTitle>
+        <CardDescription>
+          We sent a verification link to{" "}
+          <span className="font-medium">{payload.sentTo}</span>. Click it to
+          finish issuing this badge.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3 text-sm text-neutral-600 dark:text-neutral-400">
+        {payload.description ? <p>{payload.description}</p> : null}
+        <p className="text-xs text-neutral-500">
+          In dev, the link is printed to the server console — look for
+          <code className="ml-1">[tessera:mailer]</code>.
+        </p>
+      </CardContent>
+    </>
+  );
+}
+
+function InfoStep({
+  payload,
+  pending,
+  onSubmit,
+}: {
+  payload: InfoStepPayload;
+  pending: boolean;
+  onSubmit(): void;
+}) {
+  return (
+    <>
+      <CardHeader>
+        <CardTitle>{payload.title}</CardTitle>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-4">
+        <p className="text-sm text-neutral-700 dark:text-neutral-300">
+          {payload.body}
+        </p>
+        <Button onClick={onSubmit} disabled={pending}>
+          {payload.continueLabel ?? "Continue"}
+        </Button>
+      </CardContent>
+    </>
+  );
+}
