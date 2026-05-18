@@ -458,7 +458,7 @@ Why a separate Rust sidecar over WASM in Node: simpler operationally, pins one t
 - **Stage 4** — Demo client Next.js app doing the full OIDC dance, gated by a specific badge.
 - **Stage 5** ✅ — GitHub OAuth plugin. Validated the plugin interface against the `redirect` step kind; `oauth-account` badge end-to-end (requires real GitHub OAuth app creds for the live flow).
 - **Stage 6** ◐ partial — TLSNotary integration. Tessera-side complete: `tlsn-attestation` plugin, `/api/tlsn/submit` endpoint, `extension-action` step renderer, `tlsn-verifier` Rust sidecar (with `passthrough` mode for dev), `notary-server` running the pinned official binary, browser extension skeleton at `apps/extension/`. **Not yet wired:** `tlsn-js` prover inside the extension, `ws-proxy` real implementation, `tlsn-verifier` crate integration in the sidecar's `verify_real()` (currently throws).
-- **Stage 7** — Shareable proof links (signed artifacts, expiry, optional account gate, email send).
+- **Stage 7** ✅ — Shareable proof links. `/shares` lists + creates, `/share/[token]` public view with expiry/revocation/account-gate, optional email send via the existing mailer (console-log in dev). Views recorded in `ShareLinkView`. Tokens are 32 random bytes → 43 base64url chars.
 - **Stage 8** — Age / id.me plugin via TLSNotary; eligibility records with month fuzzing.
 - **Stage 9** — Hardening: rate limits, audit-log review, OIDC security review, key rotation, real email transport (Resend/SES), production deploy guide.
 

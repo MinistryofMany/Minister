@@ -92,6 +92,24 @@ operational counterpart.
 - Live e2e against github.com requires real OAuth app creds — the user
   sets `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET`.
 
+### Stage 7 — shareable proof links ✅
+- `/share/[token]` public landing. Looks up by token, checks expiry +
+  revocation + `requiresAccount`, records a `ShareLinkView` row
+  (with `viewerUserId` populated when signed in, `null` for anonymous
+  reads — and `null` is also written when a `requiresAccount` link is
+  hit by an unauthenticated viewer, so the owner can see the
+  attempted access).
+- `/shares` user dashboard: lists every link the user has created,
+  shows status (active / expired / revoked), view count, and a
+  revoke button.
+- `createShareLink` / `revokeShareLink` server actions in
+  `src/server/share-actions.ts`. Optional `sendToEmail` triggers the
+  existing `sendMail` (console-log in dev; real transport is Stage 9).
+- Token entropy: 32 random bytes (256 bits) → 43 base64url chars.
+- Default TTL 7 days, capped at 90.
+- Owners can revoke; revoked + expired both surface "Link
+  unavailable" rather than leaking which state it's in.
+
 ### Stage 6 — TLSNotary, Tessera-side ◐ partial
 
 What's wired:

@@ -188,7 +188,7 @@ function ExtensionActionStep({
       <CardContent className="space-y-3 text-sm text-neutral-600 dark:text-neutral-400">
         <p>
           Open the extension popup. It will recognize this in-flight
-          wizard and walk you through the TLSNotary proof. When it's done,
+          wizard and walk you through the TLSNotary proof. When it&apos;s done,
           come back here and refresh.
         </p>
         <p className="text-xs text-neutral-500">

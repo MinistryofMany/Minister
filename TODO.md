@@ -1,0 +1,110 @@
+# Tessera — TODO
+
+Things we've explicitly mocked, stubbed, or skipped — paired with what
+needs doing later. Anything tagged here is a known gap, not a bug.
+
+## TLSNotary (Stage 6 — partial)
+
+The Tessera-side scaffolding is real and tested. The cryptographic
+proof path is not. Three concrete pieces remain:
+
+### 1. Browser-extension TLSNotary prover
+
+**Where:** `apps/extension/src/background.ts`
+
+**What's there:** MV3 manifest, background service worker, popup, and
+the message-routing surface (popup → background → submit-presentation).
+The background's `submitPresentation` helper already POSTs to
+`/api/tlsn/submit` and handles the response.
+
+**What's missing:** `performProof()` currently throws `"TLSNotary
+prover not yet wired"`. Need to:
+
+- Add `tlsn-js` as a dep and load its WASM in an offscreen document
+  (MV3 service workers can't host heavy WASM in the worker context).
+- Open a session against the target URL via the `ws-proxy` (see below).
+- Exchange handshakes with the notary server.
+- Return the finalized presentation as base64.
+- Cross-check the crate / image versions match: notary is pinned to
+  `ghcr.io/tlsnotary/notary-server:v0.1.0-alpha.11`; `tlsn-js` must be
+  compatible.
+
+### 2. `ws-proxy` service
+
+**Where:** `services/ws-proxy/`
+
+**What's there:** alpine Dockerfile stub, commented out in
+`docker-compose.yml`.
+
+**What's missing:** A real WebSocket → TCP relay. The browser extension
+can't open raw TCP sockets, so it tunnels through this proxy to reach
+the target HTTPS host. Implementation should:
+
+- Be in Rust or Go (TCP socket lifecycle is the bulk of the work).
+- Take WS connections from the extension carrying `{ host, port }`.
+- Open a TCP socket to the target, bidirectionally relay bytes.
+- Rate-limit + allow-list target hosts (id.me, github.com, etc.). We
+  must not become an open proxy.
+- Uncomment the compose service entry and wire the URL into the
+  extension's config.
+
+### 3. `tlsn-verifier` crate integration
+
+**Where:** `services/tlsn-verifier/src/main.rs`, `verify_real()`
+
+**What's there:** Real Rust Axum HTTP server. `passthrough` mode
+(default) base64-decodes a JSON "presentation" of shape
+`{ sent, received, serverName }`, enforces server-name match, returns
+it. Unit tests cover passthrough.
+
+**What's missing:** `verify_real()` currently throws to make sure no
+one accidentally ships prod with the rubber-stamp path enabled. Need
+to:
+
+- Pin the `tlsn-verifier` crate in `Cargo.toml` (commented entry is
+  there). Match the notary image version.
+- Implement `verify_real()` against the crate API — call its
+  `Verifier::verify(&presentation, ...)`, extract the verified TLS
+  transcript, return it in the same `Transcript { sent, received,
+  serverName }` shape.
+- Switch `VERIFIER_MODE=real` in compose / prod env.
+- Add tests with a real captured presentation as a test fixture.
+
+### Why the Tessera side still works
+
+`tlsn-attestation` plugin + `/api/tlsn/submit` endpoint round-trip
+through the verifier sidecar, which can be exercised end-to-end in
+passthrough mode. So Stage 7+ work can build on top of TLSNotary
+plumbing without blocking on the prover.
+
+---
+
+## Stage 9 hardening (deferred by design)
+
+These are intentional Stage 9 items, listed here so they don't get
+lost:
+
+- Rate limiting on `/oidc/token`, `/oidc/authorize`,
+  `/api/auth/signin/*`, share-link views. Upstash Redis + middleware
+  is the likely pattern.
+- KMS-backed signing key (currently dev: ephemeral persisted JWK at
+  `apps/tessera/dev-keys/issuer.jwk`).
+- Real email transport (Resend / SES). Right now `src/lib/mailer.ts`
+  throws in production and console-logs in dev; share-link emails and
+  magic links use it.
+- Audit-log review UI at `/admin/audit`.
+- OIDC security-review pass: refresh tokens, scope-creep prevention,
+  error-response side channels.
+- Production deploy guide.
+
+---
+
+## Misc small things
+
+- `services/ws-proxy/`: alpine stub; see Stage 6 item above.
+- `next.config.ts`: `typedRoutes` is OFF because it rejected `redirect()`
+  to external RP `redirect_uri`s. If a typedRoutes-compatible escape
+  hatch lands upstream, re-enable.
+- `consumeMagicLinkToken` in `src/server/wizard.ts` is a backwards-compat
+  shim around `resumeViaPendingToken`. Drop when the email-domain verify
+  page is reworked to call the generic helper directly.

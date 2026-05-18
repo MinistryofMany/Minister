@@ -24,6 +24,9 @@ export async function Header() {
                 <Link href="/profile">Profile</Link>
               </Button>
               <Button asChild variant="ghost" size="sm">
+                <Link href="/shares">Shares</Link>
+              </Button>
+              <Button asChild variant="ghost" size="sm">
                 <Link href="/settings">Settings</Link>
               </Button>
             </>
