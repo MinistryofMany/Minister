@@ -49,6 +49,7 @@ services:
       AUTH_SECRET: ${AUTH_SECRET:-dev-only-replace-me-with-openssl-rand-base64-32}
       TESSERA_ISSUER_DOMAIN: ${TESSERA_ISSUER_DOMAIN:-tessera.local}
       OIDC_PAIRWISE_SECRET: ${OIDC_PAIRWISE_SECRET:-dev-only-replace-me-with-openssl-rand-base64-32}
+      TLSN_VERIFIER_URL: http://tlsn-verifier:7048
     ports:
       - "3000:3000"
 
@@ -82,11 +83,37 @@ services:
         --client-secret ${DEMO_CLIENT_SECRET:-dev-only-demo-client-secret-replace-me}
 
   # ---------------------------------------------------------------------------
-  # Stage 6 — TLSNotary stack. Uncomment when implementing.
+  # TLSNotary stack — Stage 6.
+  # notary-server and tlsn-verifier are wired; ws-proxy stays a stub
+  # until the browser-extension prover lands and needs it.
   # ---------------------------------------------------------------------------
-  # notary:        { build: { context: ./services/notary }, ports: ["7047:7047"] }
-  # ws-proxy:      { build: { context: ./services/ws-proxy }, ports: ["55688:55688"] }
-  # tlsn-verifier: { build: { context: ./services/tlsn-verifier }, ports: ["7048:7048"] }
+  notary-server:
+    build:
+      context: ./services/notary
+    restart: unless-stopped
+    ports:
+      - "7047:7047"
+    volumes:
+      - notary_data:/data
+
+  tlsn-verifier:
+    build:
+      context: ./services/tlsn-verifier
+    restart: unless-stopped
+    environment:
+      VERIFIER_MODE: ${VERIFIER_MODE:-passthrough}
+      RUST_LOG: ${RUST_LOG:-info}
+    ports:
+      - "7048:7048"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O- http://localhost:7048/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ws-proxy stays commented until the extension's prover needs it.
+  # ws-proxy: { build: { context: ./services/ws-proxy }, ports: ["55688:55688"] }
 
 volumes:
   postgres_data:
+  notary_data:

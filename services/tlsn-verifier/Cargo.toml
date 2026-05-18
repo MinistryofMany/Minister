@@ -1,0 +1,32 @@
+[package]
+name = "tessera-tlsn-verifier"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[[bin]]
+name = "tessera-tlsn-verifier"
+path = "src/main.rs"
+
+[dependencies]
+axum = "0.7"
+tokio = { version = "1", features = ["full"] }
+tower = "0.5"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+base64 = "0.22"
+anyhow = "1"
+
+# tlsn-verifier and tlsn-core land when we wire the real verification
+# path. Until then the sidecar runs in a passthrough mode for dev
+# (see VERIFIER_MODE=passthrough). Uncomment + pin once the crate
+# version is decided.
+#
+# tlsn-verifier = { git = "https://github.com/tlsnotary/tlsn", tag = "v0.1.0-alpha.11" }
+# tlsn-core     = { git = "https://github.com/tlsnotary/tlsn", tag = "v0.1.0-alpha.11" }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1

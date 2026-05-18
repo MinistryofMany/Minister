@@ -1,0 +1,27 @@
+{
+  "manifest_version": 3,
+  "name": "Tessera",
+  "version": "0.0.0",
+  "description": "Performs TLSNotary proofs for the Tessera identity wallet.",
+  "permissions": [
+    "storage",
+    "webRequest"
+  ],
+  "host_permissions": [
+    "http://localhost:3000/*",
+    "https://tessera.local/*"
+  ],
+  "background": {
+    "service_worker": "src/background.ts",
+    "type": "module"
+  },
+  "action": {
+    "default_popup": "src/popup.html",
+    "default_title": "Tessera"
+  },
+  "icons": {
+    "16": "icons/icon-16.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  }
+}

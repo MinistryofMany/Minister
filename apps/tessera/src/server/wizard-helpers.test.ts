@@ -32,6 +32,19 @@ describe("pendingTokenFor", () => {
     expect(pendingTokenFor(state)).toBe("STATE_456");
   });
 
+  it("returns expectedSubmissionToken on an extension-action step", () => {
+    const state = makeState({
+      id: "ext",
+      kind: "extension-action",
+      payload: {
+        action: "tlsn-prove",
+        params: {},
+        expectedSubmissionToken: "SUBMIT_789",
+      },
+    });
+    expect(pendingTokenFor(state)).toBe("SUBMIT_789");
+  });
+
   it("returns null when magic-link omits expectedToken", () => {
     const state = makeState({
       id: "wait",

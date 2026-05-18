@@ -50,6 +50,12 @@ export interface ExtensionActionStepPayload {
   action: string;
   params: Record<string, unknown>;
   description?: string;
+  // Random opaque value the plugin issues alongside the extension
+  // request. Stored as WizardSession.pendingToken so the
+  // /api/tlsn/submit endpoint can resolve the right wizard session
+  // when the extension POSTs the finalized presentation back. The
+  // extension echoes this value verbatim as `sessionToken`.
+  expectedSubmissionToken?: string;
 }
 
 export interface MagicLinkStepPayload {

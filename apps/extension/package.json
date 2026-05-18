@@ -1,0 +1,17 @@
+{
+  "name": "@tessera/extension",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Tessera browser extension. Performs TLSNotary proofs in the user's browser and submits finalized presentations to Tessera.",
+  "type": "module",
+  "scripts": {
+    "build": "tsc --noEmit && node scripts/build.mjs",
+    "lint": "echo 'noop'",
+    "typecheck": "tsc --noEmit",
+    "test": "echo 'no tests yet — prover lands in Stage 6+'"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.0.287",
+    "typescript": "^5.6.3"
+  }
+}

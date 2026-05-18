@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Tessera</title>
+    <style>
+      body {
+        font-family:
+          ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+        margin: 0;
+        padding: 16px;
+        width: 320px;
+        background: #fafafa;
+        color: #111;
+      }
+      h1 {
+        font-size: 16px;
+        margin: 0 0 8px;
+      }
+      p {
+        font-size: 13px;
+        margin: 8px 0;
+        color: #444;
+      }
+      code {
+        font-size: 12px;
+        background: #eee;
+        padding: 1px 4px;
+        border-radius: 3px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Tessera</h1>
+    <p>
+      This is the Tessera browser extension. It will perform TLSNotary
+      proofs in the browser and submit them back to Tessera.
+    </p>
+    <p>
+      <strong>Stage 6 — placeholder.</strong> The TLSNotary prover
+      (<code>tlsn-js</code>) is not yet integrated. The architectural
+      skeleton, the manifest, the background service-worker, and the
+      Tessera <code>/api/tlsn/submit</code> endpoint are all in place;
+      wiring the prover is the remaining work.
+    </p>
+    <script type="module" src="popup.ts"></script>
+  </body>
+</html>

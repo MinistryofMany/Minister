@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import type {
+  ExtensionActionStepPayload,
   FormStepPayload,
   InfoStepPayload,
   MagicLinkStepPayload,
@@ -68,17 +69,17 @@ export function WizardClient({ sessionId, initialState }: Props) {
         <MagicLinkStep payload={step.payload} />
       ) : step.kind === "redirect" ? (
         <RedirectStep payload={step.payload} />
-      ) : step.kind === "info" ? (
+      ) : step.kind === "extension-action" ? (
+        <ExtensionActionStep payload={step.payload} />
+      ) : (
+        // Exhaustive: 'info' is the last kind in the WizardStep union.
+        // TypeScript verifies this dispatch covers every variant; adding
+        // a new step kind will fail the typecheck here.
         <InfoStep
           payload={step.payload}
           pending={pending}
           onSubmit={() => handleSubmit({})}
         />
-      ) : (
-        <CardContent className="py-6 text-sm text-neutral-600">
-          Step type <code>{step.kind}</code> isn&apos;t rendered yet — that
-          arrives with the plugin that needs it.
-        </CardContent>
       )}
     </Card>
   );
@@ -159,6 +160,40 @@ function RedirectStep({ payload }: { payload: RedirectStepPayload }) {
           <a href={payload.url}>Continue</a>
         </Button>
         <p className="break-all text-xs text-neutral-500">{payload.url}</p>
+      </CardContent>
+    </>
+  );
+}
+
+function ExtensionActionStep({
+  payload,
+}: {
+  payload: ExtensionActionStepPayload;
+}) {
+  // Polled by the extension via the browser bridge. The page itself
+  // does nothing reactive — when the extension POSTs the presentation
+  // to /api/tlsn/submit and completes the wizard, the user navigates
+  // back to /profile (extension popup signals "done"). For now we just
+  // show what's pending; Stage 6+ adds an SSE / postMessage handshake
+  // to auto-redirect on completion.
+  return (
+    <>
+      <CardHeader>
+        <CardTitle>Use the Tessera browser extension</CardTitle>
+        <CardDescription>
+          {payload.description ??
+            "This step happens inside the Tessera extension so the sensitive proof bytes never leave your device."}
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3 text-sm text-neutral-600 dark:text-neutral-400">
+        <p>
+          Open the extension popup. It will recognize this in-flight
+          wizard and walk you through the TLSNotary proof. When it's done,
+          come back here and refresh.
+        </p>
+        <p className="text-xs text-neutral-500">
+          Action: <code>{payload.action}</code>
+        </p>
       </CardContent>
     </>
   );

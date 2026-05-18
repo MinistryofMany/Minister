@@ -49,7 +49,8 @@ Package manager: pnpm. Node 20+.
 tessera/
 ├── apps/
 │   ├── tessera/                 # Main app (Next.js)
-│   └── demo-client/             # Sample RP (placeholder until Stage 4)
+│   ├── demo-client/             # Sample RP
+│   └── extension/               # Browser extension skeleton (Stage 6+)
 ├── packages/
 │   ├── vc/                      # VC issuance/verification, DID document, signing keys
 │   ├── plugin-sdk/              # Plugin interface types
@@ -357,6 +358,8 @@ export interface Plugin {
 
 **Current plugins:**
 - `email-domain` — collect email → magic-link verify → issue `email-domain` badge. The user's email itself is *not* stored; only the domain is.
+- `github` — OAuth `redirect` step → /badges/new/github/callback → `oauth-account` badge with `{ provider: "github", accountId, handle }`. Requires `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET`.
+- `tlsn-attestation` — generic TLSNotary plugin. Issues an `extension-action` step, the browser extension produces a TLSNotary presentation and POSTs it to `/api/tlsn/submit`, Tessera calls the `tlsn-verifier` sidecar to check it, then issues a `tlsn-attestation` badge. The extension's prover is not yet integrated — see Stage 6 status.
 
 ## OIDC provider (Stage 3+)
 
@@ -453,8 +456,8 @@ Why a separate Rust sidecar over WASM in Node: simpler operationally, pins one t
 - **Auth hardening** ✅ — JWT-strategy sessions (24h sliding, 1h refresh), Edge middleware route protection, per-user `sessionGeneration` revocation with "Sign out of all devices" button.
 - **Stage 3** — OIDC provider (`/oidc/authorize`, `/oidc/token`, `/oidc/userinfo`, openid-configuration discovery), client registration, consent screen.
 - **Stage 4** — Demo client Next.js app doing the full OIDC dance, gated by a specific badge.
-- **Stage 5** — GitHub OAuth plugin (validates the plugin interface against a second real case).
-- **Stage 6** — TLSNotary integration: extension skeleton, ws-proxy, notary-server, tlsn-verifier sidecar.
+- **Stage 5** ✅ — GitHub OAuth plugin. Validated the plugin interface against the `redirect` step kind; `oauth-account` badge end-to-end (requires real GitHub OAuth app creds for the live flow).
+- **Stage 6** ◐ partial — TLSNotary integration. Tessera-side complete: `tlsn-attestation` plugin, `/api/tlsn/submit` endpoint, `extension-action` step renderer, `tlsn-verifier` Rust sidecar (with `passthrough` mode for dev), `notary-server` running the pinned official binary, browser extension skeleton at `apps/extension/`. **Not yet wired:** `tlsn-js` prover inside the extension, `ws-proxy` real implementation, `tlsn-verifier` crate integration in the sidecar's `verify_real()` (currently throws).
 - **Stage 7** — Shareable proof links (signed artifacts, expiry, optional account gate, email send).
 - **Stage 8** — Age / id.me plugin via TLSNotary; eligibility records with month fuzzing.
 - **Stage 9** — Hardening: rate limits, audit-log review, OIDC security review, key rotation, real email transport (Resend/SES), production deploy guide.

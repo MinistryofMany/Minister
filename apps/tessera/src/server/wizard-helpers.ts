@@ -4,11 +4,12 @@ import type { WizardState } from "@tessera/plugin-sdk";
 // Extracted so the logic is unit-testable without standing up Prisma.
 
 // Resolve the indexed `pendingToken` for the current step, if any.
-// Two step kinds use it:
-//   - magic-link: payload.expectedToken  (carried in the email link)
-//   - redirect:   payload.expectedState  (carried in the OAuth state)
-// Both land in the same column because callback routes resolve their
-// session the same way: by token/state == pendingToken.
+// Three step kinds use it:
+//   - magic-link:       payload.expectedToken            (email link)
+//   - redirect:         payload.expectedState            (OAuth state)
+//   - extension-action: payload.expectedSubmissionToken  (TLSN submit)
+// All three land in the same column because callback / submit routes
+// resolve their session the same way: by token == pendingToken.
 export function pendingTokenFor(state: WizardState): string | null {
   const step = state.currentStep;
   switch (step.kind) {
@@ -16,6 +17,8 @@ export function pendingTokenFor(state: WizardState): string | null {
       return step.payload.expectedToken ?? null;
     case "redirect":
       return step.payload.expectedState ?? null;
+    case "extension-action":
+      return step.payload.expectedSubmissionToken ?? null;
     default:
       return null;
   }

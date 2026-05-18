@@ -92,6 +92,46 @@ operational counterpart.
 - Live e2e against github.com requires real OAuth app creds — the user
   sets `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET`.
 
+### Stage 6 — TLSNotary, Tessera-side ◐ partial
+
+What's wired:
+- `tlsn-attestation` plugin (generic; specific TLSN plugins extend it
+  in Stage 8).
+- `extension-action` step kind: payload carries
+  `expectedSubmissionToken` which the wizard runtime lifts onto
+  `WizardSession.pendingToken`. Same resolution path as magic-link and
+  OAuth redirect — `resumeViaPendingToken`.
+- `extension-action` renderer in the wizard UI
+  (`apps/tessera/src/components/wizard-client.tsx`).
+- `POST /api/tlsn/submit` route. CORS-permissive (the extension hits
+  it from `chrome-extension://...`), allowlist via
+  `TLSN_SUBMIT_ALLOWED_ORIGINS`. Enforces the token belongs to the
+  signed-in user, then hands `{ presentation }` to the plugin.
+- `services/tlsn-verifier/` — real Rust Axum HTTP service with two
+  modes:
+  - `passthrough` (dev default): base64-decode + JSON-parse the
+    "presentation," enforce serverName match, return the transcript.
+  - `real`: stubs `verify_real()` and refuses to run so a
+    misconfigured prod doesn't silently rubber-stamp. TODO: pin the
+    `tlsn-verifier` crate and implement the function.
+- `services/notary/` — pinned to
+  `ghcr.io/tlsnotary/notary-server:v0.1.0-alpha.11` in
+  docker-compose. Persisted notary key in a named volume.
+- `apps/extension/` — MV3 manifest, background service worker, popup.
+  The background already knows how to POST a presentation to
+  `/api/tlsn/submit`; it just doesn't have one to send yet.
+
+What's left to finish Stage 6:
+- Integrate `tlsn-js` in the extension. Prover runs in an offscreen
+  document (MV3 service workers can't host heavy WASM in the worker
+  context).
+- Implement `ws-proxy` in Rust or Go. Stays an alpine stub until the
+  extension's prover actually needs a TCP relay.
+- Pin the `tlsn-verifier` crate in
+  `services/tlsn-verifier/Cargo.toml` and implement `verify_real()`.
+  Cross-check the crate version matches the `notary-server` image we
+  pinned.
+
 ---
 
 ## What's left
