@@ -3,9 +3,9 @@
 // deliberately no in-app path to admin-ness — the first (and every)
 // admin is minted from a shell with DB access.
 //
-// Usage:
-//   pnpm --filter @tessera/app admin:grant -- --email you@example.com
-//   pnpm --filter @tessera/app admin:grant -- --email you@example.com --revoke
+// Usage (no `--` separator — pnpm forwards flags to the script as-is):
+//   pnpm --filter @tessera/app admin:grant --email you@example.com
+//   pnpm --filter @tessera/app admin:grant --email you@example.com --revoke
 //
 // Set DATABASE_URL the same way the app does.
 
