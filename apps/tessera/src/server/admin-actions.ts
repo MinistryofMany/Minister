@@ -5,6 +5,15 @@ import { z } from "zod";
 
 import { audit } from "@/lib/audit";
 import { generateInviteCode, normalizeInviteCode } from "@/lib/invite-codes";
+import {
+  parseRedirectUris,
+  validateClientScopes,
+} from "@/lib/oidc-client-admin";
+import {
+  generateClientId,
+  generateClientSecret,
+  hashClientSecret,
+} from "@/lib/oidc-clients";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session";
 
@@ -158,5 +167,193 @@ export async function revokeInviteCode(
   });
 
   revalidatePath("/admin/invite-codes");
+  return { ok: true };
+}
+
+// ---------------------------------------------------------------------------
+// OIDC clients
+// ---------------------------------------------------------------------------
+
+const OidcClientFields = z.object({
+  name: z.string().trim().min(1, "Name is required").max(80),
+  // Textarea contents — one URI per line; parsed/validated by
+  // parseRedirectUris.
+  redirectUris: z.string(),
+  scopes: z.array(z.string()).min(1, "Pick at least one scope"),
+});
+
+const CreateOidcClientInput = OidcClientFields.extend({
+  // Public clients (SPAs, native apps) get no secret — PKCE only.
+  publicClient: z.boolean().default(false),
+});
+
+export type CreateOidcClientResult =
+  | { ok: true; clientId: string; clientSecret: string | null }
+  | { ok: false; error: string };
+
+export async function createOidcClient(
+  input: z.infer<typeof CreateOidcClientInput>,
+): Promise<CreateOidcClientResult> {
+  const session = await requireAdmin();
+  const parsed = CreateOidcClientInput.safeParse(input);
+  if (!parsed.success) {
+    return {
+      ok: false,
+      error: parsed.error.issues[0]?.message ?? "Invalid input",
+    };
+  }
+
+  const uris = parseRedirectUris(parsed.data.redirectUris);
+  if (!uris.ok) return { ok: false, error: uris.error };
+  const scopes = validateClientScopes(parsed.data.scopes);
+  if (!scopes.ok) return { ok: false, error: scopes.error };
+
+  const clientId = generateClientId();
+  const clientSecret = parsed.data.publicClient ? null : generateClientSecret();
+
+  const row = await prisma.oidcClient.create({
+    data: {
+      clientId,
+      clientSecretHash: clientSecret
+        ? await hashClientSecret(clientSecret)
+        : null,
+      name: parsed.data.name,
+      redirectUris: uris.uris,
+      allowedScopes: scopes.scopes,
+      ownerUserId: session.user.id,
+    },
+    select: { id: true },
+  });
+
+  await audit(session.user.id, "admin.oidc_client.created", {
+    oidcClientId: row.id,
+    clientId,
+    name: parsed.data.name,
+    publicClient: parsed.data.publicClient,
+    redirectUris: uris.uris,
+    scopes: scopes.scopes,
+  });
+
+  revalidatePath("/admin/oidc-clients");
+  // The plaintext secret exists only in this response — it's hashed at
+  // rest, so the UI must show it now or never.
+  return { ok: true, clientId, clientSecret };
+}
+
+const UpdateOidcClientInput = OidcClientFields.extend({
+  id: z.string().cuid(),
+});
+
+export async function updateOidcClient(
+  input: z.infer<typeof UpdateOidcClientInput>,
+): Promise<AdminActionResult> {
+  const session = await requireAdmin();
+  const parsed = UpdateOidcClientInput.safeParse(input);
+  if (!parsed.success) {
+    return {
+      ok: false,
+      error: parsed.error.issues[0]?.message ?? "Invalid input",
+    };
+  }
+
+  const uris = parseRedirectUris(parsed.data.redirectUris);
+  if (!uris.ok) return { ok: false, error: uris.error };
+  const scopes = validateClientScopes(parsed.data.scopes);
+  if (!scopes.ok) return { ok: false, error: scopes.error };
+
+  const result = await prisma.oidcClient.updateMany({
+    where: { id: parsed.data.id },
+    data: {
+      name: parsed.data.name,
+      redirectUris: uris.uris,
+      allowedScopes: scopes.scopes,
+    },
+  });
+  if (result.count === 0) return { ok: false, error: "Client not found" };
+
+  await audit(session.user.id, "admin.oidc_client.updated", {
+    oidcClientId: parsed.data.id,
+    name: parsed.data.name,
+    redirectUris: uris.uris,
+    scopes: scopes.scopes,
+  });
+
+  revalidatePath("/admin/oidc-clients");
+  return { ok: true };
+}
+
+const ClientIdInput = z.object({ id: z.string().cuid() });
+
+export type RotateOidcSecretResult =
+  | { ok: true; clientSecret: string }
+  | { ok: false; error: string };
+
+export async function rotateOidcClientSecret(
+  input: z.infer<typeof ClientIdInput>,
+): Promise<RotateOidcSecretResult> {
+  const session = await requireAdmin();
+  const parsed = ClientIdInput.safeParse(input);
+  if (!parsed.success) return { ok: false, error: "Invalid input" };
+
+  const client = await prisma.oidcClient.findUnique({
+    where: { id: parsed.data.id },
+    select: { id: true, clientId: true, clientSecretHash: true },
+  });
+  if (!client) return { ok: false, error: "Client not found" };
+  if (!client.clientSecretHash) {
+    return { ok: false, error: "Public clients have no secret to rotate" };
+  }
+
+  const clientSecret = generateClientSecret();
+  await prisma.oidcClient.update({
+    where: { id: client.id },
+    data: { clientSecretHash: await hashClientSecret(clientSecret) },
+  });
+
+  // The old secret stops working immediately — any RP still configured
+  // with it fails at /oidc/token until updated.
+  await audit(session.user.id, "admin.oidc_client.secret_rotated", {
+    oidcClientId: client.id,
+    clientId: client.clientId,
+  });
+
+  revalidatePath("/admin/oidc-clients");
+  return { ok: true, clientSecret };
+}
+
+export async function deleteOidcClient(
+  input: z.infer<typeof ClientIdInput>,
+): Promise<AdminActionResult> {
+  const session = await requireAdmin();
+  const parsed = ClientIdInput.safeParse(input);
+  if (!parsed.success) return { ok: false, error: "Invalid input" };
+
+  const client = await prisma.oidcClient.findUnique({
+    where: { id: parsed.data.id },
+    select: { id: true, clientId: true, name: true },
+  });
+  if (!client) return { ok: false, error: "Client not found" };
+
+  // Outstanding tokens/codes reference the client by clientId string
+  // (no FK) — revoke them in the same transaction so a deleted client
+  // can't keep calling /oidc/userinfo.
+  const [revokedTokens] = await prisma.$transaction([
+    prisma.oidcAccessToken.deleteMany({
+      where: { clientId: client.clientId },
+    }),
+    prisma.oidcAuthorizationCode.deleteMany({
+      where: { clientId: client.clientId },
+    }),
+    prisma.oidcClient.delete({ where: { id: client.id } }),
+  ]);
+
+  await audit(session.user.id, "admin.oidc_client.deleted", {
+    oidcClientId: client.id,
+    clientId: client.clientId,
+    name: client.name,
+    revokedAccessTokens: revokedTokens.count,
+  });
+
+  revalidatePath("/admin/oidc-clients");
   return { ok: true };
 }

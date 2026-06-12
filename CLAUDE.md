@@ -396,6 +396,10 @@ export interface Plugin {
 
 ## OIDC provider (Stage 3+)
 
+### Client registration
+
+Relying parties are managed in the admin UI at `/admin/oidc-clients`: register (confidential with one-time-displayed secret, or public/PKCE-only), edit name/redirect URIs/allowed scopes, rotate secret, delete (revokes outstanding tokens in the same transaction). Validation lives in `src/lib/oidc-client-admin.ts` — redirect URIs are absolute, fragment-free, https-only except localhost. `scripts/seed-client.ts` remains only as the docker-compose bootstrap for the demo client; it is not the management path.
+
 ### Endpoints
 
 - `GET  /.well-known/openid-configuration` — discovery

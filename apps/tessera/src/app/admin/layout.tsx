@@ -26,6 +26,7 @@ export default async function AdminLayout({
       <nav className="flex gap-1 border-b border-neutral-200 pb-px text-sm dark:border-neutral-800">
         <AdminTab href="/admin/users">Users</AdminTab>
         <AdminTab href="/admin/invite-codes">Invite codes</AdminTab>
+        <AdminTab href="/admin/oidc-clients">OIDC clients</AdminTab>
         <AdminTab href="/admin/audit">Audit log</AdminTab>
       </nav>
 
