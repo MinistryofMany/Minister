@@ -24,7 +24,10 @@ services:
       POSTGRES_PASSWORD: tessera
       POSTGRES_DB: tessera
     ports:
-      - "5432:5432"
+      # Host port 5433 — 5432 tends to be taken by another local
+      # postgres. Container-internal stays 5432; for host-side dev use
+      # postgresql://tessera:tessera@localhost:5433/tessera
+      - "5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
