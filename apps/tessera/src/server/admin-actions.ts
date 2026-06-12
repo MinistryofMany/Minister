@@ -42,8 +42,8 @@ export async function setUserBanned(
     return { ok: false, error: "You can't ban yourself" };
   }
 
-  // Admins can't ban other admins — demote first (via make-admin.ts).
-  // Keeps a compromised admin account from locking every admin out.
+  // Admins can't ban other admins — demote first. Keeps a compromised
+  // admin account from locking every admin out.
   const result = await prisma.user.updateMany({
     where: { id: userId, isAdmin: false },
     data: banned
@@ -58,6 +58,45 @@ export async function setUserBanned(
 
   await audit(session.user.id, banned ? "admin.user_banned" : "admin.user_unbanned", {
     targetUserId: userId,
+  });
+
+  revalidatePath("/admin/users");
+  return { ok: true };
+}
+
+const SetAdminInput = z.object({
+  userId: z.string().cuid(),
+  admin: z.boolean(),
+});
+
+export async function setUserAdmin(
+  input: z.infer<typeof SetAdminInput>,
+): Promise<AdminActionResult> {
+  const session = await requireAdmin();
+  const parsed = SetAdminInput.safeParse(input);
+  if (!parsed.success) return { ok: false, error: "Invalid input" };
+  const { userId, admin } = parsed.data;
+
+  // No self-service on your own flag — prevents demoting yourself into
+  // a zero-admin lockout. Another admin (or make-admin.ts) can.
+  if (userId === session.user.id) {
+    return { ok: false, error: "You can't change your own admin status" };
+  }
+
+  // Promoting a banned user would be contradictory; unban first.
+  const result = await prisma.user.updateMany({
+    where: admin ? { id: userId, isBanned: false } : { id: userId },
+    data: { isAdmin: admin },
+  });
+  if (result.count === 0) {
+    return { ok: false, error: "User not found (or is banned)" };
+  }
+
+  // Same action names make-admin.ts uses, so the audit trail reads
+  // uniformly regardless of which path granted it.
+  await audit(session.user.id, admin ? "admin.granted" : "admin.revoked", {
+    targetUserId: userId,
+    via: "/admin/users",
   });
 
   revalidatePath("/admin/users");

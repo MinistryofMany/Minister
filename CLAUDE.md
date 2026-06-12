@@ -255,7 +255,7 @@ Sliding window. An active user's JWT auto-refreshes at most once per hour, each 
 
 **Use `getCurrentSession()` / `requireSession()` — never raw `auth()` — anywhere that gates user-specific content. Raw `auth()` only verifies the JWT signature; it doesn't catch revoked sessions or bans.**
 
-**Bans + admin:** the same cached session loader also enforces `User.isBanned` (banned ⇒ treated as signed out) and exposes `isAdmin` via `getSessionFlags()`. `requireAdmin()` gates `/admin` pages and admin server actions. Admin-ness is granted only via `pnpm --filter @tessera/app admin:grant -- --email <email>` — there is no in-app path. Banning a user bumps their `sessionGeneration`, killing live sessions on their next request; admins can't ban themselves or other admins (demote via CLI first).
+**Bans + admin:** the same cached session loader also enforces `User.isBanned` (banned ⇒ treated as signed out) and exposes `isAdmin` via `getSessionFlags()`. `requireAdmin()` gates `/admin` pages and admin server actions. The *first* admin is minted via `pnpm --filter @tessera/app admin:grant --email <email>` (bootstrap only); after that, admins promote/demote on `/admin/users`. Nobody can change their own admin flag (no self-demotion lockout). Banning a user bumps their `sessionGeneration`, killing live sessions on their next request; admins can't ban admins (demote first), and banned users can't be promoted (unban first).
 
 **Per-request cost:**
 

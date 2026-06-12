@@ -1,4 +1,5 @@
 import { AdminUserBanButton } from "@/components/admin-user-ban-button";
+import { AdminUserRoleButton } from "@/components/admin-user-role-button";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session";
 
@@ -51,8 +52,17 @@ export default async function AdminUsersPage() {
                   {u.createdAt.toLocaleDateString()}
                 </div>
               </div>
-              {u.id !== session.user.id && !u.isAdmin ? (
-                <AdminUserBanButton userId={u.id} banned={u.isBanned} />
+              {u.id !== session.user.id ? (
+                <div className="flex items-center gap-2">
+                  {/* Banned users can't be promoted (unban first), and
+                      admins can't be banned (demote first). */}
+                  {!u.isBanned ? (
+                    <AdminUserRoleButton userId={u.id} isAdmin={u.isAdmin} />
+                  ) : null}
+                  {!u.isAdmin ? (
+                    <AdminUserBanButton userId={u.id} banned={u.isBanned} />
+                  ) : null}
+                </div>
               ) : null}
             </li>
           );
