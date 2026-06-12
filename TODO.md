@@ -92,9 +92,13 @@ lost:
   more than one instance.
 - KMS-backed signing key (currently dev: ephemeral persisted JWK at
   `apps/tessera/dev-keys/issuer.jwk`).
-- Real email transport (Resend / SES). Right now `src/lib/mailer.ts`
-  throws in production and console-logs in dev; share-link emails and
-  magic links use it.
+- ~~Real email transport (Resend / SES).~~ Done — `src/lib/mailer.ts`
+  sends via Resend's HTTP API when `RESEND_API_KEY` + `MAIL_FROM` are
+  set; otherwise dev console-logs and prod throws. Sign-in magic links,
+  plugin emails, and share-link emails all route through it. **Not yet
+  done:** a live send hasn't been verified against a Resend account —
+  needs a verified sender domain and a confirmed test recipient (see
+  `docs/email-setup.md`).
 - ~~Audit-log review UI at `/admin/audit`.~~ Done (consolidation work) —
   basic paginated viewer; filters/search still Stage 9 material.
 - OIDC security-review pass: refresh tokens, scope-creep prevention,

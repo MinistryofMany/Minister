@@ -4,27 +4,37 @@ import Passkey from "next-auth/providers/passkey";
 import type { EmailConfig } from "next-auth/providers";
 
 import { authConfig } from "@/auth.config";
-import { captureAuthMail } from "@/lib/mailer";
+import { sendMail } from "@/lib/mailer";
 import { prisma } from "@/lib/prisma";
 
-// Dev-mode email "provider": print the magic link to the server log
-// instead of sending a real email. Swap in a real transport (Resend, SES)
-// in later stages.
-const ConsoleEmail = (): EmailConfig => ({
+// Email sign-in provider. Delivery goes through the app's single
+// mailer (Resend if configured, server-log in dev) so sign-in magic
+// links use the same transport as plugin and share-link emails.
+const EmailProvider = (): EmailConfig => ({
   id: "email",
   type: "email",
   name: "Email",
-  from: "noreply@tessera.local",
+  from: process.env.MAIL_FROM ?? "noreply@tessera.local",
   maxAge: 60 * 60, // 1 hour magic-link TTL
   server: { host: "localhost", port: 0, auth: { user: "", pass: "" } },
   options: {},
   async sendVerificationRequest({ identifier, url }) {
-    // Dev-only transport. NEVER log magic-link URLs in prod — they are
-    // bearer tokens.
-    captureAuthMail(identifier, url);
-    console.log(
-      `\n[tessera:auth] Magic link for ${identifier}\n  ${url}\n  (click within 1h)\n`,
-    );
+    await sendMail({
+      to: identifier,
+      subject: "Sign in to Tessera",
+      text: [
+        "Click the link below to sign in to Tessera:",
+        "",
+        url,
+        "",
+        "If you didn't request this, you can ignore this email. The link expires in 1 hour.",
+      ].join("\n"),
+      html: [
+        `<p>Click the link below to sign in to Tessera:</p>`,
+        `<p><a href="${url}">Sign in to Tessera</a></p>`,
+        `<p style="color:#6b7280;font-size:12px">If you didn't request this, you can ignore this email. The link expires in 1 hour.</p>`,
+      ].join(""),
+    });
   },
 });
 
@@ -35,6 +45,6 @@ const ConsoleEmail = (): EmailConfig => ({
 export const { handlers, auth, signIn, signOut } = NextAuth({
   ...authConfig,
   adapter: PrismaAdapter(prisma),
-  providers: [Passkey, ConsoleEmail()],
+  providers: [Passkey, EmailProvider()],
   experimental: { enableWebAuthn: true },
 });

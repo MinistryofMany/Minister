@@ -2,11 +2,21 @@ import { appendFileSync } from "node:fs";
 
 import type { MailMessage } from "@tessera/plugin-sdk";
 
+// Single point of email egress for the app. Everything that sends mail
+// — Auth.js sign-in magic links, the email-domain plugin, share-link
+// emails — routes through sendMail so there's exactly one transport to
+// configure and one place that can leak link tokens.
+//
+// Transport selection:
+//   * RESEND_API_KEY + MAIL_FROM set → send via Resend's HTTP API.
+//   * otherwise, dev/test            → print to the server log (links
+//                                       stay clickable without a relay).
+//   * otherwise, production          → throw (never silently drop mail).
+
 // e2e hook: when TESSERA_MAIL_CAPTURE_FILE is set (never in
 // production), every outbound message is appended as a JSON line so
 // the Playwright suite can read magic links instead of scraping the
-// server log. The auth.ts ConsoleEmail provider routes through
-// captureAuthMail for the same reason.
+// server log.
 function capture(message: MailMessage): void {
   const file = process.env.TESSERA_MAIL_CAPTURE_FILE;
   if (!file || process.env.NODE_ENV === "production") return;
@@ -21,24 +31,62 @@ function capture(message: MailMessage): void {
   );
 }
 
-export function captureAuthMail(to: string, url: string): void {
-  capture({ to, subject: "Sign in to Tessera", text: url });
+// True when a real transport is configured. Handy for surfacing
+// "magic link printed to the server log" vs "check your inbox" copy.
+export function mailTransportConfigured(): boolean {
+  return Boolean(process.env.RESEND_API_KEY && process.env.MAIL_FROM);
 }
 
-// Single point of email egress for the app. Stage 0/1: console log in
-// dev. Stage 9+: swap in Resend/SES based on env. Plugins must use this
-// (via PluginContext.sendMail) so they don't grow their own transports.
+// Resend HTTP transport. A single POST, so we use fetch rather than
+// pulling in a dependency. `from` must be an address on a domain
+// verified in the Resend account, e.g. "Tessera <noreply@your.domain>".
+async function sendViaResend(
+  message: MailMessage,
+  apiKey: string,
+  from: string,
+): Promise<void> {
+  const res = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      from,
+      to: [message.to],
+      subject: message.subject,
+      text: message.text,
+      ...(message.html ? { html: message.html } : {}),
+    }),
+  });
+  if (!res.ok) {
+    // Surface Resend's error body (e.g. unverified-domain) so misconfig
+    // is loud. The caller logs this server-side; it never reaches a user.
+    const detail = await res.text().catch(() => "");
+    throw new Error(`Resend send failed (HTTP ${res.status}): ${detail}`);
+  }
+}
+
 export async function sendMail(message: MailMessage): Promise<void> {
-  // No production transport wired yet. Logging both prod and dev would
-  // leak link tokens — refuse to "send" in prod to make this loud.
+  // Offer the message to the e2e capture hook first (no-op unless the
+  // capture-file env is set and we're not in production).
+  capture(message);
+
+  const apiKey = process.env.RESEND_API_KEY;
+  const from = process.env.MAIL_FROM;
+  if (apiKey && from) {
+    await sendViaResend(message, apiKey, from);
+    return;
+  }
+
   if (process.env.NODE_ENV === "production") {
     throw new Error(
-      "Production mail transport is not configured. Set up Resend/SES in apps/tessera/src/lib/mailer.ts before going live.",
+      "No mail transport is configured. Set RESEND_API_KEY and MAIL_FROM to send via Resend, or wire another transport in apps/tessera/src/lib/mailer.ts.",
     );
   }
 
-  capture(message);
-
+  // Dev/test fallback: print to the server log so magic links remain
+  // clickable without a relay.
   console.log(
     `\n[tessera:mailer] -> ${message.to}\n  Subject: ${message.subject}\n  ${message.text.split("\n").join("\n  ")}\n`,
   );
