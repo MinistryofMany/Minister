@@ -383,7 +383,7 @@ export interface Plugin {
 **Wizard runtime** (`apps/tessera/src/server/wizard.ts`):
 - `startWizard(pluginId, userId, origin)` creates a `WizardSession` row and calls `plugin.startWizard`.
 - `submitStep(sessionId, userId, origin, input)` calls `plugin.handleStep`. On `continue` with a `magic-link` step, lifts the step's `expectedToken` to `WizardSession.pendingToken` (indexed column) so the verify route can resolve the session by token without a JSON-column query.
-- `consumeMagicLinkToken(token, userId, origin)` is the magic-link callback path. Enforces that the token belongs to the *currently signed-in user* (so a forwarded email can't grant a badge to a different account).
+- `resumeViaPendingToken({ token, userId, origin, input })` is the generic round-trip callback path — magic-link clicks, OAuth `state` callbacks, and extension submissions all resolve their wizard session through it. Enforces that the token belongs to the *currently signed-in user* (so a forwarded email can't grant a badge to a different account).
 - `issueBadgesAndComplete` validates the plugin's claims against the badge type's Zod schema, mints the JWT-VC (`jti = badge.id`, `exp = 1y`), inserts `Badge` with the signed VC, marks the wizard completed, audit-logs.
 
 **Wizard UI** is built-in (`apps/tessera/src/components/wizard-client.tsx`). It dispatches on `step.kind` to a per-kind renderer (form, magic-link, info, …). Most plugins write zero React — they define their step payloads and the runtime handles rendering.

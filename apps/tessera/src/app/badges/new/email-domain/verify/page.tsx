@@ -11,7 +11,7 @@ import {
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { getCurrentSession } from "@/lib/session";
-import { consumeMagicLinkToken } from "@/server/wizard";
+import { resumeViaPendingToken } from "@/server/wizard";
 
 interface PageProps {
   searchParams: Promise<{ token?: string }>;
@@ -57,7 +57,12 @@ export default async function EmailDomainVerifyPage({
   const host = h.get("host") ?? "localhost:3000";
   const origin = `${proto}://${host}`;
 
-  const result = await consumeMagicLinkToken(token, session.user.id, origin);
+  const result = await resumeViaPendingToken({
+    token,
+    userId: session.user.id,
+    origin,
+    input: { token },
+  });
 
   if (result.kind === "complete") {
     redirect("/profile?issued=email-domain");

@@ -128,6 +128,3 @@ re-implementing against this codebase, not restoring old code.
 - `next.config.ts`: `typedRoutes` is OFF because it rejected `redirect()`
   to external RP `redirect_uri`s. If a typedRoutes-compatible escape
   hatch lands upstream, re-enable.
-- `consumeMagicLinkToken` in `src/server/wizard.ts` is a backwards-compat
-  shim around `resumeViaPendingToken`. Drop when the email-domain verify
-  page is reworked to call the generic helper directly.

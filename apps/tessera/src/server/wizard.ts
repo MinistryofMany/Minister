@@ -210,22 +210,6 @@ export async function resumeViaPendingToken(args: {
   return result;
 }
 
-// Backwards-compat shim — pre-Stage-5 the only caller was the email
-// magic-link verify page. Identical to resumeViaPendingToken but with
-// the original positional signature and a fixed `{ token }` input.
-export async function consumeMagicLinkToken(
-  token: string,
-  userId: string,
-  origin: string,
-) {
-  return resumeViaPendingToken({
-    token,
-    userId,
-    origin,
-    input: { token },
-  });
-}
-
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
