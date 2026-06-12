@@ -478,7 +478,7 @@ Why a separate Rust sidecar over WASM in Node: simpler operationally, pins one t
 - Server actions for app-internal mutations. Raw Next.js route handlers for OIDC endpoints (Stage 3+, need full header/status/caching control).
 - Use `getCurrentSession()` / `requireSession()` (from `src/lib/session.ts`), not raw `auth()`, anywhere that gates user-specific content.
 - The RSC server→client boundary is a JSON-only serializer — class instances (e.g. Zod schemas) don't cross. When a server component renders a client component, build a plain-object view type at the seam (`BadgeMetaView` is an example). TypeScript won't catch this; it surfaces only at runtime.
-- Tests: Vitest for unit tests (co-located `*.test.ts` next to source), Playwright for end-to-end. Run `pnpm test` at the repo root. The pure-function logic is heavily covered; DB-touching code stays integration-tested via Playwright.
+- Tests: Vitest for unit tests (co-located `*.test.ts` next to source; `pnpm test` at the repo root) and Playwright for end-to-end (`pnpm --filter @tessera/app test:e2e`). The e2e suite boots its own dev server on :3901 against a dedicated `tessera_e2e` database on the compose postgres (which must be running) and reads magic links from a mail-capture file (`TESSERA_MAIL_CAPTURE_FILE`, wired automatically). Specs live in `apps/tessera/e2e/`; two sessions (user, admin) are minted once in `auth.setup.ts` and reused via storage state.
 - ESLint + Prettier with project defaults.
 - Conventional commits, authored under the repo's configured git identity. No tool/assistant attribution anywhere in commits, code, or comments.
 - No `any`. No `@ts-ignore` / `@ts-expect-error` without an inline justification comment.

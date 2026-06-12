@@ -12,6 +12,9 @@ export default defineConfig({
     },
   },
   test: {
+    // Unit tests only — e2e/*.spec.ts belongs to Playwright, which
+    // vitest's default include pattern would otherwise pick up.
+    include: ["src/**/*.test.ts"],
     // Each test file gets its own process so module-level state
     // (env mutation, the issuer cache) doesn't bleed between files.
     isolate: true,

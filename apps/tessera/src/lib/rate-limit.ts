@@ -84,41 +84,51 @@ export function clientIpFrom(headers: {
 
 const MINUTE = 60_000;
 
+// Caps are env-overridable so the e2e suite (which drives these
+// endpoints far harder than a human) can raise them without forking
+// the code path. Windows stay fixed.
+function envMax(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (!raw) return fallback;
+  const n = Number.parseInt(raw, 10);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
 // Code exchange: a legitimate RP makes one call per sign-in.
 export const oidcTokenLimiter = createRateLimiter({
   windowMs: MINUTE,
-  max: 30,
+  max: envMax("TESSERA_RL_TOKEN_MAX", 30),
 });
 
 // Claims fetch: one or two calls per RP session, but cheap to serve.
 export const oidcUserinfoLimiter = createRateLimiter({
   windowMs: MINUTE,
-  max: 60,
+  max: envMax("TESSERA_RL_USERINFO_MAX", 60),
 });
 
 // Consent page render: one per sign-in attempt.
 export const oidcAuthorizeLimiter = createRateLimiter({
   windowMs: MINUTE,
-  max: 30,
+  max: envMax("TESSERA_RL_AUTHORIZE_MAX", 30),
 });
 
 // Presentation submission: TLSNotary proofs take seconds to produce,
 // so anything past a handful per minute is not a browser extension.
 export const tlsnSubmitLimiter = createRateLimiter({
   windowMs: MINUTE,
-  max: 10,
+  max: envMax("TESSERA_RL_TLSN_MAX", 10),
 });
 
 // Magic-link sends: the abuse case is spamming someone's inbox, so the
 // window is long and the cap low.
 export const signInEmailLimiter = createRateLimiter({
   windowMs: 15 * MINUTE,
-  max: 10,
+  max: envMax("TESSERA_RL_SIGNIN_MAX", 10),
 });
 
 // Share-link views: every render writes a ShareLinkView row, and the
 // token space shouldn't be probeable at speed.
 export const shareViewLimiter = createRateLimiter({
   windowMs: MINUTE,
-  max: 60,
+  max: envMax("TESSERA_RL_SHARE_MAX", 60),
 });

@@ -4,6 +4,7 @@ import Passkey from "next-auth/providers/passkey";
 import type { EmailConfig } from "next-auth/providers";
 
 import { authConfig } from "@/auth.config";
+import { captureAuthMail } from "@/lib/mailer";
 import { prisma } from "@/lib/prisma";
 
 // Dev-mode email "provider": print the magic link to the server log
@@ -20,6 +21,7 @@ const ConsoleEmail = (): EmailConfig => ({
   async sendVerificationRequest({ identifier, url }) {
     // Dev-only transport. NEVER log magic-link URLs in prod — they are
     // bearer tokens.
+    captureAuthMail(identifier, url);
     console.log(
       `\n[tessera:auth] Magic link for ${identifier}\n  ${url}\n  (click within 1h)\n`,
     );

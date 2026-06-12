@@ -1,0 +1,144 @@
+import { readFileSync } from "node:fs";
+
+import { expect, type Page } from "@playwright/test";
+
+import { PrismaClient } from "../src/generated/prisma/index.js";
+import { E2E_DATABASE_URL, MAIL_FILE } from "./env";
+
+// One client per worker process; datasourceUrl pins it to the e2e DB
+// regardless of what DATABASE_URL the invoking shell carries.
+export const prisma = new PrismaClient({ datasourceUrl: E2E_DATABASE_URL });
+
+interface CapturedMail {
+  ts: number;
+  to: string;
+  subject: string;
+  text: string;
+}
+
+function readMail(): CapturedMail[] {
+  let raw: string;
+  try {
+    raw = readFileSync(MAIL_FILE, "utf8");
+  } catch {
+    return [];
+  }
+  return raw
+    .split("\n")
+    .filter((l) => l.trim().length > 0)
+    .map((l) => JSON.parse(l) as CapturedMail);
+}
+
+// Poll the capture file for a message to `to` newer than `since`.
+export async function waitForMailTo(
+  to: string,
+  since: number,
+  timeoutMs = 15_000,
+): Promise<CapturedMail> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const match = readMail()
+      .filter((m) => m.to === to && m.ts >= since)
+      .at(-1);
+    if (match) return match;
+    if (Date.now() > deadline) {
+      throw new Error(`No captured mail to ${to} within ${timeoutMs}ms`);
+    }
+    await new Promise((r) => setTimeout(r, 200));
+  }
+}
+
+export function extractUrl(text: string, pathFragment: string): string {
+  const match = text
+    .split(/\s+/)
+    .find((w) => w.startsWith("http") && w.includes(pathFragment));
+  if (!match) {
+    throw new Error(`No URL containing "${pathFragment}" in: ${text}`);
+  }
+  return match;
+}
+
+// Drive the sign-in form and return the magic-link URL from the mail
+// capture without visiting it.
+//
+// The click is retried: in dev mode the first visit can win the race
+// against hydration, in which case the button renders but the handler
+// isn't attached yet and the click is a no-op.
+export async function requestMagicLink(
+  page: Page,
+  email: string,
+): Promise<string> {
+  let mail: CapturedMail | null = null;
+  for (let attempt = 0; attempt < 3 && !mail; attempt++) {
+    // Fresh navigation each attempt — a successful click moves the page
+    // to Auth.js's verify-request screen, where the form no longer
+    // exists.
+    await page.goto("/");
+    const since = Date.now();
+    await page.getByPlaceholder("you@example.com").fill(email);
+    await page.getByRole("button", { name: "Email me a magic link" }).click();
+    mail = await waitForMailTo(email, since, 8000).catch(() => null);
+  }
+  if (!mail) {
+    throw new Error(`Sign-in click never produced a magic link for ${email}`);
+  }
+  return extractUrl(mail.text, "/api/auth/callback/email");
+}
+
+// Full magic-link sign-in through the real UI + capture file. Ends on
+// /profile (Auth.js default callback for our sign-in form).
+export async function signInViaMagicLink(
+  page: Page,
+  email: string,
+): Promise<void> {
+  const url = await requestMagicLink(page, email);
+  await page.goto(url);
+  await expect(page.getByRole("link", { name: "Profile" })).toBeVisible();
+}
+
+export async function signOut(page: Page): Promise<void> {
+  await page.goto("/settings");
+  await page.getByRole("button", { name: "Sign out", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "Email me a magic link" }),
+  ).toBeVisible();
+}
+
+// Drives the email-domain wizard end-to-end for whatever user the page
+// is signed in as. `proofEmail`'s domain becomes the badge claim.
+export async function issueEmailDomainBadge(
+  page: Page,
+  proofEmail: string,
+): Promise<void> {
+  const since = Date.now();
+  await page.goto("/badges/new/email-domain");
+  await page.locator('input[type="email"]').fill(proofEmail);
+  await page.getByRole("button", { name: "Send verification link" }).click();
+  const mail = await waitForMailTo(proofEmail, since);
+  const url = extractUrl(mail.text, "/badges/new/email-domain/verify");
+  await page.goto(url);
+  await expect(page).toHaveURL(/\/profile\?issued=email-domain/);
+}
+
+export async function userIdByEmail(email: string): Promise<string> {
+  const user = await prisma.user.findUnique({
+    where: { email },
+    select: { id: true },
+  });
+  if (!user) throw new Error(`No user with email ${email}`);
+  return user.id;
+}
+
+export async function grantAdmin(email: string): Promise<void> {
+  await prisma.user.update({ where: { email }, data: { isAdmin: true } });
+}
+
+// Accept every native confirm() the page raises from here on.
+export function acceptDialogs(page: Page): void {
+  page.on("dialog", (dialog) => void dialog.accept());
+}
+
+// @playwright/test applies test.use({ storageState }) to
+// browser.newContext() as well — pass this to get a genuinely
+// anonymous context inside a spec that uses a signed-in default.
+export const ANON_STATE = { cookies: [], origins: [] };
