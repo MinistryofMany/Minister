@@ -44,3 +44,7 @@ apps/tessera/dev-keys/
 # Claude harness state
 .claude/worktrees/
 .claude/settings.local.json
+
+# Archived prior iteration of Tessera (Express/tRPC/JSON-store; pulled from ahes:/tank/Tessera).
+# Kept as a self-contained git repo with its own .git for reference (Aadhaar plugin, Phase 2 mobile spike).
+archive/
