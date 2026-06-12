@@ -1,6 +1,7 @@
 import type { Plugin } from "@tessera/plugin-sdk";
 
 import { emailDomainPlugin } from "./email-domain";
+import { githubPlugin } from "./github";
 import { inviteCodePlugin } from "./invite-code";
 import { tlsnAttestationPlugin } from "./tlsn-attestation";
 
@@ -9,10 +10,11 @@ import { tlsnAttestationPlugin } from "./tlsn-attestation";
 //
 // Plugins whose required env is missing are still registered (the
 // plugin list page shows them) but startWizard throws — the user sees
-// "plugin is not configured" rather than the plugin silently
+// "GitHub plugin is not configured" rather than the plugin silently
 // vanishing.
 const PLUGINS: Plugin[] = [
   emailDomainPlugin,
+  githubPlugin,
   inviteCodePlugin,
   tlsnAttestationPlugin,
 ];
