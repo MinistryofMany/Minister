@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 
 import { Button } from "@/components/ui/button";
+import { CopyButton } from "@/components/copy-button";
 import { Input } from "@/components/ui/input";
 import { createInviteCode } from "@/server/admin-actions";
 
@@ -57,18 +58,7 @@ export function AdminInviteCreateForm() {
         <h3 className="text-sm font-semibold">Invite code minted</h3>
         <div className="flex items-center gap-2">
           <Input readOnly value={createdCode} className="font-mono text-sm" />
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => {
-              if (typeof navigator !== "undefined" && navigator.clipboard) {
-                void navigator.clipboard.writeText(createdCode);
-              }
-            }}
-          >
-            Copy
-          </Button>
+          <CopyButton value={createdCode} />
         </div>
         <Button
           type="button"

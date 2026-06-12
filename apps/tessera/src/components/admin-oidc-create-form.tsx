@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 
 import { Button } from "@/components/ui/button";
+import { CopyButton } from "@/components/copy-button";
 import { Input } from "@/components/ui/input";
 import { createOidcClient } from "@/server/admin-actions";
 
@@ -181,18 +182,7 @@ function CopyRow({ label, value }: { label: string; value: string }) {
         {label}
       </span>
       <Input readOnly value={value} className="font-mono text-xs" />
-      <Button
-        type="button"
-        variant="outline"
-        size="sm"
-        onClick={() => {
-          if (typeof navigator !== "undefined" && navigator.clipboard) {
-            void navigator.clipboard.writeText(value);
-          }
-        }}
-      >
-        Copy
-      </Button>
+      <CopyButton value={value} />
     </div>
   );
 }

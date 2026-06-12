@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 
 import { Button } from "@/components/ui/button";
+import { CopyButton } from "@/components/copy-button";
 import { Input } from "@/components/ui/input";
 import type { DisplayBadge } from "@/lib/badges";
 import { createShareLink } from "@/server/share-actions";
@@ -65,18 +66,7 @@ export function ShareLinkCreateForm({ badges, origin }: Props) {
         </p>
         <div className="flex items-center gap-2">
           <Input readOnly value={createdUrl} className="font-mono text-xs" />
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => {
-              if (typeof navigator !== "undefined" && navigator.clipboard) {
-                void navigator.clipboard.writeText(createdUrl);
-              }
-            }}
-          >
-            Copy
-          </Button>
+          <CopyButton value={createdUrl} />
         </div>
         <Button
           type="button"

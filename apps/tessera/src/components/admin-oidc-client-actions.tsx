@@ -3,6 +3,7 @@
 import { useState, useTransition } from "react";
 
 import { Button } from "@/components/ui/button";
+import { CopyButton } from "@/components/copy-button";
 import { Input } from "@/components/ui/input";
 import {
   deleteOidcClient,
@@ -88,18 +89,7 @@ export function AdminOidcClientActions({
               value={rotatedSecret}
               className="font-mono text-xs"
             />
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => {
-                if (typeof navigator !== "undefined" && navigator.clipboard) {
-                  void navigator.clipboard.writeText(rotatedSecret);
-                }
-              }}
-            >
-              Copy
-            </Button>
+            <CopyButton value={rotatedSecret} />
             <Button
               type="button"
               variant="ghost"
