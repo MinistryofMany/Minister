@@ -1,15 +1,15 @@
 import Link from "next/link";
 
 import { Button } from "@/components/ui/button";
-import { getCurrentSession } from "@/lib/session";
+import { getSessionFlags } from "@/lib/session";
 
 export async function Header() {
   // Same reason as the home page: a stale JWT shouldn't render the
   // signed-in nav (which links to /profile, where the user would be
-  // bounced back out anyway). React.cache() in getCurrentSession
+  // bounced back out anyway). React.cache() in the session loader
   // de-dupes the DB read across header + page in the same request.
-  const session = await getCurrentSession();
-  const signedIn = Boolean(session?.user);
+  const flags = await getSessionFlags();
+  const signedIn = Boolean(flags?.session.user);
 
   return (
     <header className="border-b border-neutral-200 bg-white/80 backdrop-blur dark:border-neutral-800 dark:bg-neutral-950/80">
@@ -29,6 +29,11 @@ export async function Header() {
               <Button asChild variant="ghost" size="sm">
                 <Link href="/settings">Settings</Link>
               </Button>
+              {flags?.isAdmin ? (
+                <Button asChild variant="ghost" size="sm">
+                  <Link href="/admin">Admin</Link>
+                </Button>
+              ) : null}
             </>
           ) : (
             <Button asChild variant="ghost" size="sm">

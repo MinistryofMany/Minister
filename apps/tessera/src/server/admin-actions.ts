@@ -1,0 +1,162 @@
+"use server";
+
+import { revalidatePath } from "next/cache";
+import { z } from "zod";
+
+import { audit } from "@/lib/audit";
+import { generateInviteCode, normalizeInviteCode } from "@/lib/invite-codes";
+import { prisma } from "@/lib/prisma";
+import { requireAdmin } from "@/lib/session";
+
+export type AdminActionResult =
+  | { ok: true }
+  | { ok: false; error: string };
+
+// ---------------------------------------------------------------------------
+// Users
+// ---------------------------------------------------------------------------
+
+const SetBannedInput = z.object({
+  userId: z.string().cuid(),
+  banned: z.boolean(),
+});
+
+export async function setUserBanned(
+  input: z.infer<typeof SetBannedInput>,
+): Promise<AdminActionResult> {
+  const session = await requireAdmin();
+  const parsed = SetBannedInput.safeParse(input);
+  if (!parsed.success) return { ok: false, error: "Invalid input" };
+  const { userId, banned } = parsed.data;
+
+  if (userId === session.user.id) {
+    return { ok: false, error: "You can't ban yourself" };
+  }
+
+  // Admins can't ban other admins — demote first (via make-admin.ts).
+  // Keeps a compromised admin account from locking every admin out.
+  const result = await prisma.user.updateMany({
+    where: { id: userId, isAdmin: false },
+    data: banned
+      ? // Bumping sessionGeneration kicks the user's live sessions on
+        // their next request rather than waiting out the 24h JWT TTL.
+        { isBanned: true, sessionGeneration: { increment: 1 } }
+      : { isBanned: false },
+  });
+  if (result.count === 0) {
+    return { ok: false, error: "User not found (or is an admin)" };
+  }
+
+  await audit(session.user.id, banned ? "admin.user_banned" : "admin.user_unbanned", {
+    targetUserId: userId,
+  });
+
+  revalidatePath("/admin/users");
+  return { ok: true };
+}
+
+// ---------------------------------------------------------------------------
+// Invite codes
+// ---------------------------------------------------------------------------
+
+const MAX_INVITE_TTL_DAYS = 365;
+
+const CreateInviteCodeInput = z.object({
+  label: z.string().trim().min(1, "Label is required").max(80),
+  // Empty string = auto-generate.
+  customCode: z
+    .string()
+    .trim()
+    .regex(/^[A-Za-z0-9-]{4,64}$/, "Codes are 4-64 letters, digits, or hyphens")
+    .optional()
+    .or(z.literal("").transform(() => undefined)),
+  // 0 = unlimited.
+  usesTotal: z.coerce.number().int().min(0).max(100_000).default(1),
+  // Unset = never expires.
+  ttlDays: z.coerce
+    .number()
+    .int()
+    .min(1)
+    .max(MAX_INVITE_TTL_DAYS)
+    .optional()
+    .or(z.literal("").transform(() => undefined)),
+});
+
+export type CreateInviteCodeResult =
+  | { ok: true; code: string }
+  | { ok: false; error: string };
+
+export async function createInviteCode(
+  input: z.infer<typeof CreateInviteCodeInput>,
+): Promise<CreateInviteCodeResult> {
+  const session = await requireAdmin();
+  const parsed = CreateInviteCodeInput.safeParse(input);
+  if (!parsed.success) {
+    return {
+      ok: false,
+      error: parsed.error.issues[0]?.message ?? "Invalid input",
+    };
+  }
+  const { label, customCode, usesTotal, ttlDays } = parsed.data;
+
+  const code = normalizeInviteCode(customCode ?? generateInviteCode());
+  const expiresAt = ttlDays
+    ? new Date(Date.now() + ttlDays * 24 * 60 * 60 * 1000)
+    : null;
+
+  const existing = await prisma.inviteCode.findUnique({ where: { code } });
+  if (existing) {
+    return { ok: false, error: "That code already exists" };
+  }
+
+  const row = await prisma.inviteCode.create({
+    data: {
+      code,
+      label,
+      usesTotal,
+      usesRemaining: usesTotal,
+      expiresAt,
+      createdBy: session.user.id,
+    },
+    select: { id: true },
+  });
+
+  // The code itself stays out of the audit log — same policy as VC
+  // claims and plugin redemption metadata.
+  await audit(session.user.id, "admin.invite_code.created", {
+    inviteCodeId: row.id,
+    label,
+    usesTotal,
+    expiresAt: expiresAt?.toISOString() ?? null,
+  });
+
+  revalidatePath("/admin/invite-codes");
+  return { ok: true, code };
+}
+
+const RevokeInviteCodeInput = z.object({
+  inviteCodeId: z.string().cuid(),
+});
+
+export async function revokeInviteCode(
+  input: z.infer<typeof RevokeInviteCodeInput>,
+): Promise<AdminActionResult> {
+  const session = await requireAdmin();
+  const parsed = RevokeInviteCodeInput.safeParse(input);
+  if (!parsed.success) return { ok: false, error: "Invalid input" };
+
+  const result = await prisma.inviteCode.updateMany({
+    where: { id: parsed.data.inviteCodeId, revokedAt: null },
+    data: { revokedAt: new Date() },
+  });
+  if (result.count === 0) {
+    return { ok: false, error: "Code not found or already revoked" };
+  }
+
+  await audit(session.user.id, "admin.invite_code.revoked", {
+    inviteCodeId: parsed.data.inviteCodeId,
+  });
+
+  revalidatePath("/admin/invite-codes");
+  return { ok: true };
+}

@@ -34,6 +34,7 @@ export const config = {
     "/settings/:path*",
     "/badges/:path*",
     "/shares/:path*",
+    "/admin/:path*",
     "/oidc/authorize",
   ],
 };
