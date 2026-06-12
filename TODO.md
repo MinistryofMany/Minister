@@ -102,26 +102,23 @@ lost:
 
 ## Consolidation — dropped / not ported
 
-The prior Express/tRPC Tessera iteration (pulled from ahes:/tank/Tessera)
-is archived, gitignored, at `archive/tessera-ahes/` — full git history,
-both branches. Plugin lineup is deliberately trimmed to email-domain,
-invite-code, and tlsn-attestation.
+The prior Express/tRPC Tessera iteration (originally at
+ahes:/tank/Tessera) had its invite-code gateway and admin panel ported
+here, then was deleted — both the server copy and the local archive.
+What wasn't ported is listed below; re-building any of it means
+re-implementing against this codebase, not restoring old code.
 
-- **GitHub OAuth plugin** — removed (was Stage 5). The `redirect` step
-  kind + `resumeViaPendingToken` path it validated remain in the wizard
-  runtime. `git revert` the removal commit to bring it back.
 - **Q&A gateway** — not ported. Would need a `QnaChallenge` model +
   admin CRUD; the old `requireReview` flow also implies a pending-review
   badge state Tessera's `Badge` model doesn't have.
 - **Review-queue / badge approval workflow** — not ported (same reason:
   no pending state on `Badge`).
 - **Aadhaar / anon-aadhaar zk gateway** — not ported (explicitly out for
-  now). Production-ready reference implementation lives in the archive:
-  `packages/server/src/gateways/plugins/aadhaar.ts`, UIDAI trust list,
-  operator runbook.
+  now). If revived: `@anon-aadhaar/core` Groth16 verification, UIDAI
+  trust-list pinning + rotation, nullifier dedup, age/gender disclosure.
 - **Mobile app / passport NFC (openpassport-style)** — not ported. The
-  Expo + NFCPassportReader/JMRTD spike lives on the archive's
-  `phase2-spike` branch.
+  old spike proved Expo + NFCPassportReader (iOS) / JMRTD (Android)
+  linking via EAS; Mopro was deferred as its own task.
 
 ---
 
