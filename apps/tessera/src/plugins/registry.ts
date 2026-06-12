@@ -1,7 +1,6 @@
 import type { Plugin } from "@tessera/plugin-sdk";
 
 import { emailDomainPlugin } from "./email-domain";
-import { githubPlugin } from "./github";
 import { tlsnAttestationPlugin } from "./tlsn-attestation";
 
 // In-process registry — CLAUDE.md explicitly forbids dynamic loading.
@@ -9,11 +8,10 @@ import { tlsnAttestationPlugin } from "./tlsn-attestation";
 //
 // Plugins whose required env is missing are still registered (the
 // plugin list page shows them) but startWizard throws — the user sees
-// "GitHub plugin is not configured" rather than the plugin silently
+// "plugin is not configured" rather than the plugin silently
 // vanishing.
 const PLUGINS: Plugin[] = [
   emailDomainPlugin,
-  githubPlugin,
   tlsnAttestationPlugin,
 ];
 

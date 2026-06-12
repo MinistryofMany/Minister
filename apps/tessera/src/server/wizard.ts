@@ -82,7 +82,7 @@ export async function startWizard(
     where: { userId, pluginId, completedAt: null },
   });
 
-  // Lift pendingToken on the initial step too — plugins like github
+  // Lift pendingToken on the initial step too — OAuth-style plugins
   // open with a redirect step whose state must be addressable by the
   // callback route. The submitStep path below does the same for
   // subsequent continue steps.
