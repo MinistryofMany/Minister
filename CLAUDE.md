@@ -84,6 +84,10 @@ model User {
   // Monotonic counter embedded in every issued JWT. Bumping it invalidates
   // all outstanding sessions on the user's next protected request.
   sessionGeneration Int @default(0)
+  // Gates /admin + admin server actions. Granted only via scripts/make-admin.ts.
+  isAdmin  Boolean @default(false)
+  // Banned users are treated as signed out by the session loader (layer 2).
+  isBanned Boolean @default(false)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -174,6 +178,31 @@ model OidcAuthorizationCode {
   consumedAt          DateTime?
 }
 
+model InviteCode {
+  // Admin-minted, redeemed via the invite-code plugin. The code string
+  // never lands in a VC or Badge.attributes — only `label` does.
+  id            String    @id @default(cuid())
+  code          String    @unique
+  label         String              // campaign/cohort name; the VC claim
+  usesTotal     Int                 // 0 = unlimited
+  usesRemaining Int
+  expiresAt     DateTime?
+  revokedAt     DateTime?
+  createdBy     String?
+  createdAt     DateTime  @default(now())
+  redemptions   InviteRedemption[]
+}
+
+model InviteRedemption {
+  // Unique (inviteCodeId, userId) is the double-redeem guard; created in
+  // the same transaction as the usesRemaining decrement.
+  id           String     @id @default(cuid())
+  inviteCodeId String
+  userId       String
+  redeemedAt   DateTime   @default(now())
+  @@unique([inviteCodeId, userId])
+}
+
 model AuditLog {
   id        String   @id @default(cuid())
   userId    String?
@@ -224,7 +253,9 @@ Sliding window. An active user's JWT auto-refreshes at most once per hour, each 
 - `src/lib/session.ts:getCurrentSession()` is the server-side session getter. It calls `auth()`, then compares the JWT's gen against the user's current gen via a `findUnique`. Mismatch → null. Wrapped in `React.cache()` so multiple call sites in one render (header + page) share one query.
 - `src/server/account-actions.ts:revokeAllSessions()` increments the user's gen, audit-logs, and signs the current device out. Wired to a destructive "Sign out of all devices" button on `/settings`.
 
-**Use `getCurrentSession()` / `requireSession()` — never raw `auth()` — anywhere that gates user-specific content. Raw `auth()` only verifies the JWT signature; it doesn't catch revoked sessions.**
+**Use `getCurrentSession()` / `requireSession()` — never raw `auth()` — anywhere that gates user-specific content. Raw `auth()` only verifies the JWT signature; it doesn't catch revoked sessions or bans.**
+
+**Bans + admin:** the same cached session loader also enforces `User.isBanned` (banned ⇒ treated as signed out) and exposes `isAdmin` via `getSessionFlags()`. `requireAdmin()` gates `/admin` pages and admin server actions. Admin-ness is granted only via `pnpm --filter @tessera/app admin:grant -- --email <email>` — there is no in-app path. Banning a user bumps their `sessionGeneration`, killing live sessions on their next request; admins can't ban themselves or other admins (demote via CLI first).
 
 **Per-request cost:**
 
@@ -278,6 +309,7 @@ Badge types each have a Zod schema for the `credentialSubject` claims, defined i
 
 - `email-domain` — `{ domain: string }` ✅ implemented
 - `email-exact` — `{ email: string }` (less private, opt-in)
+- `invite-code` — `{ label: string }` ✅ implemented (label = campaign name; the code string itself never enters the VC)
 - `oauth-account` — `{ provider: "github" | "google" | "...", accountId: string, handle?: string }`
 - `age-over-N` — `{ threshold: 16 | 18 | 21 | 25 | 30 | 35 | 40 | 45 | 55 | 65 }`
 - `residency-country` — `{ country: string }` (ISO 3166-1 alpha-2)
@@ -358,7 +390,7 @@ export interface Plugin {
 
 **Current plugins:**
 - `email-domain` — collect email → magic-link verify → issue `email-domain` badge. The user's email itself is *not* stored; only the domain is.
-- `github` — OAuth `redirect` step → /badges/new/github/callback → `oauth-account` badge with `{ provider: "github", accountId, handle }`. Requires `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET`.
+- `invite-code` — form step → atomic redemption against admin-minted `InviteCode` rows → `invite-code` badge with `{ label }`. Invalid/revoked/expired/exhausted all return one uniform error so the form can't be used as a code oracle.
 - `tlsn-attestation` — generic TLSNotary plugin. Issues an `extension-action` step, the browser extension produces a TLSNotary presentation and POSTs it to `/api/tlsn/submit`, Tessera calls the `tlsn-verifier` sidecar to check it, then issues a `tlsn-attestation` badge. The extension's prover is not yet integrated — see Stage 6 status.
 
 ## OIDC provider (Stage 3+)
@@ -443,7 +475,7 @@ Why a separate Rust sidecar over WASM in Node: simpler operationally, pins one t
 - The RSC server→client boundary is a JSON-only serializer — class instances (e.g. Zod schemas) don't cross. When a server component renders a client component, build a plain-object view type at the seam (`BadgeMetaView` is an example). TypeScript won't catch this; it surfaces only at runtime.
 - Tests: Vitest for unit tests (co-located `*.test.ts` next to source), Playwright for end-to-end. Run `pnpm test` at the repo root. The pure-function logic is heavily covered; DB-touching code stays integration-tested via Playwright.
 - ESLint + Prettier with project defaults.
-- Conventional commits. Cipher is the AI committer (`Cipher <cipher@heart.engineering>`).
+- Conventional commits, authored under the repo's configured git identity. No tool/assistant attribution anywhere in commits, code, or comments.
 - No `any`. No `@ts-ignore` / `@ts-expect-error` without an inline justification comment.
 - Don't add a dependency without a one-line reason in the commit message.
 - Comments explain *why*, not *what*. The code says what.
@@ -456,7 +488,8 @@ Why a separate Rust sidecar over WASM in Node: simpler operationally, pins one t
 - **Auth hardening** ✅ — JWT-strategy sessions (24h sliding, 1h refresh), Edge middleware route protection, per-user `sessionGeneration` revocation with "Sign out of all devices" button.
 - **Stage 3** — OIDC provider (`/oidc/authorize`, `/oidc/token`, `/oidc/userinfo`, openid-configuration discovery), client registration, consent screen.
 - **Stage 4** — Demo client Next.js app doing the full OIDC dance, gated by a specific badge.
-- **Stage 5** ✅ — GitHub OAuth plugin. Validated the plugin interface against the `redirect` step kind; `oauth-account` badge end-to-end (requires real GitHub OAuth app creds for the live flow).
+- **Stage 5** ✅→removed — GitHub OAuth plugin. Validated the plugin interface against the `redirect` step kind end-to-end, then was dropped in the scope trim to email/invite/TLSNotary plugins (the `redirect` step kind and `resumeViaPendingToken` runtime path it exercised remain). Recoverable from git history if OAuth-account badges come back.
+- **Consolidation** ✅ — invite-code plugin + admin panel (`/admin`: users with ban/unban, invite-code minting/revocation, audit-log viewer), ported from the prior Express/tRPC Tessera iteration (archived at `archive/tessera-ahes/`, gitignored). `User.isAdmin` / `User.isBanned` added; ban enforcement folded into the session loader.
 - **Stage 6** ◐ partial — TLSNotary integration. Tessera-side complete: `tlsn-attestation` plugin, `/api/tlsn/submit` endpoint, `extension-action` step renderer, `tlsn-verifier` Rust sidecar (with `passthrough` mode for dev), `notary-server` running the pinned official binary, browser extension skeleton at `apps/extension/`. **Not yet wired:** `tlsn-js` prover inside the extension, `ws-proxy` real implementation, `tlsn-verifier` crate integration in the sidecar's `verify_real()` (currently throws).
 - **Stage 7** ✅ — Shareable proof links. `/shares` lists + creates, `/share/[token]` public view with expiry/revocation/account-gate, optional email send via the existing mailer (console-log in dev). Views recorded in `ShareLinkView`. Tokens are 32 random bytes → 43 base64url chars.
 - **Stage 8** — Age / id.me plugin via TLSNotary; eligibility records with month fuzzing.

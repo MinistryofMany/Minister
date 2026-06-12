@@ -92,10 +92,36 @@ lost:
 - Real email transport (Resend / SES). Right now `src/lib/mailer.ts`
   throws in production and console-logs in dev; share-link emails and
   magic links use it.
-- Audit-log review UI at `/admin/audit`.
+- ~~Audit-log review UI at `/admin/audit`.~~ Done (consolidation work) —
+  basic paginated viewer; filters/search still Stage 9 material.
 - OIDC security-review pass: refresh tokens, scope-creep prevention,
   error-response side channels.
 - Production deploy guide.
+
+---
+
+## Consolidation — dropped / not ported
+
+The prior Express/tRPC Tessera iteration (pulled from ahes:/tank/Tessera)
+is archived, gitignored, at `archive/tessera-ahes/` — full git history,
+both branches. Plugin lineup is deliberately trimmed to email-domain,
+invite-code, and tlsn-attestation.
+
+- **GitHub OAuth plugin** — removed (was Stage 5). The `redirect` step
+  kind + `resumeViaPendingToken` path it validated remain in the wizard
+  runtime. `git revert` the removal commit to bring it back.
+- **Q&A gateway** — not ported. Would need a `QnaChallenge` model +
+  admin CRUD; the old `requireReview` flow also implies a pending-review
+  badge state Tessera's `Badge` model doesn't have.
+- **Review-queue / badge approval workflow** — not ported (same reason:
+  no pending state on `Badge`).
+- **Aadhaar / anon-aadhaar zk gateway** — not ported (explicitly out for
+  now). Production-ready reference implementation lives in the archive:
+  `packages/server/src/gateways/plugins/aadhaar.ts`, UIDAI trust list,
+  operator runbook.
+- **Mobile app / passport NFC (openpassport-style)** — not ported. The
+  Expo + NFCPassportReader/JMRTD spike lives on the archive's
+  `phase2-spike` branch.
 
 ---
 
