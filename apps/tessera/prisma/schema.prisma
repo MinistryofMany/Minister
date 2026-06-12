@@ -41,6 +41,15 @@ model User {
   // we store sessions in JWTs rather than DB rows.
   sessionGeneration Int @default(0)
 
+  // Admin flag gates /admin and the admin server actions. Granted via
+  // scripts/make-admin.ts (no self-serve path).
+  isAdmin Boolean @default(false)
+
+  // Banned users are treated as signed out by getCurrentSession — the
+  // JWT keeps verifying at the Edge, but layer 2 rejects it, same as a
+  // sessionGeneration mismatch.
+  isBanned Boolean @default(false)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -54,6 +63,7 @@ model User {
   oidcClients       OidcClient[]
   oidcAccessTokens  OidcAccessToken[]
   wizardSessions    WizardSession[]
+  inviteRedemptions InviteRedemption[]
 }
 
 model Account {
@@ -230,6 +240,47 @@ model OidcAccessToken {
 
   @@index([userId, clientId])
   @@index([expiresAt])
+}
+
+// Admin-created invite codes, redeemed through the invite-code plugin.
+// The code string itself never lands in a VC or Badge.attributes — only
+// the label does — so a multi-use code can't be recovered from anything
+// a holder later discloses.
+model InviteCode {
+  id    String @id @default(cuid())
+  code  String @unique
+  // Campaign/cohort name shown to admins and embedded in issued VCs as
+  // the `label` claim.
+  label String
+
+  // 0 = unlimited. Otherwise usesRemaining is decremented atomically on
+  // each redemption and the code stops working at 0.
+  usesTotal     Int
+  usesRemaining Int
+
+  expiresAt DateTime?
+  revokedAt DateTime?
+  // Admin who minted the code. SetNull so deleting an admin account
+  // doesn't cascade away the audit trail of codes they created.
+  createdBy String?
+  createdAt DateTime  @default(now())
+
+  redemptions InviteRedemption[]
+}
+
+// One row per (code, user). The unique constraint is the double-redeem
+// guard — created in the same transaction as the usesRemaining
+// decrement, so a constraint violation rolls the decrement back.
+model InviteRedemption {
+  id           String   @id @default(cuid())
+  inviteCodeId String
+  userId       String
+  redeemedAt   DateTime @default(now())
+
+  inviteCode InviteCode @relation(fields: [inviteCodeId], references: [id], onDelete: Cascade)
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([inviteCodeId, userId])
 }
 
 model AuditLog {

@@ -70,6 +70,14 @@ export type ResidencyCountryClaims = z.infer<typeof ResidencyCountryClaims>;
 export type ResidencyStateClaims = z.infer<typeof ResidencyStateClaims>;
 export type ResidencyCityClaims = z.infer<typeof ResidencyCityClaims>;
 
+// The label identifies the invite campaign/cohort, not the code — the
+// code string itself must never appear in claims, since multi-use codes
+// remain redeemable after a holder discloses the VC.
+export const InviteCodeClaims = z.object({
+  label: z.string().min(1),
+});
+export type InviteCodeClaims = z.infer<typeof InviteCodeClaims>;
+
 // Generic TLSNotary attestation — domain + arbitrary structured claim.
 // Tightened by specific plugins (id.me, github, etc.) in their own VC
 // types; this catch-all lets us issue ad-hoc proofs in Stage 8+.
@@ -138,6 +146,14 @@ export const BADGE_TYPES: Record<string, BadgeTypeMeta> = {
     description: "Holder is a resident of the named city.",
     iconKey: "map-pin",
     schema: ResidencyCityClaims,
+  },
+  "invite-code": {
+    type: "invite-code",
+    label: "Invited",
+    description:
+      "Holder redeemed an invite code issued by a Tessera admin for the named campaign.",
+    iconKey: "ticket",
+    schema: InviteCodeClaims,
   },
   "tlsn-attestation": {
     type: "tlsn-attestation",

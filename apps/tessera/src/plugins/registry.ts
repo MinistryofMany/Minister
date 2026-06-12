@@ -1,6 +1,7 @@
 import type { Plugin } from "@tessera/plugin-sdk";
 
 import { emailDomainPlugin } from "./email-domain";
+import { inviteCodePlugin } from "./invite-code";
 import { tlsnAttestationPlugin } from "./tlsn-attestation";
 
 // In-process registry — CLAUDE.md explicitly forbids dynamic loading.
@@ -12,6 +13,7 @@ import { tlsnAttestationPlugin } from "./tlsn-attestation";
 // vanishing.
 const PLUGINS: Plugin[] = [
   emailDomainPlugin,
+  inviteCodePlugin,
   tlsnAttestationPlugin,
 ];
 
