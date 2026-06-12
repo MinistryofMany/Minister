@@ -13,6 +13,22 @@ import {
 } from "@/lib/oidc-tokens";
 import { prisma } from "@/lib/prisma";
 import { audit } from "@/lib/audit";
+import { clientIpFrom, oidcTokenLimiter } from "@/lib/rate-limit";
+
+// 429 with Retry-After. `temporarily_unavailable` is the closest
+// RFC 6749 §5.2 error code; clients should back off and retry.
+function rateLimited(retryAfterSeconds: number) {
+  return NextResponse.json(
+    {
+      error: "temporarily_unavailable",
+      error_description: "Rate limit exceeded; retry later",
+    },
+    {
+      status: 429,
+      headers: { "Retry-After": String(retryAfterSeconds) },
+    },
+  );
+}
 
 // OIDC token endpoint per RFC 6749 §3.2 + OIDC Core §3.1.3.
 //
@@ -24,6 +40,11 @@ import { audit } from "@/lib/audit";
 // 400 for protocol errors, 401 for invalid_client (with WWW-Authenticate
 // when Basic was used).
 export async function POST(request: Request) {
+  const limit = oidcTokenLimiter.check(clientIpFrom(request.headers));
+  if (!limit.allowed) {
+    return rateLimited(limit.retryAfterSeconds);
+  }
+
   const contentType = request.headers.get("content-type") ?? "";
   if (!contentType.includes("application/x-www-form-urlencoded")) {
     return tokenError("invalid_request", "Content-Type must be application/x-www-form-urlencoded");

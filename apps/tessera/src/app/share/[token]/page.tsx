@@ -1,3 +1,4 @@
+import { headers } from "next/headers";
 import Link from "next/link";
 
 import { BadgeCard } from "@/components/badge-card";
@@ -10,6 +11,7 @@ import {
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { prisma } from "@/lib/prisma";
+import { clientIpFrom, shareViewLimiter } from "@/lib/rate-limit";
 import { getCurrentSession } from "@/lib/session";
 import { loadShareLinkByToken } from "@/lib/share-links";
 
@@ -18,6 +20,19 @@ interface PageProps {
 }
 
 export default async function SharePage({ params }: PageProps) {
+  // Both the token lookup and the per-view insert hit the DB, and the
+  // token space is guessable-in-principle — limit before either.
+  const limit = shareViewLimiter.check(clientIpFrom(await headers()));
+  if (!limit.allowed) {
+    return (
+      <Shell title="Too many requests">
+        <p className="text-sm text-neutral-600 dark:text-neutral-400">
+          Slow down — try again in about {limit.retryAfterSeconds}s.
+        </p>
+      </Shell>
+    );
+  }
+
   const { token } = await params;
   const link = await loadShareLinkByToken(token);
 

@@ -1,3 +1,4 @@
+import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 
 import { ConsentScreen } from "@/components/consent-screen";
@@ -14,6 +15,7 @@ import {
   validateAuthorizeRequest,
 } from "@/lib/oidc-authorize";
 import { signOidcRequest } from "@/lib/oidc-request-token";
+import { clientIpFrom, oidcAuthorizeLimiter } from "@/lib/rate-limit";
 import { getCurrentSession } from "@/lib/session";
 
 interface PageProps {
@@ -26,6 +28,16 @@ export default async function OidcAuthorizePage({ searchParams }: PageProps) {
   // depth reason every other protected page uses it.
   const session = await getCurrentSession();
   if (!session?.user) redirect("/");
+
+  const limit = oidcAuthorizeLimiter.check(clientIpFrom(await headers()));
+  if (!limit.allowed) {
+    return (
+      <FatalError
+        title="Too many requests"
+        description={`Slow down — try again in about ${limit.retryAfterSeconds}s.`}
+      />
+    );
+  }
 
   const sp = await searchParams;
   const raw = new URLSearchParams();

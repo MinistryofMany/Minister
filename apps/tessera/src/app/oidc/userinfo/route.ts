@@ -4,6 +4,7 @@ import { NextResponse } from "next/server";
 import { getIssuer } from "@/lib/issuer";
 import { oidcIssuerUrl } from "@/lib/oidc-config";
 import { prisma } from "@/lib/prisma";
+import { clientIpFrom, oidcUserinfoLimiter } from "@/lib/rate-limit";
 
 // OIDC userinfo endpoint per OIDC Core 1.0 §5.3. RPs call this with the
 // bearer access token to fetch user claims; we return the same shape an
@@ -20,6 +21,17 @@ import { prisma } from "@/lib/prisma";
 //      effect, not wait for token expiration).
 
 export async function GET(request: Request) {
+  const limit = oidcUserinfoLimiter.check(clientIpFrom(request.headers));
+  if (!limit.allowed) {
+    return NextResponse.json(
+      { error: "temporarily_unavailable" },
+      {
+        status: 429,
+        headers: { "Retry-After": String(limit.retryAfterSeconds) },
+      },
+    );
+  }
+
   const authz = request.headers.get("authorization") ?? "";
   if (!authz.toLowerCase().startsWith("bearer ")) {
     return unauthorized("invalid_token", "Bearer token required");

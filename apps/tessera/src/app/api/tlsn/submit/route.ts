@@ -2,6 +2,7 @@ import { headers } from "next/headers";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
+import { clientIpFrom, tlsnSubmitLimiter } from "@/lib/rate-limit";
 import { getCurrentSession } from "@/lib/session";
 import { resumeViaPendingToken } from "@/server/wizard";
 
@@ -55,6 +56,11 @@ export async function POST(request: Request) {
   const origin = request.headers.get("origin");
   if (!isOriginAllowed(origin)) {
     return submitErr("origin_not_allowed", 403, origin);
+  }
+
+  const limit = tlsnSubmitLimiter.check(clientIpFrom(request.headers));
+  if (!limit.allowed) {
+    return submitErr("rate_limited", 429, origin);
   }
 
   const session = await getCurrentSession();

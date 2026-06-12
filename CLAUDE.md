@@ -448,7 +448,7 @@ Subject: `sub` is a **pairwise pseudonymous identifier**, computed as `base64url
 - Authorization codes single-use, 60-second TTL
 - Redirect URI exact match
 - Client secrets hashed at rest (Argon2id)
-- Rate limiting on `/oidc/token` and `/oidc/authorize`
+- Rate limiting ✅ — in-memory sliding window (`src/lib/rate-limit.ts`), per-IP, on `/oidc/token`, `/oidc/userinfo`, `/oidc/authorize`, `/api/auth/signin/*` (magic-link sends, enforced in middleware), `/api/tlsn/submit`, and `/share/[token]` views. Process-local; the interface survives a Redis swap if Tessera ever scales horizontally.
 - No implicit flow, no resource owner password flow
 
 ## TLSNotary integration (Stage 6+)

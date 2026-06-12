@@ -84,9 +84,12 @@ plumbing without blocking on the prover.
 These are intentional Stage 9 items, listed here so they don't get
 lost:
 
-- Rate limiting on `/oidc/token`, `/oidc/authorize`,
-  `/api/auth/signin/*`, share-link views. Upstash Redis + middleware
-  is the likely pattern.
+- ~~Rate limiting on `/oidc/token`, `/oidc/authorize`,
+  `/api/auth/signin/*`, share-link views.~~ Done — in-memory
+  sliding-window limiter (`src/lib/rate-limit.ts`) on all of those plus
+  `/oidc/userinfo` and `/api/tlsn/submit`. Process-local by design;
+  swap the limiter internals for Redis (Upstash) if Tessera ever runs
+  more than one instance.
 - KMS-backed signing key (currently dev: ephemeral persisted JWK at
   `apps/tessera/dev-keys/issuer.jwk`).
 - Real email transport (Resend / SES). Right now `src/lib/mailer.ts`
