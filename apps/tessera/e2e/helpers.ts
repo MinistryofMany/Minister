@@ -133,6 +133,26 @@ export async function grantAdmin(email: string): Promise<void> {
   await prisma.user.update({ where: { email }, data: { isAdmin: true } });
 }
 
+// Insert a public (PKCE-only, no secret) OIDC client directly. Enough for
+// the authorize-request validation paths, which never reach token exchange.
+let oidcClientSeq = 0;
+export async function createPublicOidcClient(
+  redirectUri: string,
+  scopes: string[],
+): Promise<string> {
+  const clientId = `tc_e2e_${++oidcClientSeq}_${Math.floor(Date.now() % 1e6)}`;
+  await prisma.oidcClient.create({
+    data: {
+      clientId,
+      clientSecretHash: null,
+      name: "E2E client",
+      redirectUris: [redirectUri],
+      allowedScopes: scopes,
+    },
+  });
+  return clientId;
+}
+
 // Accept every native confirm() the page raises from here on.
 export function acceptDialogs(page: Page): void {
   page.on("dialog", (dialog) => void dialog.accept());
