@@ -85,14 +85,14 @@ importers:
         specifier: ^3.2.2
         version: 3.2.2(react@19.2.6)
       '@minister/plugin-sdk':
-        specifier: workspace:*
-        version: link:../../packages/plugin-sdk
+        specifier: link:../../../minister-plugin-sdk
+        version: link:../../../minister-plugin-sdk
       '@minister/shared':
-        specifier: workspace:*
-        version: link:../../packages/shared
+        specifier: link:../../../minister-shared
+        version: link:../../../minister-shared
       '@minister/vc':
-        specifier: workspace:*
-        version: link:../../packages/vc
+        specifier: link:../../../minister-vc
+        version: link:../../../minister-vc
       '@node-rs/argon2':
         specifier: ^2.0.2
         version: 2.0.2
@@ -172,44 +172,6 @@ importers:
       tsx:
         specifier: ^4.19.2
         version: 4.22.0
-      typescript:
-        specifier: ^5.6.3
-        version: 5.9.3
-      vitest:
-        specifier: ^2.1.8
-        version: 2.1.9(@types/node@22.19.19)(lightningcss@1.32.0)
-
-  packages/plugin-sdk:
-    devDependencies:
-      typescript:
-        specifier: ^5.6.3
-        version: 5.9.3
-
-  packages/shared:
-    dependencies:
-      zod:
-        specifier: ^3.24.1
-        version: 3.25.76
-    devDependencies:
-      typescript:
-        specifier: ^5.6.3
-        version: 5.9.3
-      vitest:
-        specifier: ^2.1.8
-        version: 2.1.9(@types/node@22.19.19)(lightningcss@1.32.0)
-
-  packages/vc:
-    dependencies:
-      jose:
-        specifier: ^5.9.6
-        version: 5.10.0
-      zod:
-        specifier: ^3.24.1
-        version: 3.25.76
-    devDependencies:
-      '@types/node':
-        specifier: ^22.10.2
-        version: 22.19.19
       typescript:
         specifier: ^5.6.3
         version: 5.9.3
