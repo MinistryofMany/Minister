@@ -22,26 +22,41 @@ const Body = z.object({
   presentation: z.string().min(1),
 });
 
-// Allowlist of origins permitted to POST here. Real browser extensions
-// have stable chrome-extension://<id> origins — we keep that to env so
-// the operator can pin it. Empty list = allow any origin (dev only;
-// the user is still authenticated).
+// Origins permitted to make a credentialed cross-origin request here. Real
+// browser extensions have stable chrome-extension://<id> origins; the operator
+// pins them via TLSN_SUBMIT_ALLOWED_ORIGINS (comma-separated). We FAIL CLOSED:
+// a request that carries an Origin header is rejected unless that origin is
+// explicitly allowlisted. Requests with no Origin (same-origin, server-to-
+// server, tests) are not a CORS credential-reflection risk and pass this gate;
+// they still must satisfy the cookie auth below. We never reflect an untrusted
+// origin alongside Access-Control-Allow-Credentials.
+function allowlistedOrigins(): string[] {
+  return (
+    process.env.TLSN_SUBMIT_ALLOWED_ORIGINS?.split(",")
+      .map((s) => s.trim())
+      .filter(Boolean) ?? []
+  );
+}
+
 function isOriginAllowed(origin: string | null): boolean {
-  const allow = process.env.TLSN_SUBMIT_ALLOWED_ORIGINS?.split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
-  if (!allow || allow.length === 0) return true;
-  return origin !== null && allow.includes(origin);
+  if (origin === null) return true;
+  return allowlistedOrigins().includes(origin);
 }
 
 function corsHeaders(origin: string | null): Record<string, string> {
-  return {
-    "Access-Control-Allow-Origin": origin ?? "*",
+  const base: Record<string, string> = {
     "Access-Control-Allow-Methods": "POST, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type",
-    "Access-Control-Allow-Credentials": "true",
     Vary: "Origin",
   };
+  // Only grant a credentialed CORS response to an explicitly allowlisted
+  // origin. Never echo an untrusted origin, and never pair "*" with
+  // credentials (browsers reject that combination anyway).
+  if (origin !== null && allowlistedOrigins().includes(origin)) {
+    base["Access-Control-Allow-Origin"] = origin;
+    base["Access-Control-Allow-Credentials"] = "true";
+  }
+  return base;
 }
 
 export async function OPTIONS(request: Request) {
