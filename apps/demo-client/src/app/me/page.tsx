@@ -12,15 +12,15 @@ export default async function MePage() {
 
   // Decode each disclosed VC for display (no verification needed at
   // this stage — the verified inspection is in the next section).
-  const decodedVcs = (session.tesseraBadges ?? []).map((jwt) => ({
+  const decodedVcs = (session.ministerBadges ?? []).map((jwt) => ({
     jwt,
     decoded: decodeJwtPayload(jwt),
   }));
 
-  // Properly verify one of the VCs against Tessera's JWKS so we can
+  // Properly verify one of the VCs against Minister's JWKS so we can
   // show the RP "did the signature check pass?" affordance.
   const verifiedEmail = await findVerifiedBadge(
-    session.tesseraBadges ?? [],
+    session.ministerBadges ?? [],
     "email-domain",
   );
 
@@ -31,7 +31,7 @@ export default async function MePage() {
           What the RP got back
         </h1>
         <p className="text-sm text-neutral-600">
-          This is everything Tessera gave us during the OIDC handshake. In a
+          This is everything Minister gave us during the OIDC handshake. In a
           real RP you&apos;d probably never show users their own tokens —
           rendered here to make the protocol legible.
         </p>
@@ -39,10 +39,10 @@ export default async function MePage() {
 
       <Block title="Session (RP-side)">
         <Json value={{
-          sub: session.tesseraSub,
-          name: session.tesseraName,
-          picture: session.tesseraPicture,
-          badgeCount: session.tesseraBadges?.length ?? 0,
+          sub: session.ministerSub,
+          name: session.ministerName,
+          picture: session.ministerPicture,
+          badgeCount: session.ministerBadges?.length ?? 0,
         }} />
       </Block>
 

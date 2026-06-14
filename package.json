@@ -1,23 +1,23 @@
 {
-  "name": "tessera",
+  "name": "minister",
   "version": "0.0.0",
   "private": true,
-  "description": "Tessera — identity platform with verifiable-credential badges",
+  "description": "Minister — identity platform with verifiable-credential badges",
   "packageManager": "pnpm@9.12.0",
   "engines": {
     "node": ">=20.0.0",
     "pnpm": ">=9.0.0"
   },
   "scripts": {
-    "dev": "pnpm --filter @tessera/app dev",
+    "dev": "pnpm --filter @minister/app dev",
     "build": "pnpm -r build",
     "lint": "pnpm -r lint",
     "test": "pnpm -r --workspace-concurrency=1 test",
     "typecheck": "pnpm -r typecheck",
     "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md,yml,yaml}\"",
     "format:check": "prettier --check \"**/*.{ts,tsx,js,jsx,json,md,yml,yaml}\"",
-    "db:migrate": "pnpm --filter @tessera/app db:migrate",
-    "db:studio": "pnpm --filter @tessera/app db:studio",
+    "db:migrate": "pnpm --filter @minister/app db:migrate",
+    "db:studio": "pnpm --filter @minister/app db:studio",
     "compose:up": "docker compose up --build",
     "compose:down": "docker compose down"
   },

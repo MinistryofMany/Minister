@@ -1,6 +1,6 @@
-# Tessera browser extension
+# Minister browser extension
 
-Performs TLSNotary proofs in the user's browser and submits the finalized presentation back to Tessera.
+Performs TLSNotary proofs in the user's browser and submits the finalized presentation back to Minister.
 
 ## Status
 
@@ -10,7 +10,7 @@ Performs TLSNotary proofs in the user's browser and submits the finalized presen
 
 ```
    ┌────────────────────────────────┐
-   │  Tessera page (browser tab)    │
+   │  Minister page (browser tab)    │
    │  wizard step kind=extension-…  │
    └───────────────┬────────────────┘
                    │ user opens popup
@@ -40,20 +40,20 @@ Performs TLSNotary proofs in the user's browser and submits the finalized presen
                                                 │ { sessionToken, presentation }
                                                 ▼
                                           ┌─────────────┐
-                                          │  Tessera    │ resolves wizard,
+                                          │  Minister    │ resolves wizard,
                                           │  Next.js    │ calls tlsn-verifier
                                           └─────────────┘
 ```
 
 ## Loading in Chrome (dev)
 
-1. `pnpm --filter @tessera/extension build` (currently typechecks only — no real bundle yet).
+1. `pnpm --filter @minister/extension build` (currently typechecks only — no real bundle yet).
 2. `chrome://extensions` → Developer mode → "Load unpacked" → select `apps/extension/`.
-3. Click the Tessera icon in the toolbar. Popup says "Stage 6 — placeholder."
+3. Click the Minister icon in the toolbar. Popup says "Stage 6 — placeholder."
 
 ## What's left
 
 - Integrate `tlsn-js` for the in-browser prover.
 - Add an offscreen document for the WASM runtime (MV3 service workers can't run heavy crypto in the worker context).
 - Wire the popup → background → submitUrl flow with progress UI.
-- Auto-detect Tessera tabs and surface the active wizard step in the popup.
+- Auto-detect Minister tabs and surface the active wizard step in the popup.

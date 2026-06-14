@@ -1,11 +1,11 @@
-# Tessera — TODO
+# Minister — TODO
 
 Things we've explicitly mocked, stubbed, or skipped — paired with what
 needs doing later. Anything tagged here is a known gap, not a bug.
 
 ## TLSNotary (Stage 6 — partial)
 
-The Tessera-side scaffolding is real and tested. The cryptographic
+The Minister-side scaffolding is real and tested. The cryptographic
 proof path is not. Three concrete pieces remain:
 
 ### 1. Browser-extension TLSNotary prover
@@ -70,7 +70,7 @@ to:
 - Switch `VERIFIER_MODE=real` in compose / prod env.
 - Add tests with a real captured presentation as a test fixture.
 
-### Why the Tessera side still works
+### Why the Minister side still works
 
 `tlsn-attestation` plugin + `/api/tlsn/submit` endpoint round-trip
 through the verifier sidecar, which can be exercised end-to-end in
@@ -88,10 +88,10 @@ lost:
   `/api/auth/signin/*`, share-link views.~~ Done — in-memory
   sliding-window limiter (`src/lib/rate-limit.ts`) on all of those plus
   `/oidc/userinfo` and `/api/tlsn/submit`. Process-local by design;
-  swap the limiter internals for Redis (Upstash) if Tessera ever runs
+  swap the limiter internals for Redis (Upstash) if Minister ever runs
   more than one instance.
 - KMS-backed signing key (currently dev: ephemeral persisted JWK at
-  `apps/tessera/dev-keys/issuer.jwk`).
+  `apps/minister/dev-keys/issuer.jwk`).
 - ~~Real email transport (Resend / SES).~~ Done — `src/lib/mailer.ts`
   sends via Resend's HTTP API when `RESEND_API_KEY` + `MAIL_FROM` are
   set; otherwise dev console-logs and prod throws. Sign-in magic links,
@@ -109,15 +109,15 @@ lost:
 
 ## Consolidation — dropped / not ported
 
-The prior Express/tRPC Tessera iteration (originally at
-ahes:/tank/Tessera) had its invite-code gateway and admin panel ported
+The prior Express/tRPC Minister iteration (originally at
+ahes:/tank/Minister) had its invite-code gateway and admin panel ported
 here, then was deleted — both the server copy and the local archive.
 What wasn't ported is listed below; re-building any of it means
 re-implementing against this codebase, not restoring old code.
 
 - **Q&A gateway** — not ported. Would need a `QnaChallenge` model +
   admin CRUD; the old `requireReview` flow also implies a pending-review
-  badge state Tessera's `Badge` model doesn't have.
+  badge state Minister's `Badge` model doesn't have.
 - **Review-queue / badge approval workflow** — not ported (same reason:
   no pending state on `Badge`).
 - **Aadhaar / anon-aadhaar zk gateway** — not ported (explicitly out for

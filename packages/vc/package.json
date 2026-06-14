@@ -1,8 +1,8 @@
 {
-  "name": "@tessera/vc",
+  "name": "@minister/vc",
   "version": "0.0.0",
   "private": true,
-  "description": "Verifiable Credential issuance, verification, and DID document for Tessera.",
+  "description": "Verifiable Credential issuance, verification, and DID document for Minister.",
   "type": "module",
   "main": "./src/index.ts",
   "types": "./src/index.ts",

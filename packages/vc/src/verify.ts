@@ -9,7 +9,7 @@ export class VcVerificationError extends Error {
   }
 }
 
-// Verify a Tessera-issued VC against our own signing key. For VCs issued
+// Verify a Minister-issued VC against our own signing key. For VCs issued
 // by other DIDs we'd resolve their DID document and verify with that
 // key; that's deferred until we actually import external VCs.
 export async function verifyVc(

@@ -1,8 +1,8 @@
 # Email transport (Resend)
 
-Tessera sends all outbound mail — sign-in magic links, the email-domain
+Minister sends all outbound mail — sign-in magic links, the email-domain
 plugin's verification link, and share-link emails — through a single
-function, `apps/tessera/src/lib/mailer.ts:sendMail`.
+function, `apps/minister/src/lib/mailer.ts:sendMail`.
 
 ## Transport selection
 
@@ -14,7 +14,7 @@ function, `apps/tessera/src/lib/mailer.ts:sendMail`.
 | production | yes | sends via Resend |
 
 `MAIL_FROM` must be an address on a domain **verified in the Resend
-account**, e.g. `Tessera <noreply@your-domain.com>`. An unverified
+account**, e.g. `Minister <noreply@your-domain.com>`. An unverified
 domain makes Resend return a 403 and `sendMail` throws with that detail.
 
 ## Verifying a live send (manual, one-time)
@@ -23,11 +23,11 @@ A live send was intentionally **not** run automatically — it needs a
 human to confirm the sender domain and a safe recipient. To verify:
 
 1. Put a send-capable Resend API key and a verified-domain sender in
-   `apps/tessera/.env` (gitignored):
+   `apps/minister/.env` (gitignored):
 
    ```
    RESEND_API_KEY="re_..."
-   MAIL_FROM="Tessera <noreply@your-verified-domain>"
+   MAIL_FROM="Minister <noreply@your-verified-domain>"
    ```
 
 2. One-off probe with curl (replace the recipient with your own inbox):
@@ -36,9 +36,9 @@ human to confirm the sender domain and a safe recipient. To verify:
    curl -s -X POST https://api.resend.com/emails \
      -H "Authorization: Bearer $RESEND_API_KEY" \
      -H "Content-Type: application/json" \
-     -d '{"from":"Tessera <noreply@your-verified-domain>",
+     -d '{"from":"Minister <noreply@your-verified-domain>",
           "to":["you@your-inbox"],
-          "subject":"Tessera test",
+          "subject":"Minister test",
           "text":"It works."}'
    ```
 

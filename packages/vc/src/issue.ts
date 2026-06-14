@@ -10,17 +10,17 @@ import type {
 const VC_CONTEXT = "https://www.w3.org/ns/credentials/v2";
 const VC_BASE_TYPE = "VerifiableCredential";
 
-// Build the credentialType string used inside vc.type[] from a Tessera
-// badge type slug. "email-domain" → "TesseraEmailDomainCredential".
-export function tesseraCredentialType(badgeType: string): string {
+// Build the credentialType string used inside vc.type[] from a Minister
+// badge type slug. "email-domain" → "MinisterEmailDomainCredential".
+export function ministerCredentialType(badgeType: string): string {
   const pascal = badgeType
     .split("-")
     .map((s) => s.charAt(0).toUpperCase() + s.slice(1))
     .join("");
-  return `Tessera${pascal}Credential`;
+  return `Minister${pascal}Credential`;
 }
 
-// Issue a Tessera-native VC. `subjectId` is the user's did:web URL —
+// Issue a Minister-native VC. `subjectId` is the user's did:web URL —
 // callers build it with buildUserDid().
 export async function issueVc<TClaims extends Record<string, unknown>>(
   issuer: Issuer,
@@ -36,7 +36,7 @@ export async function issueVc<TClaims extends Record<string, unknown>>(
 
   const vc: VerifiableCredentialClaim = {
     "@context": [VC_CONTEXT, ...(options.extraContexts ?? [])],
-    type: [VC_BASE_TYPE, tesseraCredentialType(badgeType)],
+    type: [VC_BASE_TYPE, ministerCredentialType(badgeType)],
     credentialSubject,
   };
 

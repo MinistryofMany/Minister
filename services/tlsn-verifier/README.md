@@ -1,6 +1,6 @@
 # tlsn-verifier
 
-Rust HTTP sidecar. Verifies TLSNotary presentations produced by the Tessera browser extension and returns the verified transcript to the Tessera Next.js app over HTTP.
+Rust HTTP sidecar. Verifies TLSNotary presentations produced by the Minister browser extension and returns the verified transcript to the Minister Next.js app over HTTP.
 
 ## API
 
@@ -33,7 +33,7 @@ On verification failure (also HTTP 200 — protocol-level error rather than HTTP
 
 `VERIFIER_MODE` (env, default `passthrough`):
 
-- `passthrough` — the "presentation" is base64-encoded JSON of shape `{ sent, received, serverName }`. We trust it and only enforce that the server name matches `expectedDomain`. Lets Tessera plugin flows be exercised end-to-end without a TLSNotary prover in the loop. **Dev only.**
+- `passthrough` — the "presentation" is base64-encoded JSON of shape `{ sent, received, serverName }`. We trust it and only enforce that the server name matches `expectedDomain`. Lets Minister plugin flows be exercised end-to-end without a TLSNotary prover in the loop. **Dev only.**
 - `real` — uses the `tlsn-verifier` crate to cryptographically verify the presentation against the notary signature. Not yet wired (see `verify_real()` in `src/main.rs`). Pin the crate in `Cargo.toml`, then replace the function body.
 
 ## Why a Rust sidecar over WASM-in-Node
@@ -44,7 +44,7 @@ On verification failure (also HTTP 200 — protocol-level error rather than HTTP
 
 ## Run locally
 
-Inside docker-compose: the `tlsn-verifier` service is enabled and exposes `:7048`. Tessera reads `TLSN_VERIFIER_URL` (defaults to `http://tlsn-verifier:7048` for in-network calls).
+Inside docker-compose: the `tlsn-verifier` service is enabled and exposes `:7048`. Minister reads `TLSN_VERIFIER_URL` (defaults to `http://tlsn-verifier:7048` for in-network calls).
 
 Standalone:
 ```

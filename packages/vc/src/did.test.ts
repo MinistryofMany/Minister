@@ -5,7 +5,7 @@ import type { Issuer } from "./types";
 
 describe("buildDid", () => {
   it("formats a did:web identifier from a domain", () => {
-    expect(buildDid("tessera.local")).toBe("did:web:tessera.local");
+    expect(buildDid("minister.local")).toBe("did:web:minister.local");
   });
 
   it("does not add a path component for bare domains", () => {
@@ -15,22 +15,22 @@ describe("buildDid", () => {
 
 describe("buildKid", () => {
   it("appends a key fragment to a DID", () => {
-    expect(buildKid("did:web:tessera.local")).toBe(
-      "did:web:tessera.local#key-1",
+    expect(buildKid("did:web:minister.local")).toBe(
+      "did:web:minister.local#key-1",
     );
   });
 
   it("honors a custom fragment", () => {
-    expect(buildKid("did:web:tessera.local", "alt")).toBe(
-      "did:web:tessera.local#alt",
+    expect(buildKid("did:web:minister.local", "alt")).toBe(
+      "did:web:minister.local#alt",
     );
   });
 });
 
 describe("buildUserDid", () => {
   it("namespaces user IDs under a did:web", () => {
-    expect(buildUserDid("tessera.local", "u_123")).toBe(
-      "did:web:tessera.local:users:u_123",
+    expect(buildUserDid("minister.local", "u_123")).toBe(
+      "did:web:minister.local:users:u_123",
     );
   });
 });
@@ -39,16 +39,16 @@ describe("getDidDocument", () => {
   // Minimum Issuer fixture for testing. The DID document doesn't care
   // about the actual key material, only the public JWK + identifiers.
   const issuer = {
-    domain: "tessera.local",
-    did: "did:web:tessera.local",
-    kid: "did:web:tessera.local#key-1",
+    domain: "minister.local",
+    did: "did:web:minister.local",
+    kid: "did:web:minister.local#key-1",
     publicJwk: {
       kty: "OKP",
       crv: "Ed25519",
       x: "AAAA",
       alg: "EdDSA",
       use: "sig",
-      kid: "did:web:tessera.local#key-1",
+      kid: "did:web:minister.local#key-1",
     },
     privateKey: {} as Issuer["privateKey"],
     publicKey: {} as Issuer["publicKey"],

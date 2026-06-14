@@ -1,6 +1,6 @@
-# Tessera
+# Minister
 
-Identity platform where each user holds a profile decorated with **badges** — verifiable credentials attesting to facts about them. Third-party apps log users in via Tessera using OpenID Connect, and the user explicitly chooses which badges to disclose to each relying party.
+Identity platform where each user holds a profile decorated with **badges** — verifiable credentials attesting to facts about them. Third-party apps log users in via Minister using OpenID Connect, and the user explicitly chooses which badges to disclose to each relying party.
 
 See [CLAUDE.md](./CLAUDE.md) for the full design.
 
@@ -27,23 +27,23 @@ docker compose up --build
 # 3. Open http://localhost:3000
 ```
 
-On first boot, the `tessera` container runs `prisma db push` to sync the schema to the empty postgres database, then starts Next.js in dev mode.
+On first boot, the `minister` container runs `prisma db push` to sync the schema to the empty postgres database, then starts Next.js in dev mode.
 
 ### Signing in (dev)
 
 You have two options on the home page:
 
-1. **Passkey** — uses WebAuthn. Works on `http://localhost:3000` because browsers special-case localhost for WebAuthn; will _not_ work over plain `http://tessera.local`.
-2. **Email magic link** — type any email address. The link is printed to the `tessera` container's stdout (look for `[tessera:auth] Magic link for ...`). Click it to complete sign-in. No real email is sent in Stage 0.
+1. **Passkey** — uses WebAuthn. Works on `http://localhost:3000` because browsers special-case localhost for WebAuthn; will _not_ work over plain `http://minister.local`.
+2. **Email magic link** — type any email address. The link is printed to the `minister` container's stdout (look for `[minister:auth] Magic link for ...`). Click it to complete sign-in. No real email is sent in Stage 0.
 
 After signing in once via magic link, you can attach a passkey from `/profile` ("Add a passkey"), then sign in with that passkey next time.
 
 ## Repo layout
 
 ```
-tessera/
+minister/
 ├── apps/
-│   ├── tessera/          # main app (Next.js, Prisma, NextAuth)
+│   ├── minister/          # main app (Next.js, Prisma, NextAuth)
 │   └── demo-client/      # sample relying party (placeholder until Stage 4)
 ├── packages/
 │   ├── vc/               # VC issuance/verification (empty until Stage 1)
@@ -64,7 +64,7 @@ If you want hot reload and a faster iteration loop, run the database in compose 
 
 ```bash
 docker compose up -d postgres
-cd apps/tessera
+cd apps/minister
 cp .env.example .env.local
 # edit .env.local — at minimum set AUTH_SECRET and switch
 # DATABASE_URL host to localhost
@@ -75,7 +75,7 @@ pnpm dev
 
 ## Environment variables
 
-Documented in [`.env.example`](./.env.example) (compose-level) and [`apps/tessera/.env.example`](./apps/tessera/.env.example) (app-level). Required:
+Documented in [`.env.example`](./.env.example) (compose-level) and [`apps/minister/.env.example`](./apps/minister/.env.example) (app-level). Required:
 
 | Variable | Purpose |
 |---|---|
@@ -83,7 +83,7 @@ Documented in [`.env.example`](./.env.example) (compose-level) and [`apps/tesser
 | `AUTH_SECRET` | Auth.js session/JWT signing secret. Must be ≥32 chars. |
 | `AUTH_URL` | URL the browser sees the app on. WebAuthn requires exact origin match. |
 | `AUTH_TRUST_HOST` | `"true"` when running behind a reverse proxy or in docker-compose. |
-| `TESSERA_ISSUER_DOMAIN` | Domain for did:web and OIDC `iss`. Default `tessera.local`. |
+| `MINISTER_ISSUER_DOMAIN` | Domain for did:web and OIDC `iss`. Default `minister.local`. |
 | `OIDC_PAIRWISE_SECRET` | Secret for deriving pairwise OIDC subs. Optional until Stage 3. |
 
 ## What's _not_ implemented yet

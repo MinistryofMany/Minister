@@ -12,7 +12,7 @@ describe("loadIssuer", () => {
 
   beforeEach(async () => {
     _resetIssuerCache();
-    tmpDir = await mkdtemp(join(tmpdir(), "tessera-key-test-"));
+    tmpDir = await mkdtemp(join(tmpdir(), "minister-key-test-"));
     keyPath = join(tmpDir, "issuer.jwk");
   });
 
@@ -23,11 +23,11 @@ describe("loadIssuer", () => {
 
   it("generates and persists a fresh Ed25519 key on first boot", async () => {
     const issuer = await loadIssuer({
-      domain: "tessera.local",
+      domain: "minister.local",
       devKeyPath: keyPath,
     });
-    expect(issuer.did).toBe("did:web:tessera.local");
-    expect(issuer.kid).toBe("did:web:tessera.local#key-1");
+    expect(issuer.did).toBe("did:web:minister.local");
+    expect(issuer.kid).toBe("did:web:minister.local#key-1");
     expect(issuer.publicJwk.kty).toBe("OKP");
     expect(issuer.publicJwk.crv).toBe("Ed25519");
     // Public JWK must not leak the private scalar.
@@ -42,14 +42,14 @@ describe("loadIssuer", () => {
 
   it("re-uses the persisted key on subsequent loads", async () => {
     const first = await loadIssuer({
-      domain: "tessera.local",
+      domain: "minister.local",
       devKeyPath: keyPath,
     });
     // Reset the in-memory cache; the disk-persisted key should be
     // re-imported and produce the same public material.
     _resetIssuerCache();
     const second = await loadIssuer({
-      domain: "tessera.local",
+      domain: "minister.local",
       devKeyPath: keyPath,
     });
     expect(second.publicJwk.x).toBe(first.publicJwk.x);
@@ -57,11 +57,11 @@ describe("loadIssuer", () => {
 
   it("caches across calls with identical options", async () => {
     const first = await loadIssuer({
-      domain: "tessera.local",
+      domain: "minister.local",
       devKeyPath: keyPath,
     });
     const second = await loadIssuer({
-      domain: "tessera.local",
+      domain: "minister.local",
       devKeyPath: keyPath,
     });
     // Same object reference if the cache short-circuited.
@@ -71,7 +71,7 @@ describe("loadIssuer", () => {
   it("loads a JWK passed via privateJwk and ignores devKeyPath", async () => {
     // First, generate one via devKeyPath so we have a known good JWK.
     const seed = await loadIssuer({
-      domain: "tessera.local",
+      domain: "minister.local",
       devKeyPath: keyPath,
     });
     const fileJwk = await readFile(keyPath, "utf8");
@@ -80,7 +80,7 @@ describe("loadIssuer", () => {
     // Now load that JWK via privateJwk, with a different (non-existent)
     // devKeyPath to prove privateJwk wins.
     const reloaded = await loadIssuer({
-      domain: "tessera.local",
+      domain: "minister.local",
       privateJwk: fileJwk,
       devKeyPath: join(tmpDir, "does-not-exist.jwk"),
     });
@@ -88,7 +88,7 @@ describe("loadIssuer", () => {
   });
 
   it("throws when no key source is provided", async () => {
-    await expect(loadIssuer({ domain: "tessera.local" })).rejects.toThrow(
+    await expect(loadIssuer({ domain: "minister.local" })).rejects.toThrow(
       /key missing/i,
     );
   });
@@ -102,7 +102,7 @@ describe("loadIssuer", () => {
       y: "abc",
     });
     await expect(
-      loadIssuer({ domain: "tessera.local", privateJwk: badJwk }),
+      loadIssuer({ domain: "minister.local", privateJwk: badJwk }),
     ).rejects.toThrow(/OKP\/Ed25519/);
   });
 
@@ -113,7 +113,7 @@ describe("loadIssuer", () => {
       x: "AAAA",
     });
     await expect(
-      loadIssuer({ domain: "tessera.local", privateJwk: publicOnly }),
+      loadIssuer({ domain: "minister.local", privateJwk: publicOnly }),
     ).rejects.toThrow(/missing private scalar/);
   });
 });

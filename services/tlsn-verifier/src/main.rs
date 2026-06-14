@@ -1,12 +1,12 @@
-//! Tessera TLSNotary verifier sidecar.
+//! Minister TLSNotary verifier sidecar.
 //!
 //! Accepts POST /verify {presentation, expectedDomain} from the
-//! Tessera Next.js app, returns the verified transcript (or an error).
+//! Minister Next.js app, returns the verified transcript (or an error).
 //!
 //! Two modes, switched by `VERIFIER_MODE`:
 //!   - `passthrough` (default in dev): decodes the presentation as JSON
 //!     of shape `{ sent, received, serverName }` and returns it
-//!     untouched. Lets us exercise the Tessera side without a real
+//!     untouched. Lets us exercise the Minister side without a real
 //!     TLSNotary prover.
 //!   - `real`: invokes the `tlsn-verifier` crate to actually verify the
 //!     presentation cryptographically. Crate integration is TODO — the
@@ -142,7 +142,7 @@ async fn verify(
 
 /// Dev-mode passthrough. The "presentation" is base64-encoded JSON of
 /// shape `{ sent, received, serverName }`. Verify only that the server
-/// name matches; trust the rest. Lets Tessera plugin flows be tested
+/// name matches; trust the rest. Lets Minister plugin flows be tested
 /// end-to-end without a TLSNotary prover in the loop.
 fn verify_passthrough(req: &VerifyRequest) -> Result<Transcript> {
     let bytes = B64

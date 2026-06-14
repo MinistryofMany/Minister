@@ -1,4 +1,4 @@
-# Tessera — Status
+# Minister — Status
 
 Last updated: 2026-05-15 (after Stage 5).
 
@@ -16,14 +16,14 @@ operational counterpart.
 - pnpm workspace (`apps/*`, `packages/*`, `services/*`).
 - Next.js 15 App Router app with Tailwind v4, Prisma 6.
 - Auth.js v5 with Passkey + email-magic-link providers; magic links are
-  printed to the tessera container's stdout (`src/lib/mailer.ts`) — no
+  printed to the minister container's stdout (`src/lib/mailer.ts`) — no
   mailhog, per your call during Stage 0.
 - Prisma schema with the full domain model from CLAUDE.md (auth tables
-  + Tessera domain), pushed via `prisma db push` on container start.
-- docker-compose with postgres, tessera, and the seed one-shot.
+  + Minister domain), pushed via `prisma db push` on container start.
+- docker-compose with postgres, minister, and the seed one-shot.
 
 ### Stage 1 — VC + did:web ✅
-- `@tessera/vc` package: Ed25519 issuer, `issueVc` / `verifyVc`,
+- `@minister/vc` package: Ed25519 issuer, `issueVc` / `verifyVc`,
   `getDidDocument`, `loadIssuer` with env-driven prod + persistent
   dev-key file.
 - `/.well-known/did.json` + `/.well-known/jwks.json` route handlers,
@@ -34,12 +34,12 @@ operational counterpart.
   badges.
 
 ### Stage 2 — plugins + email-domain ✅
-- `@tessera/plugin-sdk`: `Plugin`, `PluginManifest`, `WizardStep` (with
+- `@minister/plugin-sdk`: `Plugin`, `PluginManifest`, `WizardStep` (with
   per-kind payload types), `PluginContext` (origin / audit / sendMail),
   `HandleStepResult` discriminated union.
-- `@tessera/shared`: badge type registry with Zod schemas for each
+- `@minister/shared`: badge type registry with Zod schemas for each
   initial badge type.
-- Wizard runtime (`apps/tessera/src/server/wizard.ts`): starts
+- Wizard runtime (`apps/minister/src/server/wizard.ts`): starts
   sessions, persists state, lifts `pendingToken` from magic-link and
   redirect steps, validates `IssuedBadge.claims` against the badge
   type's schema before signing the VC.
@@ -68,16 +68,16 @@ operational counterpart.
   `client_secret`. Race-safe code consumption via `updateMany`. Mints
   Ed25519 ID + access tokens.
 - `/oidc/userinfo`: bearer-token auth, looks up the access token row by
-  `jti`, returns claims (sub, name/picture, tessera_badges).
+  `jti`, returns claims (sub, name/picture, minister_badges).
 - Admin seed-client script (`scripts/seed-client.ts`) with idempotent
   upsert; auto-run in compose for the demo client.
 
 ### Stage 4 — demo client ✅
 - `apps/demo-client/`: Auth.js generic OIDC provider pointing at
-  Tessera. Pages: `/` (sign in), `/me` (decoded tokens + verified VC),
+  Minister. Pages: `/` (sign in), `/me` (decoded tokens + verified VC),
   `/badges/email-domain` (gated by an email-domain VC signature-checked
   against `/.well-known/jwks.json`).
-- Compose: `tessera-seed` one-shot upserts the OidcClient row with
+- Compose: `minister-seed` one-shot upserts the OidcClient row with
   deterministic dev creds; demo-client runs on host (avoids
   issuer-URL-mismatch with the discovery doc).
 
@@ -110,7 +110,7 @@ operational counterpart.
 - Owners can revoke; revoked + expired both surface "Link
   unavailable" rather than leaking which state it's in.
 
-### Stage 6 — TLSNotary, Tessera-side ◐ partial
+### Stage 6 — TLSNotary, Minister-side ◐ partial
 
 What's wired:
 - `tlsn-attestation` plugin (generic; specific TLSN plugins extend it
@@ -120,7 +120,7 @@ What's wired:
   `WizardSession.pendingToken`. Same resolution path as magic-link and
   OAuth redirect — `resumeViaPendingToken`.
 - `extension-action` renderer in the wizard UI
-  (`apps/tessera/src/components/wizard-client.tsx`).
+  (`apps/minister/src/components/wizard-client.tsx`).
 - `POST /api/tlsn/submit` route. CORS-permissive (the extension hits
   it from `chrome-extension://...`), allowlist via
   `TLSN_SUBMIT_ALLOWED_ORIGINS`. Enforces the token belongs to the
@@ -166,7 +166,7 @@ a third plugin.
   isolation).
 - Communicates with `ws-proxy` for the target HTTPS connection and
   `notary-server` for the co-signature.
-- Submits the finalized presentation to Tessera via a new endpoint
+- Submits the finalized presentation to Minister via a new endpoint
   (TBD: `POST /api/tlsn/submit`).
 - Dev story: load unpacked extension into Chrome; talks to
   `http://localhost:3000` (configurable).
@@ -183,7 +183,7 @@ a third plugin.
 - Replace the alpine stub with the official `tlsn` notary binary
   pinned to a known version. Provides the trusted co-signature; runs
   on its own port (default 7047).
-- Tessera's `did:web` includes the notary's public key alongside our
+- Minister's `did:web` includes the notary's public key alongside our
   signing key, or notary key lives in its own well-known endpoint —
   decision pending.
 
@@ -191,11 +191,11 @@ a third plugin.
 - Replace the alpine stub with a small Rust HTTP service wrapping the
   `tlsn-verifier` crate. Accepts a finalized presentation + expected
   domain, returns the verified transcript or an error.
-- Tessera's wizard runtime calls this via HTTP.
+- Minister's wizard runtime calls this via HTTP.
 
 **Plugin runtime additions**
 - `extension-action` step kind needs a renderer (third unused step).
-- New Tessera endpoint that the extension POSTs the presentation to —
+- New Minister endpoint that the extension POSTs the presentation to —
   resolves wizard session by sessionId (passed from the extension),
   calls verifier sidecar, hands result to the plugin.
 - Plugin SDK may need an `onExtensionPresentation` callback shape, or
@@ -235,7 +235,7 @@ a third plugin.
   entries with filters.
 - OIDC security review pass: check error-response side channels, code
   TTL strictness, refresh-token decisions, scope-creep prevention.
-- Production deploy guide (Postgres + Tessera + Redis + KMS),
+- Production deploy guide (Postgres + Minister + Redis + KMS),
   health-check endpoints, structured logging, OpenTelemetry hooks.
 
 ---
@@ -259,7 +259,7 @@ Documented so we don't relitigate.
   staleness signal.
 - **`getCurrentSession` / `requireSession`** are the only safe API for
   user-specific data. Raw `auth()` skips revocation.
-- **24h sliding TTL, 1h refresh.** Tessera is bursty (wallet-shaped),
+- **24h sliding TTL, 1h refresh.** Minister is bursty (wallet-shaped),
   not daily. 24h hits the security/UX sweet spot.
 
 ### OIDC provider
@@ -269,7 +269,7 @@ Documented so we don't relitigate.
 - **Pairwise pseudonymous `sub`.** Two RPs can't correlate users by id.
   Implementation: `HMAC-SHA256(OIDC_PAIRWISE_SECRET, userId:clientId)`.
 - **Access tokens are JWTs (RFC 9068) but reference a server-side
-  row.** First cut embedded `tessera_uid` (raw user id) in the JWT,
+  row.** First cut embedded `minister_uid` (raw user id) in the JWT,
   which defeated the pairwise sub for any RP that decoded the access
   token. Fixed: `jti` claim in JWT → `OidcAccessToken` row → server-
   side userId lookup at `/userinfo`. Reverse-engineering the user id
@@ -331,7 +331,7 @@ Documented so we don't relitigate.
   this is the dep to grab.
 
 ### Infra
-- **docker-compose for postgres + tessera + tessera-seed.** demo-client
+- **docker-compose for postgres + minister + minister-seed.** demo-client
   runs on the host (issuer-URL match with the discovery doc).
 - **TLSNotary services as alpine stubs** until Stage 6. Their
   Dockerfiles + READMEs are in place; commented out in

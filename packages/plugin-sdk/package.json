@@ -1,8 +1,8 @@
 {
-  "name": "@tessera/plugin-sdk",
+  "name": "@minister/plugin-sdk",
   "version": "0.0.0",
   "private": true,
-  "description": "Plugin interface types and helpers for Tessera badge plugins.",
+  "description": "Plugin interface types and helpers for Minister badge plugins.",
   "type": "module",
   "main": "./src/index.ts",
   "types": "./src/index.ts",

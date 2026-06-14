@@ -13,7 +13,7 @@ import { buildDid, buildKid } from "./did";
 import type { Issuer } from "./types";
 
 interface LoadIssuerOptions {
-  // The tessera-side hostname. Drives did:web identifier construction.
+  // The minister-side hostname. Drives did:web identifier construction.
   domain: string;
   // PEM/JWK provided via env in production. Pass the raw JSON string of
   // the private JWK; loader will parse + import.
@@ -82,7 +82,7 @@ export async function loadIssuer(options: LoadIssuerOptions): Promise<Issuer> {
   if (!jwkJson) {
     if (!options.devKeyPath) {
       throw new Error(
-        "Tessera issuer key missing: set ISSUER_PRIVATE_JWK or pass devKeyPath",
+        "Minister issuer key missing: set ISSUER_PRIVATE_JWK or pass devKeyPath",
       );
     }
     try {

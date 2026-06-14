@@ -5,21 +5,21 @@ import { auth } from "@/auth";
 import { findVerifiedBadge } from "@/lib/vc";
 
 // Gated page — requires a verified email-domain VC. The RP enforces
-// this server-side by checking the VCs Tessera disclosed; "the user
+// this server-side by checking the VCs Minister disclosed; "the user
 // said they have one" isn't enough, we verify the signature against
-// Tessera's JWKS.
+// Minister's JWKS.
 export default async function GatedPage() {
   const session = await auth();
   if (!session?.user) redirect("/");
 
   const vc = await findVerifiedBadge(
-    session.tesseraBadges ?? [],
+    session.ministerBadges ?? [],
     "email-domain",
   );
 
   if (!vc) {
     const issuer =
-      process.env.TESSERA_ISSUER_URL?.replace(/\/$/, "") ??
+      process.env.MINISTER_ISSUER_URL?.replace(/\/$/, "") ??
       "http://localhost:3000";
     return (
       <main className="mx-auto flex max-w-xl flex-col gap-4 px-4 py-12">
@@ -27,9 +27,9 @@ export default async function GatedPage() {
           You don&apos;t have an email-domain badge.
         </h1>
         <p className="text-sm text-neutral-600">
-          This page requires a Tessera-issued credential proving control
+          This page requires a Minister-issued credential proving control
           of an email address at some domain. Either you haven&apos;t
-          claimed one in Tessera, or you didn&apos;t disclose it at the
+          claimed one in Minister, or you didn&apos;t disclose it at the
           consent screen.
         </p>
         <div className="flex gap-2">
@@ -37,7 +37,7 @@ export default async function GatedPage() {
             href={`${issuer}/badges/new/email-domain`}
             className="rounded-md bg-neutral-900 px-4 py-2 text-sm font-medium text-white hover:bg-neutral-900/90"
           >
-            Claim one in Tessera
+            Claim one in Minister
           </a>
           <Link
             href="/"
@@ -61,7 +61,7 @@ export default async function GatedPage() {
         Welcome, {domain} resident.
       </h1>
       <p className="text-sm text-neutral-600">
-        Verified your email-domain credential against Tessera&apos;s
+        Verified your email-domain credential against Minister&apos;s
         signing key. Specifically: you control an email at{" "}
         <span className="font-medium">{domain}</span>.
       </p>

@@ -1,8 +1,8 @@
 {
-  "name": "@tessera/extension",
+  "name": "@minister/extension",
   "version": "0.0.0",
   "private": true,
-  "description": "Tessera browser extension. Performs TLSNotary proofs in the user's browser and submits finalized presentations to Tessera.",
+  "description": "Minister browser extension. Performs TLSNotary proofs in the user's browser and submits finalized presentations to Minister.",
   "type": "module",
   "scripts": {
     "build": "tsc --noEmit",

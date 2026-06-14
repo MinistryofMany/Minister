@@ -38,8 +38,8 @@ test-results/
 # Prisma generated client (we regenerate)
 **/generated/prisma/
 
-# Local Tessera issuer dev key (generated on first boot)
-apps/tessera/dev-keys/
+# Local Minister issuer dev key (generated on first boot)
+apps/minister/dev-keys/
 
 # Claude harness state
 .claude/worktrees/
@@ -50,5 +50,5 @@ apps/tessera/dev-keys/
 .playwright-mcp/
 
 # Playwright e2e local state
-apps/tessera/e2e/.auth/
-apps/tessera/e2e/.artifacts/
+apps/minister/e2e/.auth/
+apps/minister/e2e/.artifacts/

@@ -9,5 +9,5 @@ export type {
 
 export { buildDid, buildKid, buildUserDid, getDidDocument } from "./did";
 export { loadIssuer, _resetIssuerCache } from "./key";
-export { issueVc, tesseraCredentialType } from "./issue";
+export { issueVc, ministerCredentialType } from "./issue";
 export { verifyVc, VcVerificationError } from "./verify";

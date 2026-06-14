@@ -1,6 +1,6 @@
-// Plugin interface for Tessera badge plugins. Mirrors the shape sketched
+// Plugin interface for Minister badge plugins. Mirrors the shape sketched
 // in CLAUDE.md. Plugins live in-process under
-// `apps/tessera/src/plugins/<id>/` and are registered via a central
+// `apps/minister/src/plugins/<id>/` and are registered via a central
 // registry — no dynamic loading.
 
 export type WizardStepKind =
@@ -151,7 +151,7 @@ export interface PluginContext {
   origin: string;
   audit: PluginAuditLogger;
   // Transport for plugin-originated emails (verification links, etc.).
-  // Concrete implementation is provided by apps/tessera so plugins don't
+  // Concrete implementation is provided by apps/minister so plugins don't
   // depend on a specific mailer.
   sendMail(message: MailMessage): Promise<void>;
 }

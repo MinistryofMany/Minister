@@ -1,11 +1,11 @@
 [package]
-name = "tessera-tlsn-verifier"
+name = "minister-tlsn-verifier"
 version = "0.1.0"
 edition = "2021"
 publish = false
 
 [[bin]]
-name = "tessera-tlsn-verifier"
+name = "minister-tlsn-verifier"
 path = "src/main.rs"
 
 [dependencies]

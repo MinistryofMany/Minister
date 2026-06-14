@@ -1,6 +1,6 @@
-// Tessera browser extension — background service worker.
+// Minister browser extension — background service worker.
 //
-// Listens for messages from Tessera pages (via the popup; MV3 doesn't
+// Listens for messages from Minister pages (via the popup; MV3 doesn't
 // allow direct content-script-from-arbitrary-page postMessage to
 // background, so the bridge lives in the popup). When the user opens
 // a wizard whose step is `kind: "extension-action"`, the popup picks
@@ -12,10 +12,10 @@
 
 interface ProveRequest {
   // The submitUrl the plugin embedded in extension-action.payload.params
-  // (under TLSN, this is `/api/tlsn/submit` on the Tessera origin).
+  // (under TLSN, this is `/api/tlsn/submit` on the Minister origin).
   submitUrl: string;
-  // The Tessera-side session token; we echo it back as `sessionToken`
-  // in the submit body so Tessera resolves the right wizard session.
+  // The Minister-side session token; we echo it back as `sessionToken`
+  // in the submit body so Minister resolves the right wizard session.
   sessionToken: string;
   // The HTTPS endpoint the user is attesting against. tlsn-js opens a
   // session against this through the ws-proxy and asks the notary for
@@ -39,7 +39,7 @@ async function submitPresentation(
 ): Promise<void> {
   const response = await fetch(req.submitUrl, {
     method: "POST",
-    credentials: "include", // need the Tessera session cookie
+    credentials: "include", // need the Minister session cookie
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       sessionToken: req.sessionToken,
@@ -48,7 +48,7 @@ async function submitPresentation(
   });
   if (!response.ok) {
     throw new Error(
-      `Tessera submit endpoint returned ${response.status}: ${await response.text()}`,
+      `Minister submit endpoint returned ${response.status}: ${await response.text()}`,
     );
   }
 }

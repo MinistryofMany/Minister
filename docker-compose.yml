@@ -1,17 +1,17 @@
-# Tessera dev compose.
+# Minister dev compose.
 #
 # - postgres     : application database
-# - tessera      : Next.js app (port 3000)
-# - tessera-seed : one-shot, runs the OIDC seed script with the
+# - minister      : Next.js app (port 3000)
+# - minister-seed : one-shot, runs the OIDC seed script with the
 #                  deterministic demo-client credentials. Idempotent.
 #
 # The demo-client (apps/demo-client) is run on the host with
-# `pnpm --filter @tessera/demo-client dev` so the OIDC issuer URL it
+# `pnpm --filter @minister/demo-client dev` so the OIDC issuer URL it
 # sees matches the URL the discovery doc advertises (both
 # http://localhost:3000). The credentials it uses match what
-# tessera-seed inserts.
+# minister-seed inserts.
 #
-# Magic-link emails are printed to the tessera container's stdout in
+# Magic-link emails are printed to the minister container's stdout in
 # dev (no mailhog). notary, ws-proxy, tlsn-verifier are commented out
 # until Stage 6.
 
@@ -20,37 +20,37 @@ services:
     image: postgres:16-alpine
     restart: unless-stopped
     environment:
-      POSTGRES_USER: tessera
-      POSTGRES_PASSWORD: tessera
-      POSTGRES_DB: tessera
+      POSTGRES_USER: minister
+      POSTGRES_PASSWORD: minister
+      POSTGRES_DB: minister
     ports:
       # Host port 5433 — 5432 tends to be taken by another local
       # postgres. Container-internal stays 5432; for host-side dev use
-      # postgresql://tessera:tessera@localhost:5433/tessera
+      # postgresql://minister:minister@localhost:5433/minister
       - "5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U tessera -d tessera"]
+      test: ["CMD-SHELL", "pg_isready -U minister -d minister"]
       interval: 5s
       timeout: 5s
       retries: 10
 
-  tessera:
+  minister:
     build:
       context: .
-      dockerfile: apps/tessera/Dockerfile
+      dockerfile: apps/minister/Dockerfile
     restart: unless-stopped
     depends_on:
       postgres:
         condition: service_healthy
     environment:
-      DATABASE_URL: postgresql://tessera:tessera@postgres:5432/tessera?schema=public
+      DATABASE_URL: postgresql://minister:minister@postgres:5432/minister?schema=public
       AUTH_URL: http://localhost:3000
       AUTH_TRUST_HOST: "true"
       # Generate with: openssl rand -base64 32
       AUTH_SECRET: ${AUTH_SECRET:-dev-only-replace-me-with-openssl-rand-base64-32}
-      TESSERA_ISSUER_DOMAIN: ${TESSERA_ISSUER_DOMAIN:-tessera.local}
+      MINISTER_ISSUER_DOMAIN: ${MINISTER_ISSUER_DOMAIN:-minister.local}
       OIDC_PAIRWISE_SECRET: ${OIDC_PAIRWISE_SECRET:-dev-only-replace-me-with-openssl-rand-base64-32}
       TLSN_VERIFIER_URL: http://tlsn-verifier:7048
     ports:
@@ -58,18 +58,18 @@ services:
 
   # Idempotent: upserts the demo client by clientId. Runs to completion
   # and exits. `restart: "no"` so it doesn't keep re-running.
-  tessera-seed:
+  minister-seed:
     build:
       context: .
-      dockerfile: apps/tessera/Dockerfile
+      dockerfile: apps/minister/Dockerfile
     restart: "no"
     depends_on:
       postgres:
         condition: service_healthy
     environment:
-      DATABASE_URL: postgresql://tessera:tessera@postgres:5432/tessera?schema=public
-    # Run db push first so we don't race the tessera service for
-    # schema creation. Both calls are idempotent; if the tessera
+      DATABASE_URL: postgresql://minister:minister@postgres:5432/minister?schema=public
+    # Run db push first so we don't race the minister service for
+    # schema creation. Both calls are idempotent; if the minister
     # service already pushed, this is a no-op.
     command:
       - sh
@@ -78,7 +78,7 @@ services:
         pnpm prisma db push --skip-generate &&
         pnpm oidc:seed-client
         --name "Demo client"
-        --redirect-uri http://localhost:3100/api/auth/callback/tessera
+        --redirect-uri http://localhost:3100/api/auth/callback/minister
         --scope openid
         --scope profile
         --scope badge:email-domain

@@ -3,7 +3,7 @@
 // to the active wizard session lands when the prover does.
 //
 // Planned flow once tlsn-js is integrated:
-//   1. Read the active Tessera tab URL.
+//   1. Read the active Minister tab URL.
 //   2. Hit a tiny in-page bridge that exposes the current wizard step
 //      payload (only for extension-action steps).
 //   3. Show a "Run proof" button. On click, postMessage to the

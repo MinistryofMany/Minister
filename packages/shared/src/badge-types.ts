@@ -151,7 +151,7 @@ export const BADGE_TYPES: Record<string, BadgeTypeMeta> = {
     type: "invite-code",
     label: "Invited",
     description:
-      "Holder redeemed an invite code issued by a Tessera admin for the named campaign.",
+      "Holder redeemed an invite code issued by a Minister admin for the named campaign.",
     iconKey: "ticket",
     schema: InviteCodeClaims,
   },

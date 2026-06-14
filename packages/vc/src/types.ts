@@ -1,6 +1,6 @@
 import type { JWK, KeyLike } from "jose";
 
-// Loaded Tessera issuer key + its DID-bound identifiers. Threaded through
+// Loaded Minister issuer key + its DID-bound identifiers. Threaded through
 // `issueVc` / `verifyVc` so the package itself never reads env directly.
 export interface Issuer {
   domain: string;
@@ -11,7 +11,7 @@ export interface Issuer {
   publicJwk: JWK;
 }
 
-// W3C VC Data Model 2.0 payload, restricted to the shapes Tessera issues
+// W3C VC Data Model 2.0 payload, restricted to the shapes Minister issues
 // today. credentialSubject.id is required because we always bind a VC to
 // a subject DID (the user's did:web URL).
 export interface CredentialSubject {

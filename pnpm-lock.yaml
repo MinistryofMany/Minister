@@ -70,7 +70,7 @@ importers:
         specifier: ^5.6.3
         version: 5.9.3
 
-  apps/tessera:
+  apps/minister:
     dependencies:
       '@auth/prisma-adapter':
         specifier: ^2.7.4
@@ -84,6 +84,15 @@ importers:
       '@dnd-kit/utilities':
         specifier: ^3.2.2
         version: 3.2.2(react@19.2.6)
+      '@minister/plugin-sdk':
+        specifier: workspace:*
+        version: link:../../packages/plugin-sdk
+      '@minister/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
+      '@minister/vc':
+        specifier: workspace:*
+        version: link:../../packages/vc
       '@node-rs/argon2':
         specifier: ^2.0.2
         version: 2.0.2
@@ -99,15 +108,6 @@ importers:
       '@simplewebauthn/server':
         specifier: ^9.0.3
         version: 9.0.3
-      '@tessera/plugin-sdk':
-        specifier: workspace:*
-        version: link:../../packages/plugin-sdk
-      '@tessera/shared':
-        specifier: workspace:*
-        version: link:../../packages/shared
-      '@tessera/vc':
-        specifier: workspace:*
-        version: link:../../packages/vc
       class-variance-authority:
         specifier: ^0.7.1
         version: 0.7.1

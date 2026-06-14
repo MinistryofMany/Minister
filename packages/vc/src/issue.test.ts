@@ -5,26 +5,26 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { _resetIssuerCache, loadIssuer } from "./key";
-import { issueVc, tesseraCredentialType } from "./issue";
+import { issueVc, ministerCredentialType } from "./issue";
 import { verifyVc, VcVerificationError } from "./verify";
 import { buildUserDid } from "./did";
 
-describe("tesseraCredentialType", () => {
+describe("ministerCredentialType", () => {
   it("converts kebab slugs to PascalCase credential types", () => {
-    expect(tesseraCredentialType("email-domain")).toBe(
-      "TesseraEmailDomainCredential",
+    expect(ministerCredentialType("email-domain")).toBe(
+      "MinisterEmailDomainCredential",
     );
-    expect(tesseraCredentialType("oauth-account")).toBe(
-      "TesseraOauthAccountCredential",
+    expect(ministerCredentialType("oauth-account")).toBe(
+      "MinisterOauthAccountCredential",
     );
-    expect(tesseraCredentialType("age-over-21")).toBe(
-      "TesseraAgeOver21Credential",
+    expect(ministerCredentialType("age-over-21")).toBe(
+      "MinisterAgeOver21Credential",
     );
   });
 
   it("handles single-word slugs", () => {
-    expect(tesseraCredentialType("residency")).toBe(
-      "TesseraResidencyCredential",
+    expect(ministerCredentialType("residency")).toBe(
+      "MinisterResidencyCredential",
     );
   });
 });
@@ -39,7 +39,7 @@ describe("VC issue/verify round trip", () => {
 
   beforeEach(async () => {
     _resetIssuerCache();
-    tmpDir = await mkdtemp(join(tmpdir(), "tessera-vc-test-"));
+    tmpDir = await mkdtemp(join(tmpdir(), "minister-vc-test-"));
     keyPath = join(tmpDir, "issuer.jwk");
   });
 
@@ -50,7 +50,7 @@ describe("VC issue/verify round trip", () => {
 
   it("issues a valid JWT-VC that verifies against the issuer's own key", async () => {
     const issuer = await loadIssuer({
-      domain: "tessera.local",
+      domain: "minister.local",
       devKeyPath: keyPath,
     });
     const subjectDid = buildUserDid(issuer.domain, "u_test_123");
@@ -63,7 +63,7 @@ describe("VC issue/verify round trip", () => {
     expect(verified.iss).toBe(issuer.did);
     expect(verified.sub).toBe(subjectDid);
     expect(verified.vc.type).toContain("VerifiableCredential");
-    expect(verified.vc.type).toContain("TesseraEmailDomainCredential");
+    expect(verified.vc.type).toContain("MinisterEmailDomainCredential");
     expect(verified.vc.credentialSubject).toEqual({
       id: subjectDid,
       domain: "example.com",
@@ -72,7 +72,7 @@ describe("VC issue/verify round trip", () => {
 
   it("stamps a jti when one is provided", async () => {
     const issuer = await loadIssuer({
-      domain: "tessera.local",
+      domain: "minister.local",
       devKeyPath: keyPath,
     });
     const subjectDid = buildUserDid(issuer.domain, "u_jti");
@@ -89,7 +89,7 @@ describe("VC issue/verify round trip", () => {
 
   it("populates iat by default and exp from `expiresIn`", async () => {
     const issuer = await loadIssuer({
-      domain: "tessera.local",
+      domain: "minister.local",
       devKeyPath: keyPath,
     });
     const subjectDid = buildUserDid(issuer.domain, "u_exp");
@@ -132,7 +132,7 @@ describe("VC issue/verify round trip", () => {
 
   it("rejects a VC whose iss claim has been tampered (issuer mismatch)", async () => {
     const issuer = await loadIssuer({
-      domain: "tessera.local",
+      domain: "minister.local",
       devKeyPath: keyPath,
     });
     const jwt = await issueVc(
@@ -158,7 +158,7 @@ describe("VC issue/verify round trip", () => {
 
   it("rejects a non-JWT input gracefully (no thrown noise)", async () => {
     const issuer = await loadIssuer({
-      domain: "tessera.local",
+      domain: "minister.local",
       devKeyPath: keyPath,
     });
     await expect(verifyVc(issuer, "not.a.jwt")).rejects.toBeInstanceOf(

@@ -1,6 +1,6 @@
 # notary-server
 
-Runs the official [tlsn](https://github.com/tlsnotary/tlsn) notary binary. The notary co-signs TLS sessions that the Tessera browser extension generates during TLSNotary proof flows. Tessera itself does not talk to the notary — the extension does.
+Runs the official [tlsn](https://github.com/tlsnotary/tlsn) notary binary. The notary co-signs TLS sessions that the Minister browser extension generates during TLSNotary proof flows. Minister itself does not talk to the notary — the extension does.
 
 ## Image
 
@@ -13,7 +13,7 @@ The bundled `config.yaml` is a minimal dev config:
 - Generates a notary signing key on first boot and persists it to `/data/notary.key`. Mount `notary_data` to keep it across container restarts.
 - TLS termination off (dev only). In prod the notary is reachable over TLS.
 
-The notary's public key is what end-users (and any other RP that wants to cross-verify a presentation) need to validate signatures. Surface it via Tessera's existing `/.well-known/jwks.json` if we want a single discoverable place, or via a separate notary-specific endpoint.
+The notary's public key is what end-users (and any other RP that wants to cross-verify a presentation) need to validate signatures. Surface it via Minister's existing `/.well-known/jwks.json` if we want a single discoverable place, or via a separate notary-specific endpoint.
 
 ## Pairing with the verifier
 
