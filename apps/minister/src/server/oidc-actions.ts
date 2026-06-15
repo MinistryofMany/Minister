@@ -52,18 +52,20 @@ export async function approveConsent(
     };
   }
 
-  // approvedBadgeIds must all belong to the current user. Anything not
-  // owned is silently dropped — the badges the user actually claimed
-  // are the ones we'll disclose.
-  const ownedIds = new Set(
-    (
-      await prisma.badge.findMany({
-        where: { userId: session.user.id, id: { in: parsed.data.approvedBadgeIds } },
-        select: { id: true },
-      })
-    ).map((b) => b.id),
+  // The scope↔badge binding is SERVER-enforced here, not trusted from the
+  // submitted approvedBadgeIds. A badge is disclosable only if it is BOTH
+  // (a) owned by the current user AND (b) of a type the RP actually
+  // requested via a `badge:<type>` scope. A tampered consent POST that
+  // adds an owned-but-unrequested badge id therefore discloses nothing
+  // the user wasn't shown — "private by default", enforced authoritatively.
+  const requestedBadgeTypes = new Set(
+    request.scopes.filter((s) => s.startsWith("badge:")).map((s) => s.slice("badge:".length)),
   );
-  const approvedBadgeIds = parsed.data.approvedBadgeIds.filter((id) => ownedIds.has(id));
+  // Load id+type for the submitted ids, scoped to the owning user (the
+  // ownership drop). Then keep only those whose type was requested.
+  const ownedBadges = await loadBadgeTypesForUser(session.user.id, parsed.data.approvedBadgeIds);
+  const userBadges = ownedBadges.filter((b) => requestedBadgeTypes.has(b.type));
+  const approvedBadgeIds = userBadges.map((b) => b.id);
 
   const code = newAuthCode();
   await prisma.oidcAuthorizationCode.create({
@@ -74,11 +76,11 @@ export async function approveConsent(
       redirectUri: request.redirectUri,
       // Effective granted scopes: openid always; profile only if the
       // user said yes; each badge:<type> scope kept only if at least
-      // one badge was disclosed for it.
+      // one badge of that type was disclosed.
       scopes: effectiveScopes(request.scopes, {
         approveProfile: parsed.data.approveProfile,
         approvedBadgeIds,
-        userBadges: await loadBadgeTypesForUser(session.user.id, approvedBadgeIds),
+        userBadges,
       }),
       approvedBadgeIds,
       // Echoed back in id_token at /token time — see CLAUDE.md.
