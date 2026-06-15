@@ -45,29 +45,34 @@ Package manager: pnpm. Node 20+.
 
 ## Monorepo layout
 
-This repo is a pnpm workspace (`apps/*`, `packages/*`). **`packages/` is currently
-empty** — the three `@minister/*` libraries live in _sibling git repos_ one level
-above this one and are wired in by relative symlink, not as in-repo packages or
-published npm deps. From `apps/minister/package.json`:
+This repo is a pnpm workspace (`apps/*`, `packages/*`). The three `@minister/*`
+libraries are **in-repo workspace packages** under `packages/`, wired into the app
+as `workspace:*` deps — not sibling git repos linked via `link:`, and not published
+npm deps. From `apps/minister/package.json`:
 
 ```
-"@minister/plugin-sdk": "link:../../../minister-plugin-sdk",
-"@minister/shared":     "link:../../../minister-shared",
-"@minister/vc":         "link:../../../minister-vc",
+"@minister/plugin-sdk": "workspace:*",
+"@minister/shared":     "workspace:*",
+"@minister/vc":         "workspace:*",
 ```
 
-So all three must be cloned as siblings of `Minister/`, or install/build breaks, and
-editing them is live-editing this app (no publish step). The workspace-root
-`../CLAUDE.md` describes the cross-repo picture.
+pnpm resolves these to `packages/plugin-sdk`, `packages/shared`, and `packages/vc`
+via the workspace. Each is `private: true` and exposes its source directly
+(`main`/`types` → `./src/index.ts`); the app compiles them in-tree, so there is no
+build/publish step and editing them is live-editing this app. The only external,
+separately-published package is `@minister/client`, which lives in its own repo.
 
 ```
 MinistryOfMany/                  # workspace folder (not a git repo)
-├── Minister/                    # this repo
+├── Minister/                    # this repo (pnpm workspace)
 │   ├── apps/
 │   │   ├── minister/            # Main app (Next.js) — package @minister/app
 │   │   ├── demo-client/         # Sample RP
 │   │   └── extension/           # Browser extension skeleton (Stage 6+)
-│   ├── packages/                # empty (see note above)
+│   ├── packages/                # in-repo workspace packages (workspace:*)
+│   │   ├── vc/                  # @minister/vc
+│   │   ├── shared/              # @minister/shared
+│   │   └── plugin-sdk/          # @minister/plugin-sdk
 │   ├── services/
 │   │   ├── notary/              # Stage 6+: tlsn notary binary (stub Dockerfile)
 │   │   ├── ws-proxy/            # Stage 6+: WS relay (stub Dockerfile)
@@ -75,9 +80,7 @@ MinistryOfMany/                  # workspace folder (not a git repo)
 │   ├── docker-compose.yml
 │   ├── pnpm-workspace.yaml
 │   └── README.md
-├── minister-vc/                 # @minister/vc          (linked in)
-├── minister-shared/             # @minister/shared      (linked in)
-└── minister-plugin-sdk/         # @minister/plugin-sdk  (linked in)
+└── minister-client/             # @minister/client (separate, published repo)
 ```
 
 `apps/extension/` (browser extension) lands in Stage 6+.
@@ -317,7 +320,7 @@ Each native badge is a VC issued by Minister. Imported badges keep their origina
 }
 ```
 
-`@minister/vc` (sibling repo `../minister-vc`, linked in) exports:
+`@minister/vc` (in-repo workspace package `packages/vc`) exports:
 
 - `loadIssuer({ domain, privateJwk?, devKeyPath? })` → `Issuer`. Env-driven in prod (`ISSUER_PRIVATE_JWK`); ephemeral persistent key on first dev boot (`apps/minister/dev-keys/issuer.jwk`, gitignored).
 - `issueVc(issuer, type, subjectId, claims, options?)` → `vcJwt`. Stamps `iat`/`nbf`/`exp`/`jti`; protected header carries `kid` matching the DID document.
@@ -325,7 +328,7 @@ Each native badge is a VC issued by Minister. Imported badges keep their origina
 - `getDidDocument(issuer)` → DID document with a `JsonWebKey2020` verificationMethod.
 - `buildDid`, `buildKid`, `buildUserDid` helpers.
 
-Badge types each have a Zod schema for the `credentialSubject` claims, defined in `@minister/shared` (`../minister-shared/src/badge-types.ts`). The wizard runtime validates claims against this schema before signing.
+Badge types each have a Zod schema for the `credentialSubject` claims, defined in `@minister/shared` (`packages/shared/src/badge-types.ts`). The wizard runtime validates claims against this schema before signing.
 
 ### Initial badge types
 
