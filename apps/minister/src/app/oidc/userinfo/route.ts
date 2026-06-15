@@ -2,6 +2,7 @@ import { jwtVerify } from "jose";
 import { NextResponse } from "next/server";
 
 import { getIssuer } from "@/lib/issuer";
+import { loadApprovedBadgeJwts, resolveUserClaims } from "@/lib/oidc-claims";
 import { oidcIssuerUrl } from "@/lib/oidc-config";
 import { prisma } from "@/lib/prisma";
 import { clientIpFrom, oidcUserinfoLimiter } from "@/lib/rate-limit";
@@ -19,6 +20,12 @@ import { clientIpFrom, oidcUserinfoLimiter } from "@/lib/rate-limit";
 //   3. Reject if the row is revoked or expired (defense beyond JWT
 //      `exp` — a server-side revoke is supposed to take immediate
 //      effect, not wait for token expiration).
+
+// Fixed, allowlisted error_description for the WWW-Authenticate header.
+// jose's err.message (and any other token-derived text) must never reach
+// the header — it could echo attacker-controlled token contents back into
+// a response header. The detailed reason stays in the JSON body only.
+const INVALID_TOKEN_HEADER_DESCRIPTION = "The access token is invalid or expired";
 
 export async function GET(request: Request) {
   const limit = oidcUserinfoLimiter.check(clientIpFrom(request.headers));
@@ -91,6 +98,10 @@ export async function GET(request: Request) {
   const scopeStr = typeof payload.scope === "string" ? payload.scope : "";
   const scopes = scopeStr.split(/\s+/).filter(Boolean);
 
+  const approvedBadgeJwts = await loadApprovedBadgeJwts(row.userId, row.approvedBadgeIds);
+  // Shared resolver so these claims provably match the ID token's.
+  const resolved = resolveUserClaims(row.user, scopes, approvedBadgeJwts);
+
   const claims: Record<string, unknown> = {
     // OIDC requires `sub` in userinfo to match the ID token's `sub`.
     // The pairwise pseudonymous value lives on the JWT's `sub` claim.
@@ -98,17 +109,12 @@ export async function GET(request: Request) {
   };
 
   if (scopes.includes("profile")) {
-    claims.name = row.user.displayName ?? row.user.name ?? null;
-    claims.picture = row.user.avatarUrl ?? row.user.image ?? null;
+    claims.name = resolved.name;
+    claims.picture = resolved.picture;
   }
 
-  if (row.approvedBadgeIds.length > 0) {
-    const badges = await prisma.badge.findMany({
-      where: { userId: row.userId, id: { in: row.approvedBadgeIds } },
-      select: { vcJwt: true },
-    });
-    const vcs = badges.map((b) => b.vcJwt);
-    if (vcs.length > 0) claims.minister_badges = vcs;
+  if (resolved.ministerBadges.length > 0) {
+    claims.minister_badges = resolved.ministerBadges;
   }
 
   return NextResponse.json(claims, {
@@ -117,13 +123,18 @@ export async function GET(request: Request) {
 }
 
 function unauthorized(error: string, description: string): NextResponse {
+  // The JSON body may carry the specific (server-derived) reason, but the
+  // WWW-Authenticate header only ever gets a fixed, allowlisted string —
+  // never the caller's `description`, which on the verify path is
+  // jose's err.message (token-derived). Keeps the RFC 6750 grammar and the
+  // invalid_token code intact.
   return NextResponse.json(
     { error, error_description: description },
     {
       status: 401,
       headers: {
         "Cache-Control": "no-store",
-        "WWW-Authenticate": `Bearer error="${error}", error_description="${description}"`,
+        "WWW-Authenticate": `Bearer error="${error}", error_description="${INVALID_TOKEN_HEADER_DESCRIPTION}"`,
       },
     },
   );
