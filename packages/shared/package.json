@@ -19,7 +19,7 @@
   },
   "devDependencies": {
     "typescript": "^5.6.3",
-    "vitest": "^2.1.8"
+    "vitest": "^3.2.6"
   },
   "license": "(MIT OR Apache-2.0)",
   "author": "AtHeartEngineer",
