@@ -1,7 +1,9 @@
+import { randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 
 import { expect, type Page } from "@playwright/test";
 
+import { hashClientSecret } from "../src/lib/oidc-clients";
 import { PrismaClient } from "../src/generated/prisma/index.js";
 import { E2E_DATABASE_URL, MAIL_FILE } from "./env";
 
@@ -138,6 +140,68 @@ export async function createPublicOidcClient(
     },
   });
   return clientId;
+}
+
+// Insert a confidential OIDC client (Argon2id-hashed secret) directly,
+// returning both ids. Used by /token security specs that exercise client
+// authentication without driving the admin registration UI.
+export async function createConfidentialOidcClient(
+  redirectUri: string,
+  scopes: string[],
+): Promise<{ clientId: string; clientSecret: string }> {
+  const clientId = `tc_e2e_${++oidcClientSeq}_${Math.floor(Date.now() % 1e6)}`;
+  const clientSecret = randomBytes(24).toString("base64url");
+  await prisma.oidcClient.create({
+    data: {
+      clientId,
+      clientSecretHash: await hashClientSecret(clientSecret),
+      name: "E2E confidential client",
+      redirectUris: [redirectUri],
+      allowedScopes: scopes,
+    },
+  });
+  return { clientId, clientSecret };
+}
+
+// Seed a Badge row with a recognizable, self-describing VC JWT. The
+// OIDC token/userinfo paths emit `vcJwt` verbatim, so the payload only
+// needs to be a decodable JWT-VC whose `credentialSubject.kind` lets a
+// spec assert exactly which credential was disclosed. `tag` makes the
+// embedded value unique per badge so duplicate types stay
+// distinguishable.
+export async function seedBadge(userId: string, type: string, tag = type): Promise<string> {
+  const header = Buffer.from(JSON.stringify({ alg: "EdDSA", typ: "JWT" })).toString("base64url");
+  const payload = Buffer.from(
+    JSON.stringify({
+      sub: `did:web:minister.local:users:${userId}`,
+      vc: { type: ["VerifiableCredential"], credentialSubject: { kind: type, tag } },
+    }),
+  ).toString("base64url");
+  const badge = await prisma.badge.create({
+    data: {
+      userId,
+      type,
+      attributes: { tag },
+      vcJwt: `${header}.${payload}.sig`,
+      issuer: "did:web:minister.local",
+    },
+  });
+  return badge.id;
+}
+
+// Resolve which credential kinds a list of emitted VC JWTs carry. Pairs
+// with seedBadge's payload shape.
+export function vcKinds(vcJwts: string[]): string[] {
+  return vcJwts.map((jwt) => {
+    const part = jwt.split(".")[1];
+    if (!part) throw new Error("not a JWT");
+    const decoded = JSON.parse(Buffer.from(part, "base64url").toString("utf8")) as {
+      vc?: { credentialSubject?: { kind?: string } };
+    };
+    const kind = decoded.vc?.credentialSubject?.kind;
+    if (typeof kind !== "string") throw new Error("VC missing credentialSubject.kind");
+    return kind;
+  });
 }
 
 // Accept every native confirm() the page raises from here on.
