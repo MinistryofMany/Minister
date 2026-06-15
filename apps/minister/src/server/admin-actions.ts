@@ -8,7 +8,7 @@ import { generateInviteCode, normalizeInviteCode } from "@/lib/invite-codes";
 import { parseRedirectUris, validateClientScopes } from "@/lib/oidc-client-admin";
 import { generateClientId, generateClientSecret, hashClientSecret } from "@/lib/oidc-clients";
 import { prisma } from "@/lib/prisma";
-import { requireAdmin } from "@/lib/session";
+import { adminAction } from "@/server/admin-action";
 
 export type AdminActionResult = { ok: true } | { ok: false; error: string };
 
@@ -21,78 +21,74 @@ const SetBannedInput = z.object({
   banned: z.boolean(),
 });
 
-export async function setUserBanned(
-  input: z.infer<typeof SetBannedInput>,
-): Promise<AdminActionResult> {
-  const session = await requireAdmin();
-  const parsed = SetBannedInput.safeParse(input);
-  if (!parsed.success) return { ok: false, error: "Invalid input" };
-  const { userId, banned } = parsed.data;
+export const setUserBanned = adminAction(
+  SetBannedInput,
+  async ({ session, input }): Promise<AdminActionResult> => {
+    const { userId, banned } = input;
 
-  if (userId === session.user.id) {
-    return { ok: false, error: "You can't ban yourself" };
-  }
+    if (userId === session.user.id) {
+      return { ok: false, error: "You can't ban yourself" };
+    }
 
-  // Admins can't ban other admins — demote first. Keeps a compromised
-  // admin account from locking every admin out.
-  const result = await prisma.user.updateMany({
-    where: { id: userId, isAdmin: false },
-    data: banned
-      ? // Bumping sessionGeneration kicks the user's live sessions on
-        // their next request rather than waiting out the 24h JWT TTL.
-        { isBanned: true, sessionGeneration: { increment: 1 } }
-      : { isBanned: false },
-  });
-  if (result.count === 0) {
-    return { ok: false, error: "User not found (or is an admin)" };
-  }
+    // Admins can't ban other admins — demote first. Keeps a compromised
+    // admin account from locking every admin out.
+    const result = await prisma.user.updateMany({
+      where: { id: userId, isAdmin: false },
+      data: banned
+        ? // Bumping sessionGeneration kicks the user's live sessions on
+          // their next request rather than waiting out the 24h JWT TTL.
+          { isBanned: true, sessionGeneration: { increment: 1 } }
+        : { isBanned: false },
+    });
+    if (result.count === 0) {
+      return { ok: false, error: "User not found (or is an admin)" };
+    }
 
-  await audit(session.user.id, banned ? "admin.user_banned" : "admin.user_unbanned", {
-    targetUserId: userId,
-  });
+    await audit(session.user.id, banned ? "admin.user_banned" : "admin.user_unbanned", {
+      targetUserId: userId,
+    });
 
-  revalidatePath("/admin/users");
-  return { ok: true };
-}
+    revalidatePath("/admin/users");
+    return { ok: true };
+  },
+);
 
 const SetAdminInput = z.object({
   userId: z.string().cuid(),
   admin: z.boolean(),
 });
 
-export async function setUserAdmin(
-  input: z.infer<typeof SetAdminInput>,
-): Promise<AdminActionResult> {
-  const session = await requireAdmin();
-  const parsed = SetAdminInput.safeParse(input);
-  if (!parsed.success) return { ok: false, error: "Invalid input" };
-  const { userId, admin } = parsed.data;
+export const setUserAdmin = adminAction(
+  SetAdminInput,
+  async ({ session, input }): Promise<AdminActionResult> => {
+    const { userId, admin } = input;
 
-  // No self-service on your own flag — prevents demoting yourself into
-  // a zero-admin lockout. Another admin (or make-admin.ts) can.
-  if (userId === session.user.id) {
-    return { ok: false, error: "You can't change your own admin status" };
-  }
+    // No self-service on your own flag — prevents demoting yourself into
+    // a zero-admin lockout. Another admin (or make-admin.ts) can.
+    if (userId === session.user.id) {
+      return { ok: false, error: "You can't change your own admin status" };
+    }
 
-  // Promoting a banned user would be contradictory; unban first.
-  const result = await prisma.user.updateMany({
-    where: admin ? { id: userId, isBanned: false } : { id: userId },
-    data: { isAdmin: admin },
-  });
-  if (result.count === 0) {
-    return { ok: false, error: "User not found (or is banned)" };
-  }
+    // Promoting a banned user would be contradictory; unban first.
+    const result = await prisma.user.updateMany({
+      where: admin ? { id: userId, isBanned: false } : { id: userId },
+      data: { isAdmin: admin },
+    });
+    if (result.count === 0) {
+      return { ok: false, error: "User not found (or is banned)" };
+    }
 
-  // Same action names make-admin.ts uses, so the audit trail reads
-  // uniformly regardless of which path granted it.
-  await audit(session.user.id, admin ? "admin.granted" : "admin.revoked", {
-    targetUserId: userId,
-    via: "/admin/users",
-  });
+    // Same action names make-admin.ts uses, so the audit trail reads
+    // uniformly regardless of which path granted it.
+    await audit(session.user.id, admin ? "admin.granted" : "admin.revoked", {
+      targetUserId: userId,
+      via: "/admin/users",
+    });
 
-  revalidatePath("/admin/users");
-  return { ok: true };
-}
+    revalidatePath("/admin/users");
+    return { ok: true };
+  },
+);
 
 // ---------------------------------------------------------------------------
 // Invite codes
@@ -123,78 +119,68 @@ const CreateInviteCodeInput = z.object({
 
 export type CreateInviteCodeResult = { ok: true; code: string } | { ok: false; error: string };
 
-export async function createInviteCode(
-  input: z.infer<typeof CreateInviteCodeInput>,
-): Promise<CreateInviteCodeResult> {
-  const session = await requireAdmin();
-  const parsed = CreateInviteCodeInput.safeParse(input);
-  if (!parsed.success) {
-    return {
-      ok: false,
-      error: parsed.error.issues[0]?.message ?? "Invalid input",
-    };
-  }
-  const { label, customCode, usesTotal, ttlDays } = parsed.data;
+export const createInviteCode = adminAction(
+  CreateInviteCodeInput,
+  async ({ session, input }): Promise<CreateInviteCodeResult> => {
+    const { label, customCode, usesTotal, ttlDays } = input;
 
-  const code = normalizeInviteCode(customCode ?? generateInviteCode());
-  const expiresAt = ttlDays ? new Date(Date.now() + ttlDays * 24 * 60 * 60 * 1000) : null;
+    const code = normalizeInviteCode(customCode ?? generateInviteCode());
+    const expiresAt = ttlDays ? new Date(Date.now() + ttlDays * 24 * 60 * 60 * 1000) : null;
 
-  const existing = await prisma.inviteCode.findUnique({ where: { code } });
-  if (existing) {
-    return { ok: false, error: "That code already exists" };
-  }
+    const existing = await prisma.inviteCode.findUnique({ where: { code } });
+    if (existing) {
+      return { ok: false, error: "That code already exists" };
+    }
 
-  const row = await prisma.inviteCode.create({
-    data: {
-      code,
+    const row = await prisma.inviteCode.create({
+      data: {
+        code,
+        label,
+        usesTotal,
+        usesRemaining: usesTotal,
+        expiresAt,
+        createdBy: session.user.id,
+      },
+      select: { id: true },
+    });
+
+    // The code itself stays out of the audit log — same policy as VC
+    // claims and plugin redemption metadata.
+    await audit(session.user.id, "admin.invite_code.created", {
+      inviteCodeId: row.id,
       label,
       usesTotal,
-      usesRemaining: usesTotal,
-      expiresAt,
-      createdBy: session.user.id,
-    },
-    select: { id: true },
-  });
+      expiresAt: expiresAt?.toISOString() ?? null,
+    });
 
-  // The code itself stays out of the audit log — same policy as VC
-  // claims and plugin redemption metadata.
-  await audit(session.user.id, "admin.invite_code.created", {
-    inviteCodeId: row.id,
-    label,
-    usesTotal,
-    expiresAt: expiresAt?.toISOString() ?? null,
-  });
-
-  revalidatePath("/admin/invite-codes");
-  return { ok: true, code };
-}
+    revalidatePath("/admin/invite-codes");
+    return { ok: true, code };
+  },
+);
 
 const RevokeInviteCodeInput = z.object({
   inviteCodeId: z.string().cuid(),
 });
 
-export async function revokeInviteCode(
-  input: z.infer<typeof RevokeInviteCodeInput>,
-): Promise<AdminActionResult> {
-  const session = await requireAdmin();
-  const parsed = RevokeInviteCodeInput.safeParse(input);
-  if (!parsed.success) return { ok: false, error: "Invalid input" };
+export const revokeInviteCode = adminAction(
+  RevokeInviteCodeInput,
+  async ({ session, input }): Promise<AdminActionResult> => {
+    const result = await prisma.inviteCode.updateMany({
+      where: { id: input.inviteCodeId, revokedAt: null },
+      data: { revokedAt: new Date() },
+    });
+    if (result.count === 0) {
+      return { ok: false, error: "Code not found or already revoked" };
+    }
 
-  const result = await prisma.inviteCode.updateMany({
-    where: { id: parsed.data.inviteCodeId, revokedAt: null },
-    data: { revokedAt: new Date() },
-  });
-  if (result.count === 0) {
-    return { ok: false, error: "Code not found or already revoked" };
-  }
+    await audit(session.user.id, "admin.invite_code.revoked", {
+      inviteCodeId: input.inviteCodeId,
+    });
 
-  await audit(session.user.id, "admin.invite_code.revoked", {
-    inviteCodeId: parsed.data.inviteCodeId,
-  });
-
-  revalidatePath("/admin/invite-codes");
-  return { ok: true };
-}
+    revalidatePath("/admin/invite-codes");
+    return { ok: true };
+  },
+);
 
 // ---------------------------------------------------------------------------
 // OIDC clients
@@ -217,94 +203,101 @@ export type CreateOidcClientResult =
   | { ok: true; clientId: string; clientSecret: string | null }
   | { ok: false; error: string };
 
-export async function createOidcClient(
-  input: z.infer<typeof CreateOidcClientInput>,
-): Promise<CreateOidcClientResult> {
-  const session = await requireAdmin();
-  const parsed = CreateOidcClientInput.safeParse(input);
-  if (!parsed.success) {
-    return {
-      ok: false,
-      error: parsed.error.issues[0]?.message ?? "Invalid input",
-    };
-  }
+export const createOidcClient = adminAction(
+  CreateOidcClientInput,
+  async ({ session, input }): Promise<CreateOidcClientResult> => {
+    const uris = parseRedirectUris(input.redirectUris);
+    if (!uris.ok) return { ok: false, error: uris.error };
+    const scopes = validateClientScopes(input.scopes);
+    if (!scopes.ok) return { ok: false, error: scopes.error };
 
-  const uris = parseRedirectUris(parsed.data.redirectUris);
-  if (!uris.ok) return { ok: false, error: uris.error };
-  const scopes = validateClientScopes(parsed.data.scopes);
-  if (!scopes.ok) return { ok: false, error: scopes.error };
+    const clientId = generateClientId();
+    const clientSecret = input.publicClient ? null : generateClientSecret();
 
-  const clientId = generateClientId();
-  const clientSecret = parsed.data.publicClient ? null : generateClientSecret();
+    const row = await prisma.oidcClient.create({
+      data: {
+        clientId,
+        clientSecretHash: clientSecret ? await hashClientSecret(clientSecret) : null,
+        name: input.name,
+        redirectUris: uris.uris,
+        allowedScopes: scopes.scopes,
+        ownerUserId: session.user.id,
+      },
+      select: { id: true },
+    });
 
-  const row = await prisma.oidcClient.create({
-    data: {
+    await audit(session.user.id, "admin.oidc_client.created", {
+      oidcClientId: row.id,
       clientId,
-      clientSecretHash: clientSecret ? await hashClientSecret(clientSecret) : null,
-      name: parsed.data.name,
+      name: input.name,
+      publicClient: input.publicClient,
       redirectUris: uris.uris,
-      allowedScopes: scopes.scopes,
-      ownerUserId: session.user.id,
-    },
-    select: { id: true },
-  });
+      scopes: scopes.scopes,
+    });
 
-  await audit(session.user.id, "admin.oidc_client.created", {
-    oidcClientId: row.id,
-    clientId,
-    name: parsed.data.name,
-    publicClient: parsed.data.publicClient,
-    redirectUris: uris.uris,
-    scopes: scopes.scopes,
-  });
-
-  revalidatePath("/admin/oidc-clients");
-  // The plaintext secret exists only in this response — it's hashed at
-  // rest, so the UI must show it now or never.
-  return { ok: true, clientId, clientSecret };
-}
+    revalidatePath("/admin/oidc-clients");
+    // The plaintext secret exists only in this response — it's hashed at
+    // rest, so the UI must show it now or never.
+    return { ok: true, clientId, clientSecret };
+  },
+);
 
 const UpdateOidcClientInput = OidcClientFields.extend({
   id: z.string().cuid(),
 });
 
-export async function updateOidcClient(
-  input: z.infer<typeof UpdateOidcClientInput>,
-): Promise<AdminActionResult> {
-  const session = await requireAdmin();
-  const parsed = UpdateOidcClientInput.safeParse(input);
-  if (!parsed.success) {
-    return {
-      ok: false,
-      error: parsed.error.issues[0]?.message ?? "Invalid input",
-    };
-  }
+export const updateOidcClient = adminAction(
+  UpdateOidcClientInput,
+  async ({ session, input }): Promise<AdminActionResult> => {
+    const uris = parseRedirectUris(input.redirectUris);
+    if (!uris.ok) return { ok: false, error: uris.error };
+    const scopes = validateClientScopes(input.scopes);
+    if (!scopes.ok) return { ok: false, error: scopes.error };
 
-  const uris = parseRedirectUris(parsed.data.redirectUris);
-  if (!uris.ok) return { ok: false, error: uris.error };
-  const scopes = validateClientScopes(parsed.data.scopes);
-  if (!scopes.ok) return { ok: false, error: scopes.error };
+    // Need clientId (the string outstanding tokens/codes reference by; no
+    // FK) to revoke them alongside the update.
+    const existing = await prisma.oidcClient.findUnique({
+      where: { id: input.id },
+      select: { clientId: true },
+    });
+    if (!existing) return { ok: false, error: "Client not found" };
 
-  const result = await prisma.oidcClient.updateMany({
-    where: { id: parsed.data.id },
-    data: {
-      name: parsed.data.name,
+    // Any change to the client invalidates outstanding grants: it signals
+    // to the RP that something changed and forces a fresh code exchange,
+    // rather than letting /oidc/userinfo keep serving claims under the old
+    // config for up to the access-token TTL. Revoke tokens (mark revokedAt
+    // so the row survives for the "revoked" 401) and drop codes in the same
+    // transaction as the update, mirroring deleteOidcClient.
+    const [, revokedTokens] = await prisma.$transaction([
+      prisma.oidcClient.update({
+        where: { id: input.id },
+        data: {
+          name: input.name,
+          redirectUris: uris.uris,
+          allowedScopes: scopes.scopes,
+        },
+      }),
+      prisma.oidcAccessToken.updateMany({
+        where: { clientId: existing.clientId, revokedAt: null },
+        data: { revokedAt: new Date() },
+      }),
+      prisma.oidcAuthorizationCode.deleteMany({
+        where: { clientId: existing.clientId },
+      }),
+    ]);
+
+    await audit(session.user.id, "admin.oidc_client.updated", {
+      oidcClientId: input.id,
+      name: input.name,
       redirectUris: uris.uris,
-      allowedScopes: scopes.scopes,
-    },
-  });
-  if (result.count === 0) return { ok: false, error: "Client not found" };
+      scopes: scopes.scopes,
+      revokedAccessTokens: revokedTokens.count,
+    });
 
-  await audit(session.user.id, "admin.oidc_client.updated", {
-    oidcClientId: parsed.data.id,
-    name: parsed.data.name,
-    redirectUris: uris.uris,
-    scopes: scopes.scopes,
-  });
-
-  revalidatePath("/admin/oidc-clients");
-  return { ok: true };
-}
+    revalidatePath("/admin/oidc-clients");
+    return { ok: true };
+  },
+);
 
 const ClientIdInput = z.object({ id: z.string().cuid() });
 
@@ -312,72 +305,79 @@ export type RotateOidcSecretResult =
   | { ok: true; clientSecret: string }
   | { ok: false; error: string };
 
-export async function rotateOidcClientSecret(
-  input: z.infer<typeof ClientIdInput>,
-): Promise<RotateOidcSecretResult> {
-  const session = await requireAdmin();
-  const parsed = ClientIdInput.safeParse(input);
-  if (!parsed.success) return { ok: false, error: "Invalid input" };
+export const rotateOidcClientSecret = adminAction(
+  ClientIdInput,
+  async ({ session, input }): Promise<RotateOidcSecretResult> => {
+    const client = await prisma.oidcClient.findUnique({
+      where: { id: input.id },
+      select: { id: true, clientId: true, clientSecretHash: true },
+    });
+    if (!client) return { ok: false, error: "Client not found" };
+    if (!client.clientSecretHash) {
+      return { ok: false, error: "Public clients have no secret to rotate" };
+    }
 
-  const client = await prisma.oidcClient.findUnique({
-    where: { id: parsed.data.id },
-    select: { id: true, clientId: true, clientSecretHash: true },
-  });
-  if (!client) return { ok: false, error: "Client not found" };
-  if (!client.clientSecretHash) {
-    return { ok: false, error: "Public clients have no secret to rotate" };
-  }
+    const clientSecret = generateClientSecret();
+    // Rotating the secret is a client change too: revoke outstanding access
+    // tokens (mark revokedAt so the row survives for the "revoked" 401) and
+    // drop codes in the same transaction, mirroring deleteOidcClient.
+    const [, revokedTokens] = await prisma.$transaction([
+      prisma.oidcClient.update({
+        where: { id: client.id },
+        data: { clientSecretHash: await hashClientSecret(clientSecret) },
+      }),
+      prisma.oidcAccessToken.updateMany({
+        where: { clientId: client.clientId, revokedAt: null },
+        data: { revokedAt: new Date() },
+      }),
+      prisma.oidcAuthorizationCode.deleteMany({
+        where: { clientId: client.clientId },
+      }),
+    ]);
 
-  const clientSecret = generateClientSecret();
-  await prisma.oidcClient.update({
-    where: { id: client.id },
-    data: { clientSecretHash: await hashClientSecret(clientSecret) },
-  });
+    // The old secret stops working immediately — any RP still configured
+    // with it fails at /oidc/token until updated.
+    await audit(session.user.id, "admin.oidc_client.secret_rotated", {
+      oidcClientId: client.id,
+      clientId: client.clientId,
+      revokedAccessTokens: revokedTokens.count,
+    });
 
-  // The old secret stops working immediately — any RP still configured
-  // with it fails at /oidc/token until updated.
-  await audit(session.user.id, "admin.oidc_client.secret_rotated", {
-    oidcClientId: client.id,
-    clientId: client.clientId,
-  });
+    revalidatePath("/admin/oidc-clients");
+    return { ok: true, clientSecret };
+  },
+);
 
-  revalidatePath("/admin/oidc-clients");
-  return { ok: true, clientSecret };
-}
+export const deleteOidcClient = adminAction(
+  ClientIdInput,
+  async ({ session, input }): Promise<AdminActionResult> => {
+    const client = await prisma.oidcClient.findUnique({
+      where: { id: input.id },
+      select: { id: true, clientId: true, name: true },
+    });
+    if (!client) return { ok: false, error: "Client not found" };
 
-export async function deleteOidcClient(
-  input: z.infer<typeof ClientIdInput>,
-): Promise<AdminActionResult> {
-  const session = await requireAdmin();
-  const parsed = ClientIdInput.safeParse(input);
-  if (!parsed.success) return { ok: false, error: "Invalid input" };
+    // Outstanding tokens/codes reference the client by clientId string
+    // (no FK) — revoke them in the same transaction so a deleted client
+    // can't keep calling /oidc/userinfo.
+    const [revokedTokens] = await prisma.$transaction([
+      prisma.oidcAccessToken.deleteMany({
+        where: { clientId: client.clientId },
+      }),
+      prisma.oidcAuthorizationCode.deleteMany({
+        where: { clientId: client.clientId },
+      }),
+      prisma.oidcClient.delete({ where: { id: client.id } }),
+    ]);
 
-  const client = await prisma.oidcClient.findUnique({
-    where: { id: parsed.data.id },
-    select: { id: true, clientId: true, name: true },
-  });
-  if (!client) return { ok: false, error: "Client not found" };
+    await audit(session.user.id, "admin.oidc_client.deleted", {
+      oidcClientId: client.id,
+      clientId: client.clientId,
+      name: client.name,
+      revokedAccessTokens: revokedTokens.count,
+    });
 
-  // Outstanding tokens/codes reference the client by clientId string
-  // (no FK) — revoke them in the same transaction so a deleted client
-  // can't keep calling /oidc/userinfo.
-  const [revokedTokens] = await prisma.$transaction([
-    prisma.oidcAccessToken.deleteMany({
-      where: { clientId: client.clientId },
-    }),
-    prisma.oidcAuthorizationCode.deleteMany({
-      where: { clientId: client.clientId },
-    }),
-    prisma.oidcClient.delete({ where: { id: client.id } }),
-  ]);
-
-  await audit(session.user.id, "admin.oidc_client.deleted", {
-    oidcClientId: client.id,
-    clientId: client.clientId,
-    name: client.name,
-    revokedAccessTokens: revokedTokens.count,
-  });
-
-  revalidatePath("/admin/oidc-clients");
-  return { ok: true };
-}
+    revalidatePath("/admin/oidc-clients");
+    return { ok: true };
+  },
+);
