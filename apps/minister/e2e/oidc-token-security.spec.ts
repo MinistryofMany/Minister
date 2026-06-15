@@ -563,6 +563,73 @@ test("changing a client revokes its outstanding access tokens at userinfo", asyn
 });
 
 // --------------------------------------------------------------------------
+// L4: banning a user revokes their outstanding OIDC access tokens. setUserBanned
+// bumps sessionGeneration AND, in the same transaction, sets revokedAt on the
+// user's live OidcAccessToken rows — closing the ≤1h window where /userinfo
+// would keep answering a banned user's token. The admin server action gates on
+// an admin session via requireAdmin and can't be invoked from an API context,
+// so this drives the SAME data-layer mutation the action performs (keyed by
+// userId, not clientId) and asserts the previously-working token is refused.
+// --------------------------------------------------------------------------
+test("banning a user revokes their outstanding access tokens at userinfo", async ({ browser }) => {
+  const userId = await newUser(throwawayEmail("banned"));
+  const { clientId, clientSecret } = await createConfidentialOidcClient(REDIRECT_URI, [
+    "openid",
+    "profile",
+  ]);
+  const { verifier, challenge } = pkcePair();
+  const code = await seedAuthCode({
+    clientId,
+    userId,
+    scopes: ["openid", "profile"],
+    challenge,
+  });
+
+  const apiCtx = await browser.newContext();
+  const tokenRes = await postToken(apiCtx.request, {
+    grant_type: "authorization_code",
+    code,
+    redirect_uri: REDIRECT_URI,
+    client_id: clientId,
+    client_secret: clientSecret,
+    code_verifier: verifier,
+  });
+  expect(tokenRes.status()).toBe(200);
+  const { access_token } = (await tokenRes.json()) as { access_token: string };
+
+  // The token works before the ban.
+  const before = await apiCtx.request.get(`${BASE_URL}/oidc/userinfo`, {
+    headers: { Authorization: `Bearer ${access_token}` },
+  });
+  expect(before.status()).toBe(200);
+
+  // Mirror setUserBanned's transaction: flag the user banned, bump
+  // sessionGeneration, and revoke the user's non-revoked access tokens —
+  // keyed by userId (the admin path is keyed by the cuid `id`).
+  const [, revoked] = await prisma.$transaction([
+    prisma.user.update({
+      where: { id: userId },
+      data: { isBanned: true, sessionGeneration: { increment: 1 } },
+    }),
+    prisma.oidcAccessToken.updateMany({
+      where: { userId, revokedAt: null },
+      data: { revokedAt: new Date() },
+    }),
+  ]);
+  // Sanity: the ban actually revoked the live token (not a no-op).
+  expect(revoked.count).toBeGreaterThanOrEqual(1);
+
+  // The banned user's previously-working token is now refused — userinfo
+  // must not keep answering for them under the access-token TTL.
+  const after = await apiCtx.request.get(`${BASE_URL}/oidc/userinfo`, {
+    headers: { Authorization: `Bearer ${access_token}` },
+  });
+  expect(after.status()).toBe(401);
+  expect(((await after.json()) as { error: string }).error).toBe("invalid_token");
+  await apiCtx.close();
+});
+
+// --------------------------------------------------------------------------
 // L1: the WWW-Authenticate header on a 401 carries a fixed, allowlisted
 // error_description and never echoes token-derived text (e.g. jose's
 // err.message). A malformed bearer token triggers the verify-failure path

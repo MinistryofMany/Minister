@@ -369,6 +369,16 @@ origin, input})` is the generic callback path.
 
 ## Hardening / known gaps (intentionally incomplete)
 
+- **OIDC grants outlive a ban only at the RP boundary — no back-channel
+  logout yet.** Banning a user (`setUserBanned`) and "sign out of all devices"
+  (`revokeAllSessions`) now revoke that user's outstanding `OidcAccessToken`
+  rows in the same transaction as the `sessionGeneration` bump, closing the
+  ≤1h window where `/oidc/userinfo` would keep answering a banned/signed-out
+  user's access token. **Still missing:** Minister cannot terminate sessions
+  the user already holds _inside_ relying-party apps — that requires OIDC
+  back-channel logout (deferred — Stage 9+). Until then, an RP that minted its
+  own session from a now-revoked grant keeps that session until its own TTL.
+
 - **TLSN verifier URL SSRF allowlist not yet enforced — warns at startup.**
   `TLSN_VERIFIER_URL` is operator-set and reached via server-side `fetch` in
   `src/lib/tlsn-verifier.ts`, so a misconfigured or attacker-influenced value

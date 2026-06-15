@@ -31,21 +31,40 @@ export const setUserBanned = adminAction(
     }
 
     // Admins can't ban other admins — demote first. Keeps a compromised
-    // admin account from locking every admin out.
-    const result = await prisma.user.updateMany({
-      where: { id: userId, isAdmin: false },
-      data: banned
-        ? // Bumping sessionGeneration kicks the user's live sessions on
-          // their next request rather than waiting out the 24h JWT TTL.
-          { isBanned: true, sessionGeneration: { increment: 1 } }
-        : { isBanned: false },
+    // admin account from locking every admin out. Bumping sessionGeneration
+    // only kills Minister login sessions; the banned user's outstanding OIDC
+    // access tokens stay valid until their ≤1h TTL, so /oidc/userinfo would
+    // keep answering for them. In the SAME transaction as the ban, revoke
+    // them (mark revokedAt so the row survives for the "revoked" 401),
+    // mirroring updateOidcClient but keyed by userId. We don't revoke on
+    // UN-ban — those grants were the user's to keep. NOTE: this does NOT
+    // terminate sessions the user already holds inside relying-party apps;
+    // that needs OIDC back-channel logout (deferred — Stage 9+).
+    const { count, revokedTokens } = await prisma.$transaction(async (tx) => {
+      const updated = await tx.user.updateMany({
+        where: { id: userId, isAdmin: false },
+        data: banned
+          ? // Bumping sessionGeneration kicks the user's live sessions on
+            // their next request rather than waiting out the 24h JWT TTL.
+            { isBanned: true, sessionGeneration: { increment: 1 } }
+          : { isBanned: false },
+      });
+      if (updated.count === 0 || !banned) {
+        return { count: updated.count, revokedTokens: 0 };
+      }
+      const revoked = await tx.oidcAccessToken.updateMany({
+        where: { userId, revokedAt: null },
+        data: { revokedAt: new Date() },
+      });
+      return { count: updated.count, revokedTokens: revoked.count };
     });
-    if (result.count === 0) {
+    if (count === 0) {
       return { ok: false, error: "User not found (or is an admin)" };
     }
 
     await audit(session.user.id, banned ? "admin.user_banned" : "admin.user_unbanned", {
       targetUserId: userId,
+      ...(banned ? { revokedAccessTokens: revokedTokens } : {}),
     });
 
     revalidatePath("/admin/users");

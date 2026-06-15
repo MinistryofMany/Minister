@@ -20,11 +20,26 @@ export async function revokeAllSessions(): Promise<never> {
     throw new Error("Not signed in");
   }
 
-  const updated = await prisma.user.update({
-    where: { id: session.user.id },
-    data: { sessionGeneration: { increment: 1 } },
-    select: { sessionGeneration: true },
-  });
+  // The sessionGeneration bump only kills Minister login sessions; the
+  // user's outstanding OIDC access tokens stay valid until their ≤1h TTL,
+  // so "all devices" wouldn't really cut OIDC grants. In the same
+  // transaction, revoke them (mark revokedAt so the row survives for the
+  // "revoked" 401 at /oidc/userinfo), mirroring updateOidcClient but keyed
+  // by userId. NOTE: this does NOT terminate sessions the user already
+  // holds inside relying-party apps; that needs OIDC back-channel logout
+  // (deferred — Stage 9+).
+  const userId = session.user.id;
+  const [updated] = await prisma.$transaction([
+    prisma.user.update({
+      where: { id: userId },
+      data: { sessionGeneration: { increment: 1 } },
+      select: { sessionGeneration: true },
+    }),
+    prisma.oidcAccessToken.updateMany({
+      where: { userId, revokedAt: null },
+      data: { revokedAt: new Date() },
+    }),
+  ]);
 
   await audit(session.user.id, "session.revoked_all", {
     newGeneration: updated.sessionGeneration,
