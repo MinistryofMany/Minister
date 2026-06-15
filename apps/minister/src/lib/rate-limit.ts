@@ -60,17 +60,86 @@ export function createRateLimiter(opts: { windowMs: number; max: number }): Rate
   };
 }
 
-// First hop of X-Forwarded-For, else X-Real-IP, else a fixed bucket.
-// Behind the expected reverse proxy these are trustworthy enough for
-// rate limiting; direct-to-node traffic all lands in one bucket, which
-// fails safe (over-limits rather than under-limits).
+// Resolve a *trustworthy* per-client bucket key for rate limiting.
+//
+// The threat: X-Forwarded-For is appended to by every hop, but the
+// leftmost entries are fully attacker-controlled. Keying a limiter on the
+// leftmost XFF entry lets a client rotate the header per request, land in
+// a fresh bucket each time, and bypass every limiter (magic-link spam,
+// share-token probing, /token, /authorize). We must only ever key on a
+// value a *trusted* hop wrote, never on raw client input.
+//
+// Minister is plain Next.js (no custom server), so route handlers see
+// request headers but not the socket peer address. Trust therefore has to
+// be configured to match the deployment topology:
+//
+//   MINISTER_CLIENT_IP_HEADER (default "cf-connecting-ip")
+//     Name of a single header that a trusted proxy sets to the real client
+//     IP, *overwriting* anything the client sent. When this env is a
+//     non-empty string and that header is present, its trimmed value is the
+//     bucket key. Set it to "" to disable header trust entirely (forces the
+//     reverse-proxy-hops or fail-safe paths below).
+//
+//   MINISTER_TRUSTED_PROXY_HOPS (default 0)
+//     Generic reverse-proxy fallback for non-Cloudflare deployments. The
+//     number of proxies *you* operate in front of the origin, each of which
+//     appends one entry to X-Forwarded-For. XFF reads left-to-right as
+//     [client, ...untrusted hops..., your hop N, ..., your hop 1], so your
+//     proxies own the rightmost entries. With H trusted hops we trust the
+//     entry at index (length - H) — the value written by your outermost
+//     proxy, i.e. the first hop you actually control. Anything to its left
+//     is client-forgeable and ignored. H = 0 means XFF is wholly untrusted.
+//
+//   Otherwise: a single fixed "unknown" bucket. This fails safe — all
+//   untrusted traffic shares one limiter and over-limits, rather than each
+//   request minting its own bucket and under-limiting.
+//
+// CRITICAL DEPLOYMENT REQUIREMENT — trusting CF-Connecting-IP (or any proxy
+// header) is only safe if the origin CANNOT be reached directly, bypassing
+// the proxy. If an attacker can hit the Node origin straight, they set
+// CF-Connecting-IP themselves and every per-IP limit is defeated. Minister
+// is intended to run behind Cloudflare; the origin MUST therefore be locked
+// down by one of:
+//   - Cloudflare Tunnel (cloudflared) so the origin has no public inbound
+//     route at all, OR
+//   - restricting the origin firewall to Cloudflare's published IP ranges,
+//     OR
+//   - Authenticated Origin Pulls (mTLS) so the origin only accepts TLS
+//     connections bearing Cloudflare's client certificate.
+// Without one of these, set MINISTER_CLIENT_IP_HEADER="" and configure
+// MINISTER_TRUSTED_PROXY_HOPS to match whatever proxy chain you do control.
 export function clientIpFrom(headers: { get(name: string): string | null }): string {
-  const xff = headers.get("x-forwarded-for");
-  if (xff) {
-    const first = xff.split(",")[0]?.trim();
-    if (first) return first;
+  const trustedHeader = process.env.MINISTER_CLIENT_IP_HEADER ?? "cf-connecting-ip";
+  if (trustedHeader) {
+    const value = headers.get(trustedHeader)?.trim();
+    if (value) return value;
   }
-  return headers.get("x-real-ip") ?? "unknown";
+
+  const hops = trustedProxyHops();
+  if (hops > 0) {
+    const xff = headers.get("x-forwarded-for");
+    if (xff) {
+      const parts = xff
+        .split(",")
+        .map((p) => p.trim())
+        .filter((p) => p.length > 0);
+      // The outermost proxy we control sits `hops` from the right end of the
+      // list. Clamp so an over-large hop count (or a too-short list) just
+      // grabs the leftmost present entry rather than reading out of bounds.
+      const idx = Math.max(0, parts.length - hops);
+      const trusted = parts[idx];
+      if (trusted) return trusted;
+    }
+  }
+
+  return "unknown";
+}
+
+function trustedProxyHops(): number {
+  const raw = process.env.MINISTER_TRUSTED_PROXY_HOPS;
+  if (!raw) return 0;
+  const n = Number.parseInt(raw, 10);
+  return Number.isFinite(n) && n > 0 ? n : 0;
 }
 
 // ---------------------------------------------------------------------------

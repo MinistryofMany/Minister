@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { clientIpFrom, createRateLimiter } from "./rate-limit";
 
@@ -56,15 +56,113 @@ describe("clientIpFrom", () => {
     };
   }
 
-  it("takes the first hop of x-forwarded-for", () => {
-    expect(clientIpFrom(headersOf({ "x-forwarded-for": "1.2.3.4, 10.0.0.1" }))).toBe("1.2.3.4");
+  // clientIpFrom reads process.env at call time, so each test owns the two
+  // knobs and restores them afterward.
+  const ENV_KEYS = ["MINISTER_CLIENT_IP_HEADER", "MINISTER_TRUSTED_PROXY_HOPS"] as const;
+  let saved: Record<(typeof ENV_KEYS)[number], string | undefined>;
+
+  beforeEach(() => {
+    saved = {
+      MINISTER_CLIENT_IP_HEADER: process.env.MINISTER_CLIENT_IP_HEADER,
+      MINISTER_TRUSTED_PROXY_HOPS: process.env.MINISTER_TRUSTED_PROXY_HOPS,
+    };
+    for (const key of ENV_KEYS) delete process.env[key];
   });
 
-  it("falls back to x-real-ip", () => {
-    expect(clientIpFrom(headersOf({ "x-real-ip": "5.6.7.8" }))).toBe("5.6.7.8");
+  afterEach(() => {
+    for (const key of ENV_KEYS) {
+      const value = saved[key];
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
   });
 
-  it("falls back to a fixed bucket when no headers are present", () => {
+  it("uses the default CF-Connecting-IP header when present", () => {
+    // Default config (no env set) trusts cf-connecting-ip, even if the
+    // client also smuggled an XFF.
+    expect(
+      clientIpFrom(headersOf({ "cf-connecting-ip": "203.0.113.7", "x-forwarded-for": "1.2.3.4" })),
+    ).toBe("203.0.113.7");
+  });
+
+  it("trims the trusted header value", () => {
+    expect(clientIpFrom(headersOf({ "cf-connecting-ip": "  203.0.113.7  " }))).toBe("203.0.113.7");
+  });
+
+  it("honors a configured custom trusted header name", () => {
+    process.env.MINISTER_CLIENT_IP_HEADER = "x-real-ip";
+    expect(
+      clientIpFrom(headersOf({ "x-real-ip": "5.6.7.8", "cf-connecting-ip": "203.0.113.7" })),
+    ).toBe("5.6.7.8");
+  });
+
+  it("IGNORES a client-supplied XFF when no trusted header and hops=0", () => {
+    process.env.MINISTER_CLIENT_IP_HEADER = "";
+    // hops defaults to 0 -> XFF is wholly untrusted -> fail-safe bucket.
+    expect(clientIpFrom(headersOf({ "x-forwarded-for": "1.2.3.4, 10.0.0.1" }))).toBe("unknown");
+  });
+
+  it("ignores XFF when the trusted header is configured but absent and hops=0", () => {
+    // Default header trust is on, but the header itself is missing; with no
+    // hops the forgeable XFF must not be used.
+    expect(clientIpFrom(headersOf({ "x-forwarded-for": "1.2.3.4" }))).toBe("unknown");
+  });
+
+  it("hop-counting picks the entry inserted by the outermost trusted proxy (from the right)", () => {
+    process.env.MINISTER_CLIENT_IP_HEADER = "";
+    process.env.MINISTER_TRUSTED_PROXY_HOPS = "1";
+    // [client-forged, real-client, our-proxy] — one trusted hop trusts the
+    // rightmost entry (length - 1 = index 2).
+    expect(clientIpFrom(headersOf({ "x-forwarded-for": "9.9.9.9, 203.0.113.7, 10.0.0.1" }))).toBe(
+      "10.0.0.1",
+    );
+  });
+
+  it("hop index math: 2 trusted hops trust the second-from-right entry", () => {
+    process.env.MINISTER_CLIENT_IP_HEADER = "";
+    process.env.MINISTER_TRUSTED_PROXY_HOPS = "2";
+    // [forged, real-client, outer-proxy, inner-proxy]; 2 hops -> index
+    // length-2 = 2 -> the outer proxy's entry, which is the real client IP
+    // as seen by the first hop we control.
+    expect(
+      clientIpFrom(
+        headersOf({ "x-forwarded-for": "9.9.9.9, 203.0.113.7, 198.51.100.5, 10.0.0.1" }),
+      ),
+    ).toBe("198.51.100.5");
+  });
+
+  it("hop index math: a single-entry XFF with one hop trusts that entry", () => {
+    process.env.MINISTER_CLIENT_IP_HEADER = "";
+    process.env.MINISTER_TRUSTED_PROXY_HOPS = "1";
+    expect(clientIpFrom(headersOf({ "x-forwarded-for": "203.0.113.7" }))).toBe("203.0.113.7");
+  });
+
+  it("clamps an over-large hop count to the leftmost present entry", () => {
+    process.env.MINISTER_CLIENT_IP_HEADER = "";
+    process.env.MINISTER_TRUSTED_PROXY_HOPS = "9";
+    expect(clientIpFrom(headersOf({ "x-forwarded-for": "203.0.113.7, 10.0.0.1" }))).toBe(
+      "203.0.113.7",
+    );
+  });
+
+  it("trusted header wins over hop counting when both are configured", () => {
+    process.env.MINISTER_TRUSTED_PROXY_HOPS = "1";
+    expect(
+      clientIpFrom(
+        headersOf({ "cf-connecting-ip": "203.0.113.7", "x-forwarded-for": "1.2.3.4, 10.0.0.1" }),
+      ),
+    ).toBe("203.0.113.7");
+  });
+
+  it("fails safe to a fixed 'unknown' bucket when nothing trustworthy is present", () => {
+    process.env.MINISTER_CLIENT_IP_HEADER = "";
+    process.env.MINISTER_TRUSTED_PROXY_HOPS = "2";
     expect(clientIpFrom(headersOf({}))).toBe("unknown");
+  });
+
+  it("treats a non-numeric hop count as 0 (untrusted)", () => {
+    process.env.MINISTER_CLIENT_IP_HEADER = "";
+    process.env.MINISTER_TRUSTED_PROXY_HOPS = "not-a-number";
+    expect(clientIpFrom(headersOf({ "x-forwarded-for": "1.2.3.4" }))).toBe("unknown");
   });
 });
