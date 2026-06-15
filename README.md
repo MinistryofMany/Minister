@@ -107,4 +107,4 @@ Per CLAUDE.md, this is a prototype. Not production hardened.
 
 Copyright (c) 2026 AtHeartEngineering LLC. Part of the **Ministry of Many** project, authored by AtHeartEngineer.
 
-Ministry is licensed under the **GNU Affero General Public License v3.0** (`AGPL-3.0-only`) - see [LICENSE](./LICENSE). Running a modified version as a network service requires publishing your source under the same license. The reusable SDK packages (`@minister/plugin-sdk`, `@minister/vc`, `@minister/shared`) live in their own repositories under a permissive `MIT OR Apache-2.0` dual license. "Ministry" and "Ministry of Many" are trademarks of AtHeartEngineering LLC; a fork must rename.
+Minister is licensed under the **GNU Affero General Public License v3.0** (`AGPL-3.0-only`) - see [LICENSE](./LICENSE). Running a modified version as a network service requires publishing your source under the same license. The reusable SDK packages (`@minister/plugin-sdk`, `@minister/vc`, `@minister/shared`) live in their own repositories under a permissive `MIT OR Apache-2.0` dual license. "Minister" and "Ministry of Many" are trademarks of AtHeartEngineering LLC; a fork must rename.
