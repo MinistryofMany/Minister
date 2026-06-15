@@ -367,6 +367,23 @@ origin, input})` is the generic callback path.
 
 ---
 
+## Hardening / known gaps (intentionally incomplete)
+
+- **TLSN verifier URL SSRF allowlist not yet enforced — warns at startup.**
+  `TLSN_VERIFIER_URL` is operator-set and reached via server-side `fetch` in
+  `src/lib/tlsn-verifier.ts`, so a misconfigured or attacker-influenced value
+  is an SSRF vector. The allowlist infra is not deployed yet, so the full fix
+  (hard-rejecting out-of-allowlist hosts) is not in place. Current mitigation:
+  `validateTlsnVerifierConfig()` runs at startup (wired through
+  `src/instrumentation.ts`) and WARNS when `TLSN_VERIFIER_URL` is unset, not a
+  valid `http(s)` URL, or — when `MINISTER_TLSN_VERIFIER_ALLOWED_HOSTS` is set —
+  its host is outside the allowlist; it also warns when no allowlist is
+  configured. The call site rejects non-`http(s)` schemes as defense-in-depth.
+  Nothing throws; it nags every boot. **Finish when verifier infra lands:** make
+  the allowlist mandatory and turn the warning into a hard rejection.
+
+---
+
 ## Process notes (so we keep the bar where it is)
 
 - Each feature in its own worktree branched off main; merged with

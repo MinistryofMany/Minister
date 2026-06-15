@@ -45,23 +45,39 @@ Package manager: pnpm. Node 20+.
 
 ## Monorepo layout
 
+This repo is a pnpm workspace (`apps/*`, `packages/*`). **`packages/` is currently
+empty** — the three `@minister/*` libraries live in _sibling git repos_ one level
+above this one and are wired in by relative symlink, not as in-repo packages or
+published npm deps. From `apps/minister/package.json`:
+
 ```
-minister/
-├── apps/
-│   ├── minister/                 # Main app (Next.js)
-│   ├── demo-client/             # Sample RP
-│   └── extension/               # Browser extension skeleton (Stage 6+)
-├── packages/
-│   ├── vc/                      # VC issuance/verification, DID document, signing keys
-│   ├── plugin-sdk/              # Plugin interface types
-│   └── shared/                  # Badge type registry, shared schemas
-├── services/
-│   ├── notary/                  # Stage 6+: tlsn notary binary (stub Dockerfile)
-│   ├── ws-proxy/                # Stage 6+: WS relay (stub Dockerfile)
-│   └── tlsn-verifier/           # Stage 6+: Rust HTTP sidecar (stub Dockerfile)
-├── docker-compose.yml
-├── pnpm-workspace.yaml
-└── README.md
+"@minister/plugin-sdk": "link:../../../minister-plugin-sdk",
+"@minister/shared":     "link:../../../minister-shared",
+"@minister/vc":         "link:../../../minister-vc",
+```
+
+So all three must be cloned as siblings of `Minister/`, or install/build breaks, and
+editing them is live-editing this app (no publish step). The workspace-root
+`../CLAUDE.md` describes the cross-repo picture.
+
+```
+MinistryOfMany/                  # workspace folder (not a git repo)
+├── Minister/                    # this repo
+│   ├── apps/
+│   │   ├── minister/            # Main app (Next.js) — package @minister/app
+│   │   ├── demo-client/         # Sample RP
+│   │   └── extension/           # Browser extension skeleton (Stage 6+)
+│   ├── packages/                # empty (see note above)
+│   ├── services/
+│   │   ├── notary/              # Stage 6+: tlsn notary binary (stub Dockerfile)
+│   │   ├── ws-proxy/            # Stage 6+: WS relay (stub Dockerfile)
+│   │   └── tlsn-verifier/       # Stage 6+: Rust HTTP sidecar (stub Dockerfile)
+│   ├── docker-compose.yml
+│   ├── pnpm-workspace.yaml
+│   └── README.md
+├── minister-vc/                 # @minister/vc          (linked in)
+├── minister-shared/             # @minister/shared      (linked in)
+└── minister-plugin-sdk/         # @minister/plugin-sdk  (linked in)
 ```
 
 `apps/extension/` (browser extension) lands in Stage 6+.
@@ -301,7 +317,7 @@ Each native badge is a VC issued by Minister. Imported badges keep their origina
 }
 ```
 
-`packages/vc` exports:
+`@minister/vc` (sibling repo `../minister-vc`, linked in) exports:
 
 - `loadIssuer({ domain, privateJwk?, devKeyPath? })` → `Issuer`. Env-driven in prod (`ISSUER_PRIVATE_JWK`); ephemeral persistent key on first dev boot (`apps/minister/dev-keys/issuer.jwk`, gitignored).
 - `issueVc(issuer, type, subjectId, claims, options?)` → `vcJwt`. Stamps `iat`/`nbf`/`exp`/`jti`; protected header carries `kid` matching the DID document.
@@ -309,7 +325,7 @@ Each native badge is a VC issued by Minister. Imported badges keep their origina
 - `getDidDocument(issuer)` → DID document with a `JsonWebKey2020` verificationMethod.
 - `buildDid`, `buildKid`, `buildUserDid` helpers.
 
-Badge types each have a Zod schema for the `credentialSubject` claims, defined in `packages/shared/src/badge-types.ts`. The wizard runtime validates claims against this schema before signing.
+Badge types each have a Zod schema for the `credentialSubject` claims, defined in `@minister/shared` (`../minister-shared/src/badge-types.ts`). The wizard runtime validates claims against this schema before signing.
 
 ### Initial badge types
 
@@ -460,7 +476,7 @@ Subject: `sub` is a **pairwise pseudonymous identifier**, computed as `base64url
 - Authorization codes single-use, 60-second TTL
 - Redirect URI exact match
 - Client secrets hashed at rest (Argon2id)
-- Rate limiting ✅ — in-memory sliding window (`src/lib/rate-limit.ts`), per-IP, on `/oidc/token`, `/oidc/userinfo`, `/oidc/authorize`, `/api/auth/signin/*` (magic-link sends, enforced in middleware), `/api/tlsn/submit`, and `/share/[token]` views. Process-local; the interface survives a Redis swap if Minister ever scales horizontally.
+- Rate limiting ✅ — in-memory sliding window (`src/lib/rate-limit.ts`), per-IP, on `/oidc/token`, `/oidc/userinfo`, `/oidc/authorize`, `/api/auth/signin/*` (magic-link sends, enforced in middleware), `/api/tlsn/submit`, and `/share/[token]` views. Process-local; the interface survives a Redis swap if Minister ever scales horizontally. The per-IP key is resolved by `clientIpFrom`: a trusted header (`MINISTER_CLIENT_IP_HEADER`, default `cf-connecting-ip`), else a generic right-counted XFF (`MINISTER_TRUSTED_PROXY_HOPS`, default 0 = XFF untrusted), else one fail-safe bucket. **Deployment requirement:** trusting `CF-Connecting-IP` is only spoof-proof if the origin cannot be reached except through Cloudflare — use Cloudflare Tunnel, or restrict the origin to Cloudflare IP ranges / Authenticated Origin Pulls. A directly reachable origin lets a client forge the header and bypass every limiter.
 - No implicit flow, no resource owner password flow
 
 ## TLSNotary integration (Stage 6+)
@@ -468,7 +484,7 @@ Subject: `sub` is a **pairwise pseudonymous identifier**, computed as `base64url
 When we get to it:
 
 - Extension performs the proof, talking to `ws-proxy` to reach the target server and `notary-server` for the co-signature.
-- Extension POSTs the finalized presentation to `POST /api/tlsn/submit` with `{ pluginId, sessionId, presentation }`.
+- Extension POSTs the finalized presentation to `POST /api/tlsn/submit` with `{ sessionToken, presentation }` (the `sessionToken` resolves the wizard session via `resumeViaPendingToken`; the signed-in cookie identifies the user).
 - Minister calls the `tlsn-verifier` Rust HTTP sidecar with the presentation and the expected domain; gets back a verified transcript.
 - The plugin extracts the relevant facts (e.g., HTML from id.me's account page) and produces `IssuedBadge[]`.
 
@@ -500,7 +516,7 @@ Why a separate Rust sidecar over WASM in Node: simpler operationally, pins one t
 
 ## Stage plan
 
-- **Stage 0** ✅ — Monorepo scaffold, T3-ish stack, Prisma schema, NextAuth (Passkey + magic link), base layout, docker-compose with postgres. Magic-link delivery via console log (`src/lib/mailer.ts`) rather than mailhog.
+- **Stage 0** ✅ — Monorepo scaffold, T3-ish stack, Prisma schema, NextAuth (Passkey + magic link), base layout, docker-compose with postgres. Magic-link delivery through `src/lib/mailer.ts` (Resend HTTP transport when `RESEND_API_KEY` + `MAIL_FROM` are set; console-log fallback in dev/test; throws in prod if unset).
 - **Stage 1** ✅ — `@minister/vc` (Ed25519 issuer, JWT-VC issue/verify, did:web). `/.well-known/did.json` and `/.well-known/jwks.json` live. Profile page with badge grid, public/private toggle, drag-drop ordering. Public `/u/[userId]` view.
 - **Stage 2** ✅ — Plugin interface (`@minister/plugin-sdk`), badge type registry (`@minister/shared`), wizard runtime + UI, `email-domain` plugin end-to-end.
 - **Auth hardening** ✅ — JWT-strategy sessions (24h sliding, 1h refresh), Edge middleware route protection, per-user `sessionGeneration` revocation with "Sign out of all devices" button.
@@ -511,7 +527,7 @@ Why a separate Rust sidecar over WASM in Node: simpler operationally, pins one t
 - **Stage 6** ◐ partial — TLSNotary integration. Minister-side complete: `tlsn-attestation` plugin, `/api/tlsn/submit` endpoint, `extension-action` step renderer, `tlsn-verifier` Rust sidecar (with `passthrough` mode for dev), `notary-server` running the pinned official binary, browser extension skeleton at `apps/extension/`. **Not yet wired:** `tlsn-js` prover inside the extension, `ws-proxy` real implementation, `tlsn-verifier` crate integration in the sidecar's `verify_real()` (currently throws).
 - **Stage 7** ✅ — Shareable proof links. `/shares` lists + creates, `/share/[token]` public view with expiry/revocation/account-gate, optional email send via the existing mailer (console-log in dev). Views recorded in `ShareLinkView`. Tokens are 32 random bytes → 43 base64url chars.
 - **Stage 8** — Age / id.me plugin via TLSNotary; eligibility records with month fuzzing.
-- **Stage 9** — Hardening: rate limits, audit-log review, OIDC security review, key rotation, real email transport (Resend/SES), production deploy guide.
+- **Stage 9** — Hardening: rate limits, audit-log review, OIDC security review, key rotation, production deploy guide. (Real email transport via Resend already landed — see `src/lib/mailer.ts` and `docs/email-setup.md`.)
 
 ## Non-goals (current)
 
