@@ -42,9 +42,12 @@ function attach(row: BadgeRow): DisplayBadge | undefined {
   };
 }
 
-export async function loadUserBadges(userId: string): Promise<DisplayBadge[]> {
+// loadUserBadges and loadPublicBadges differ only by whether private
+// badges are included; the query shape and the attach/filter tail are
+// identical. `publicOnly` toggles the single distinguishing `where` clause.
+async function loadBadges(userId: string, publicOnly: boolean): Promise<DisplayBadge[]> {
   const rows = await prisma.badge.findMany({
-    where: { userId },
+    where: publicOnly ? { userId, isPublic: true } : { userId },
     orderBy: [{ sortOrder: "asc" }, { issuedAt: "asc" }],
     select: {
       id: true,
@@ -70,32 +73,12 @@ export async function loadUserBadges(userId: string): Promise<DisplayBadge[]> {
     .filter((b): b is DisplayBadge => b !== undefined);
 }
 
-export async function loadPublicBadges(userId: string): Promise<DisplayBadge[]> {
-  const rows = await prisma.badge.findMany({
-    where: { userId, isPublic: true },
-    orderBy: [{ sortOrder: "asc" }, { issuedAt: "asc" }],
-    select: {
-      id: true,
-      type: true,
-      attributes: true,
-      issuer: true,
-      issuedAt: true,
-      expiresAt: true,
-      isPublic: true,
-      sortOrder: true,
-      importedFrom: true,
-      pluginId: true,
-    },
-  });
+export async function loadUserBadges(userId: string): Promise<DisplayBadge[]> {
+  return loadBadges(userId, false);
+}
 
-  return rows
-    .map((row) =>
-      attach({
-        ...row,
-        attributes: row.attributes as Record<string, unknown>,
-      }),
-    )
-    .filter((b): b is DisplayBadge => b !== undefined);
+export async function loadPublicBadges(userId: string): Promise<DisplayBadge[]> {
+  return loadBadges(userId, true);
 }
 
 export function summarizeAttributes(type: string, attributes: Record<string, unknown>): string {

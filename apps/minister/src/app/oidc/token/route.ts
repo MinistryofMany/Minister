@@ -3,6 +3,7 @@ import { randomBytes } from "node:crypto";
 import { NextResponse } from "next/server";
 
 import { getIssuer } from "@/lib/issuer";
+import { loadApprovedBadgeJwts, resolveUserClaims } from "@/lib/oidc-claims";
 import { findClient, verifyClientSecret } from "@/lib/oidc-clients";
 import {
   ACCESS_TOKEN_TTL,
@@ -150,6 +151,8 @@ export async function POST(request: Request) {
   const issuer = await getIssuer();
 
   const minister_badges = await loadApprovedBadgeJwts(user.id, stored.approvedBadgeIds);
+  // Shared resolver so the ID token's claims provably match /oidc/userinfo.
+  const userClaims = resolveUserClaims(user, stored.scopes, minister_badges);
 
   const idToken = await mintIdToken(issuer, {
     sub,
@@ -157,9 +160,9 @@ export async function POST(request: Request) {
     // Echoed verbatim from the /authorize nonce per OIDC Core §3.1.3.7.
     nonce: stored.nonce,
     scopes: stored.scopes,
-    name: user.displayName ?? user.name ?? null,
-    picture: user.avatarUrl ?? user.image ?? null,
-    minister_badges: minister_badges.length > 0 ? minister_badges : undefined,
+    name: userClaims.name,
+    picture: userClaims.picture,
+    minister_badges: userClaims.ministerBadges.length > 0 ? userClaims.ministerBadges : undefined,
   });
 
   // jti links the access JWT to a server-side OidcAccessToken row.
@@ -236,15 +239,6 @@ function readClientCredentials(request: Request, body: URLSearchParams): ClientC
     clientSecret: body.get("client_secret"),
     fromBasic: false,
   };
-}
-
-async function loadApprovedBadgeJwts(userId: string, badgeIds: string[]): Promise<string[]> {
-  if (badgeIds.length === 0) return [];
-  const rows = await prisma.badge.findMany({
-    where: { userId, id: { in: badgeIds } },
-    select: { vcJwt: true },
-  });
-  return rows.map((r) => r.vcJwt);
 }
 
 function tokenError(error: string, description: string, status = 400): NextResponse {
