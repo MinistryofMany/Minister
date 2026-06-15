@@ -1,107 +1,121 @@
 # Minister
 
-Identity platform where each user holds a profile decorated with **badges** — verifiable credentials attesting to facts about them. Third-party apps log users in via Minister using OpenID Connect, and the user explicitly chooses which badges to disclose to each relying party.
+[![CI](https://github.com/MinistryofMany/Minister/actions/workflows/ci.yml/badge.svg)](https://github.com/MinistryofMany/Minister/actions/workflows/ci.yml)
+[![License: AGPL v3](https://img.shields.io/badge/license-AGPL--3.0-blue)](./LICENSE)
+[![Next.js](https://img.shields.io/badge/Next.js-15-black?logo=next.js)](https://nextjs.org)
+[![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org)
+[![Postgres](https://img.shields.io/badge/Postgres-16-336791?logo=postgresql&logoColor=white)](https://www.postgresql.org)
 
-See [CLAUDE.md](./CLAUDE.md) for the full design.
+**Minister** is an identity platform. Each person holds a profile decorated with **badges** — verifiable credentials attesting to facts about them (owns an email at a given domain, controls a GitHub or Google account, is over 21, is a state resident, and more). Third-party apps sign users in via **OpenID Connect**, and the user explicitly chooses which badges to disclose to each relying party. Minister also issues **shareable proof links** — signed, time-limited artifacts you can hand to someone out of band.
+
+Part of the [Ministry of Many](https://github.com/MinistryofMany) project. Home: [ministry.id](https://ministry.id).
+
+See [CLAUDE.md](./CLAUDE.md) for the full design and data model.
 
 ## Status
 
-**Stage 0 — foundation.** A user can sign up, see an empty profile, and sign out. Everything else listed in CLAUDE.md is intentionally not yet implemented — see _What's not implemented yet_ below.
+A working prototype — not yet production-hardened, but the core platform is live end to end:
 
-## Requirements
+**Working today**
 
-- Docker Desktop (or Docker Engine + Compose v2)
-- Node 20+ and pnpm 9+ — only if you want to run apps directly on the host instead of via compose
+- **Sign-in** — passkeys (WebAuthn) and email magic links; JWT-strategy sessions with sliding TTL, per-user revocation, and admin ban enforcement.
+- **Badges & credentials** — W3C Verifiable Credentials as JWT-VC (Ed25519 / `EdDSA`), issued under a `did:web` identity. DID document and JWKS served at `/.well-known/did.json` and `/.well-known/jwks.json`.
+- **Profile** — badge grid with per-badge public/private toggle and drag-and-drop ordering; public `/u/[id]` view.
+- **Plugins** — a typed plugin + wizard system. Live plugins: `email-domain`, `github` (OAuth), `invite-code`, and `tlsn-attestation`.
+- **OIDC provider** — discovery, `/oidc/authorize` + consent screen, `/oidc/token`, `/oidc/userinfo`; PKCE-mandatory (S256), pairwise pseudonymous `sub`, client registration in the admin UI. (FreedInk signs in against this.)
+- **Admin** — `/admin`: user management (ban/unban, promote/demote), invite-code minting, OIDC client management, and an audit-log viewer.
+- **Proof links** — create/list at `/shares`, public view at `/share/[token]` with expiry, revocation, and an optional account gate.
+- **Hardening** — per-IP rate limiting on auth/OIDC/share endpoints and an append-only audit log.
 
-## Quick start
+**In progress / planned**
 
-```bash
-# 1. Configure secrets
-cp .env.example .env
-# Generate values for AUTH_SECRET and OIDC_PAIRWISE_SECRET:
-#   openssl rand -base64 32
+- **TLSNotary** (◐) — Minister-side complete (the `tlsn-attestation` plugin, `/api/tlsn/submit`, the Rust `tlsn-verifier` sidecar, and the notary server). The in-browser prover (extension + `ws-proxy`) is not yet wired.
+- **Age / id.me via TLSNotary** with fuzzed eligibility records.
+- **Production**: KMS-backed signing keys, key rotation, and a deploy guide.
 
-# 2. Boot the stack
-docker compose up --build
+## Architecture
 
-# 3. Open http://localhost:3000
+Four services run together via `docker compose`:
+
+| Service         | Role                                                                                  |
+| --------------- | ------------------------------------------------------------------------------------- |
+| `minister`      | Next.js app — frontend, server actions, OIDC endpoints; holds the issuer signing key. |
+| `postgres`      | Application database (Prisma).                                                        |
+| `notary-server` | Official TLSNotary notary binary (Stage 6+).                                          |
+| `tlsn-verifier` | Rust HTTP sidecar that verifies TLSNotary presentations (Stage 6+).                   |
+
+```
+Minister/
+├── apps/
+│   ├── minister/        # main app: Next.js · Prisma · Auth.js · OIDC provider
+│   ├── demo-client/     # sample relying party (OIDC client)
+│   └── extension/       # browser extension for in-browser TLSNotary proving
+├── services/
+│   ├── notary/          # TLSNotary notary server
+│   ├── ws-proxy/        # WebSocket relay for the extension
+│   └── tlsn-verifier/   # Rust sidecar verifying presentations
+├── docker-compose.yml
+└── pnpm-workspace.yaml
 ```
 
-On first boot, the `minister` container runs `prisma db push` to sync the schema to the empty postgres database, then starts Next.js in dev mode.
+The reusable SDKs live in their **own repositories** (permissive `MIT OR Apache-2.0`) and are linked into this app during development via pnpm `link:`:
+
+| Package                | Repo                                                                         | Purpose                                  |
+| ---------------------- | ---------------------------------------------------------------------------- | ---------------------------------------- |
+| `@minister/vc`         | [minister-vc](https://github.com/MinistryofMany/minister-vc)                 | JWT-VC issuance/verification, `did:web`. |
+| `@minister/plugin-sdk` | [minister-plugin-sdk](https://github.com/MinistryofMany/minister-plugin-sdk) | Plugin interface types.                  |
+| `@minister/shared`     | [minister-shared](https://github.com/MinistryofMany/minister-shared)         | Badge-type registry and schemas.         |
+
+## Tech stack
+
+TypeScript (strict) · Next.js 15 (App Router) · React 19 · Tailwind v4 · Prisma 6 / PostgreSQL · Auth.js v5 · `jose` (JWT-VC, EdDSA) · `did:web` · TLSNotary (Rust sidecar).
+
+## Getting started
+
+Minister depends on the three SDK repos as **siblings** (they're linked locally), so clone them into one folder:
+
+```bash
+mkdir ministry && cd ministry
+git clone https://github.com/MinistryofMany/Minister.git
+git clone https://github.com/MinistryofMany/minister-vc.git
+git clone https://github.com/MinistryofMany/minister-plugin-sdk.git
+git clone https://github.com/MinistryofMany/minister-shared.git
+cd Minister
+```
+
+Then run on the host (Node 20+, pnpm 9+):
+
+```bash
+pnpm install
+cp apps/minister/.env.example apps/minister/.env
+# Generate AUTH_SECRET and OIDC_PAIRWISE_SECRET: openssl rand -base64 32
+pnpm db:migrate         # sync the schema to a running postgres
+pnpm dev                # http://localhost:3000
+```
+
+Or bring up the full stack with Docker:
+
+```bash
+docker compose up --build   # http://localhost:3000
+```
 
 ### Signing in (dev)
 
-You have two options on the home page:
+- **Passkey** — works on `http://localhost:3000` (browsers special-case `localhost` for WebAuthn).
+- **Email magic link** — type any address; in dev the link is printed to the app's stdout (no real email is sent unless an SMTP/Resend transport is configured).
 
-1. **Passkey** — uses WebAuthn. Works on `http://localhost:3000` because browsers special-case localhost for WebAuthn; will _not_ work over plain `http://minister.local`.
-2. **Email magic link** — type any email address. The link is printed to the `minister` container's stdout (look for `[minister:auth] Magic link for ...`). Click it to complete sign-in. No real email is sent in Stage 0.
-
-After signing in once via magic link, you can attach a passkey from `/profile` ("Add a passkey"), then sign in with that passkey next time.
-
-## Repo layout
-
-```
-minister/
-├── apps/
-│   ├── minister/          # main app (Next.js, Prisma, NextAuth)
-│   └── demo-client/      # sample relying party (placeholder until Stage 4)
-├── packages/
-│   ├── vc/               # VC issuance/verification (empty until Stage 1)
-│   ├── plugin-sdk/       # plugin interface types (empty until Stage 2)
-│   └── shared/           # shared types (empty until Stage 1)
-├── services/
-│   ├── notary/           # TLSNotary notary server (stub until Stage 6)
-│   ├── ws-proxy/         # WebSocket relay (stub until Stage 6)
-│   └── tlsn-verifier/    # Rust sidecar (stub until Stage 6)
-├── docker-compose.yml
-├── pnpm-workspace.yaml
-└── README.md
-```
-
-## Local development (host, not compose)
-
-If you want hot reload and a faster iteration loop, run the database in compose but Next.js on the host:
+## Development
 
 ```bash
-docker compose up -d postgres
-cd apps/minister
-cp .env.example .env.local
-# edit .env.local — at minimum set AUTH_SECRET and switch
-# DATABASE_URL host to localhost
-pnpm install
-pnpm prisma db push
-pnpm dev
+pnpm typecheck      # tsc across the workspace
+pnpm lint           # eslint
+pnpm test           # unit tests (vitest)
+pnpm format         # prettier --write
 ```
 
-## Environment variables
+A husky + lint-staged pre-commit hook formats staged files automatically, so commits stay Prettier-clean.
 
-Documented in [`.env.example`](./.env.example) (compose-level) and [`apps/minister/.env.example`](./apps/minister/.env.example) (app-level). Required:
-
-| Variable                 | Purpose                                                                |
-| ------------------------ | ---------------------------------------------------------------------- |
-| `DATABASE_URL`           | postgres connection string                                             |
-| `AUTH_SECRET`            | Auth.js session/JWT signing secret. Must be ≥32 chars.                 |
-| `AUTH_URL`               | URL the browser sees the app on. WebAuthn requires exact origin match. |
-| `AUTH_TRUST_HOST`        | `"true"` when running behind a reverse proxy or in docker-compose.     |
-| `MINISTER_ISSUER_DOMAIN` | Domain for did:web and OIDC `iss`. Default `minister.local`.           |
-| `OIDC_PAIRWISE_SECRET`   | Secret for deriving pairwise OIDC subs. Optional until Stage 3.        |
-
-## What's _not_ implemented yet
-
-Stage 0 is foundation only. The following are documented in CLAUDE.md and arrive in later stages:
-
-- VC issuance, signing keys, DID document at `/.well-known/did.json` — Stage 1
-- Profile customization, badge display, public/private toggle, drag-drop ordering — Stage 1
-- Plugin system, badge wizard UI, email-domain plugin — Stage 2
-- OIDC provider (`/authorize`, `/token`, `/userinfo`, JWKS, consent screen) — Stage 3
-- Demo client actually doing the OIDC dance — Stage 4
-- GitHub OAuth plugin — Stage 5
-- TLSNotary integration (extension, notary, ws-proxy, tlsn-verifier) — Stage 6
-- Shareable proof links — Stage 7
-- Age / id.me plugin, eligibility records — Stage 8
-- Hardening (rate limits, key rotation, OIDC security review) — Stage 9
-
-Per CLAUDE.md, this is a prototype. Not production hardened.
+> Heads up: because the SDKs are consumed via `link:`, building Minister in isolation (CI, a standalone clone, the Docker image) requires those sibling repos. Publishing the SDKs to npm and switching to versioned dependencies will remove that constraint.
 
 ## License
 

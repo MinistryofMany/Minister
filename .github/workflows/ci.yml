@@ -1,0 +1,77 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Minister consumes the SDK packages via pnpm `link:` to sibling repos, so CI
+# recreates that layout: Minister and the three SDK repos are checked out side
+# by side, and each SDK installs its own dependencies (link: only symlinks the
+# directory, it does not install the linked package's deps).
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    env:
+      HUSKY: "0" # git hooks are irrelevant in CI
+    steps:
+      - name: Checkout Minister
+        uses: actions/checkout@v4
+        with:
+          path: Minister
+
+      - name: Checkout minister-vc
+        uses: actions/checkout@v4
+        with:
+          repository: MinistryofMany/minister-vc
+          path: minister-vc
+
+      - name: Checkout minister-plugin-sdk
+        uses: actions/checkout@v4
+        with:
+          repository: MinistryofMany/minister-plugin-sdk
+          path: minister-plugin-sdk
+
+      - name: Checkout minister-shared
+        uses: actions/checkout@v4
+        with:
+          repository: MinistryofMany/minister-shared
+          path: minister-shared
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.12.0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+          cache-dependency-path: Minister/pnpm-lock.yaml
+
+      - name: Install SDK dependencies
+        run: |
+          for d in minister-vc minister-plugin-sdk minister-shared; do
+            (cd "$d" && pnpm install --frozen-lockfile)
+          done
+
+      - name: Install
+        working-directory: Minister
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        working-directory: Minister
+        run: pnpm typecheck
+
+      - name: Lint
+        working-directory: Minister
+        run: pnpm lint
+
+      - name: Format check
+        working-directory: Minister
+        run: pnpm format:check
+
+      - name: Test
+        working-directory: Minister
+        run: pnpm test
