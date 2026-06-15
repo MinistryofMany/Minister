@@ -59,8 +59,86 @@ function verifierUrl(): string {
   return process.env.TLSN_VERIFIER_URL ?? "http://tlsn-verifier:7048";
 }
 
+// Comma-separated allowlist of hostnames the verifier URL may point at.
+// When set, validateTlsnVerifierConfig() warns if the configured host is
+// not present. The full SSRF fix (hard-rejecting out-of-allowlist hosts)
+// is gated on this infra landing — see docs/status.md.
+const ALLOWLIST_ENV = "MINISTER_TLSN_VERIFIER_ALLOWED_HOSTS";
+
+export interface TlsnVerifierConfigResult {
+  ok: boolean;
+  warnings: string[];
+}
+
+// Pure, exported, and side-effect-light (apart from the optional warn
+// emitter) so it can be unit-tested. Called at server startup from
+// instrumentation.ts; it WARNS but never throws — this nags every boot
+// until the allowlist infra is deployed.
+export function validateTlsnVerifierConfig(
+  env: Record<string, string | undefined> = process.env,
+  warn: (msg: string) => void = console.warn,
+): TlsnVerifierConfigResult {
+  const warnings: string[] = [];
+  const raw = env.TLSN_VERIFIER_URL;
+
+  if (raw === undefined || raw.trim() === "") {
+    warnings.push(
+      `[tlsn-verifier] TLSN_VERIFIER_URL is unset; falling back to the compose default. ` +
+        `Set it explicitly in production.`,
+    );
+  } else {
+    let parsed: URL | undefined;
+    try {
+      parsed = new URL(raw);
+    } catch {
+      warnings.push(`[tlsn-verifier] TLSN_VERIFIER_URL is not a valid URL: ${raw}`);
+    }
+
+    if (parsed) {
+      if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+        warnings.push(`[tlsn-verifier] TLSN_VERIFIER_URL must use http(s); got ${parsed.protocol}`);
+      }
+
+      const allowRaw = env[ALLOWLIST_ENV];
+      if (allowRaw === undefined || allowRaw.trim() === "") {
+        warnings.push(
+          `[tlsn-verifier] SSRF hardening INCOMPLETE: ${ALLOWLIST_ENV} not configured; ` +
+            `the verifier URL host is not allowlist-enforced.`,
+        );
+      } else {
+        const allowed = allowRaw
+          .split(",")
+          .map((h) => h.trim().toLowerCase())
+          .filter((h) => h.length > 0);
+        const host = parsed.hostname.toLowerCase();
+        if (!allowed.includes(host)) {
+          warnings.push(
+            `[tlsn-verifier] TLSN_VERIFIER_URL host "${host}" is not in ${ALLOWLIST_ENV} ` +
+              `(${allowed.join(", ")}).`,
+          );
+        }
+      }
+    }
+  }
+
+  for (const w of warnings) warn(w);
+  return { ok: warnings.length === 0, warnings };
+}
+
 export async function verifyPresentation(args: VerifyArgs): Promise<VerifiedTranscript> {
-  const url = `${verifierUrl().replace(/\/$/, "")}/verify`;
+  const base = verifierUrl().replace(/\/$/, "");
+  // Defense-in-depth: refuse to fetch a non-http(s) verifier URL even if
+  // the startup warning was ignored. Guards against file:/, etc.
+  let scheme: string;
+  try {
+    scheme = new URL(base).protocol;
+  } catch {
+    throw new TlsnVerifierError(`tlsn-verifier URL is not a valid URL: ${base}`);
+  }
+  if (scheme !== "http:" && scheme !== "https:") {
+    throw new TlsnVerifierError(`tlsn-verifier URL must use http(s), got ${scheme}`);
+  }
+  const url = `${base}/verify`;
   let response: Response;
   try {
     response = await fetch(url, {

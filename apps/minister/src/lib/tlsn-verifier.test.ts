@@ -1,6 +1,6 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { TlsnVerifierError, verifyPresentation } from "./tlsn-verifier";
+import { TlsnVerifierError, validateTlsnVerifierConfig, verifyPresentation } from "./tlsn-verifier";
 
 const ORIGINAL = process.env.TLSN_VERIFIER_URL;
 beforeAll(() => {
@@ -86,5 +86,82 @@ describe("verifyPresentation", () => {
     await expect(verifyPresentation({ presentation: "x", expectedDomain: "y" })).rejects.toThrow(
       /expected shape/,
     );
+  });
+
+  it("refuses a non-http(s) verifier URL before fetching", async () => {
+    const prev = process.env.TLSN_VERIFIER_URL;
+    process.env.TLSN_VERIFIER_URL = "file:///etc/passwd";
+    try {
+      await expect(verifyPresentation({ presentation: "x", expectedDomain: "y" })).rejects.toThrow(
+        /must use http/,
+      );
+      expect(fetchSpy).not.toHaveBeenCalled();
+    } finally {
+      process.env.TLSN_VERIFIER_URL = prev;
+    }
+  });
+});
+
+describe("validateTlsnVerifierConfig", () => {
+  it("warns and does not throw when TLSN_VERIFIER_URL is unset", () => {
+    const warnings: string[] = [];
+    const result = validateTlsnVerifierConfig({}, (m) => warnings.push(m));
+    expect(result.ok).toBe(false);
+    expect(warnings.some((w) => /TLSN_VERIFIER_URL is unset/.test(w))).toBe(true);
+  });
+
+  it("warns when TLSN_VERIFIER_URL is not a valid URL", () => {
+    const warnings: string[] = [];
+    validateTlsnVerifierConfig({ TLSN_VERIFIER_URL: "not a url" }, (m) => warnings.push(m));
+    expect(warnings.some((w) => /not a valid URL/.test(w))).toBe(true);
+  });
+
+  it("warns when the scheme is not http(s)", () => {
+    const warnings: string[] = [];
+    validateTlsnVerifierConfig({ TLSN_VERIFIER_URL: "file:///etc/passwd" }, (m) =>
+      warnings.push(m),
+    );
+    expect(warnings.some((w) => /must use http/.test(w))).toBe(true);
+  });
+
+  it("warns that SSRF hardening is incomplete when the allowlist env is unset", () => {
+    const warnings: string[] = [];
+    const result = validateTlsnVerifierConfig(
+      { TLSN_VERIFIER_URL: "https://verifier.internal:7048" },
+      (m) => warnings.push(m),
+    );
+    expect(result.ok).toBe(false);
+    expect(
+      warnings.some((w) => /SSRF hardening INCOMPLETE/.test(w) && /not configured/.test(w)),
+    ).toBe(true);
+  });
+
+  it("warns when the host is not in a configured allowlist", () => {
+    const warnings: string[] = [];
+    validateTlsnVerifierConfig(
+      {
+        TLSN_VERIFIER_URL: "https://evil.example:7048",
+        MINISTER_TLSN_VERIFIER_ALLOWED_HOSTS: "tlsn-verifier, verifier.internal",
+      },
+      (m) => warnings.push(m),
+    );
+    expect(warnings.some((w) => /not in MINISTER_TLSN_VERIFIER_ALLOWED_HOSTS/.test(w))).toBe(true);
+  });
+
+  it("passes cleanly when the host is in the allowlist", () => {
+    const warnings: string[] = [];
+    const result = validateTlsnVerifierConfig(
+      {
+        TLSN_VERIFIER_URL: "https://verifier.internal:7048",
+        MINISTER_TLSN_VERIFIER_ALLOWED_HOSTS: "verifier.internal, other.host",
+      },
+      (m) => warnings.push(m),
+    );
+    expect(result.ok).toBe(true);
+    expect(warnings).toEqual([]);
+  });
+
+  it("never throws", () => {
+    expect(() => validateTlsnVerifierConfig({ TLSN_VERIFIER_URL: "::::" }, () => {})).not.toThrow();
   });
 });
