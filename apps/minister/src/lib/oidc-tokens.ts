@@ -35,12 +35,11 @@ export function pairwiseSub(userId: string, clientId: string): string {
 // known only to the RP — defense-in-depth.
 export function verifyPkceS256(codeVerifier: string, storedChallenge: string): boolean {
   const computed = createHash("sha256").update(codeVerifier).digest();
-  let stored: Buffer;
-  try {
-    stored = Buffer.from(storedChallenge, "base64url");
-  } catch {
-    return false;
-  }
+  // Buffer.from(_, "base64url") never throws — it silently drops any
+  // non-base64url bytes — so a malformed challenge that decodes to the
+  // wrong length is caught by the length check below, and the
+  // constant-time compare rejects anything that survives it.
+  const stored = Buffer.from(storedChallenge, "base64url");
   if (stored.length !== computed.length) return false;
   return timingSafeEqual(computed, stored);
 }

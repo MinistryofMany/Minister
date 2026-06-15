@@ -21,7 +21,6 @@ interface BadgeChoiceGroup {
 
 interface Props {
   clientName: string;
-  scopes: string[];
   wantsProfile: boolean;
   badgeChoices: BadgeChoiceGroup[];
   requestToken: string;

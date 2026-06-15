@@ -66,7 +66,6 @@ export default async function OidcAuthorizePage({ searchParams }: PageProps) {
 
       <ConsentScreen
         clientName={request.clientName}
-        scopes={request.scopes}
         wantsProfile={request.scopes.includes("profile")}
         badgeChoices={badgeChoices}
         requestToken={requestToken}

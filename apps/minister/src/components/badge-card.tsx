@@ -1,10 +1,27 @@
 import { Eye, EyeOff, GripVertical, type LucideIcon } from "lucide-react";
-import { AtSign, Cake, Globe, Link as LinkIcon, Mail, MapPin, ShieldCheck } from "lucide-react";
+import {
+  AtSign,
+  Cake,
+  Globe,
+  Link as LinkIcon,
+  Mail,
+  MapPin,
+  ShieldCheck,
+  Ticket,
+} from "lucide-react";
+
+import type { BadgeIconKey } from "@minister/shared";
 
 import type { DisplayBadge } from "@/lib/badges";
 import { summarizeAttributes } from "@/lib/badges";
 import { cn } from "@/lib/utils";
 
+// `satisfies Record<BadgeIconKey, ...>` makes the registry's icon keys
+// the source of truth: a new badge type whose iconKey isn't mapped here
+// fails the typecheck instead of degrading to the runtime fallback. The
+// `Record<string, ...>` annotation keeps the lookup indexable by the
+// view type's `iconKey: string` while the `satisfies` still enforces
+// exhaustiveness over BadgeIconKey.
 const ICONS: Record<string, LucideIcon> = {
   "at-sign": AtSign,
   cake: Cake,
@@ -13,7 +30,8 @@ const ICONS: Record<string, LucideIcon> = {
   mail: Mail,
   "map-pin": MapPin,
   "shield-check": ShieldCheck,
-};
+  ticket: Ticket,
+} satisfies Record<BadgeIconKey, LucideIcon>;
 
 interface BadgeCardProps {
   badge: DisplayBadge;

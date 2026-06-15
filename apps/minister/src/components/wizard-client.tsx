@@ -11,7 +11,7 @@ import type {
   WizardState,
 } from "@minister/plugin-sdk";
 // Per-kind payload types are still imported so the per-step renderer
-// signatures are explicit; the dispatcher above relies on the union
+// signatures are explicit; the `renderStep` switch relies on the union
 // narrowing rather than `as` casts.
 
 import { Button } from "@/components/ui/button";
@@ -49,6 +49,31 @@ export function WizardClient({ sessionId, initialState }: Props) {
 
   const step = state.currentStep;
 
+  function renderStep() {
+    // Switch on the discriminant so the `default` branch's `never`
+    // assignment makes the dispatch genuinely exhaustive: a new
+    // WizardStep kind fails the typecheck here rather than silently
+    // rendering nothing.
+    switch (step.kind) {
+      case "form":
+        return <FormStep payload={step.payload} pending={pending} onSubmit={handleSubmit} />;
+      case "magic-link":
+        return <MagicLinkStep payload={step.payload} />;
+      case "redirect":
+        return <RedirectStep payload={step.payload} />;
+      case "extension-action":
+        return <ExtensionActionStep payload={step.payload} />;
+      case "info":
+        return (
+          <InfoStep payload={step.payload} pending={pending} onSubmit={() => handleSubmit({})} />
+        );
+      default: {
+        const _exhaustive: never = step;
+        throw new Error(`Unhandled wizard step kind: ${JSON.stringify(_exhaustive)}`);
+      }
+    }
+  }
+
   return (
     <Card>
       {error ? (
@@ -57,20 +82,7 @@ export function WizardClient({ sessionId, initialState }: Props) {
         </div>
       ) : null}
 
-      {step.kind === "form" ? (
-        <FormStep payload={step.payload} pending={pending} onSubmit={handleSubmit} />
-      ) : step.kind === "magic-link" ? (
-        <MagicLinkStep payload={step.payload} />
-      ) : step.kind === "redirect" ? (
-        <RedirectStep payload={step.payload} />
-      ) : step.kind === "extension-action" ? (
-        <ExtensionActionStep payload={step.payload} />
-      ) : (
-        // Exhaustive: 'info' is the last kind in the WizardStep union.
-        // TypeScript verifies this dispatch covers every variant; adding
-        // a new step kind will fail the typecheck here.
-        <InfoStep payload={step.payload} pending={pending} onSubmit={() => handleSubmit({})} />
-      )}
+      {renderStep()}
     </Card>
   );
 }

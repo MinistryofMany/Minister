@@ -225,61 +225,78 @@ async function issueBadgesAndComplete(args: {
     }
     const claims = meta.schema.parse(badge.claims);
 
-    // Insert Badge row first so we have an id to use as jti, then
-    // update with the signed VC. Two-step avoids a Prisma round-trip
-    // dance with a generated cuid.
-    const created = await prisma.badge.create({
-      data: {
-        userId,
-        type: badge.type,
-        attributes: badge.attributes as Prisma.InputJsonValue,
-        vcJwt: "",
-        issuer: issuer.did,
-        issuedAt: new Date(),
-        expiresAt: badge.expiresAt ?? null,
-        pluginId,
-      },
-    });
+    // Issue the badge atomically: insert the row, sign the VC keyed on
+    // the new id (jti = badge.id), then write the JWT back — all in one
+    // interactive transaction, alongside the eligibility upserts and the
+    // issuance audit. issueVc is pure in-process Ed25519 signing (no
+    // network/IO), so wrapping it here is safe and guarantees a Badge row
+    // is never observable with an empty vcJwt: a signing failure rolls
+    // back the insert instead of leaving an empty credential behind.
+    const createdId = await prisma.$transaction(async (tx) => {
+      const created = await tx.badge.create({
+        data: {
+          userId,
+          type: badge.type,
+          attributes: badge.attributes as Prisma.InputJsonValue,
+          vcJwt: "",
+          issuer: issuer.did,
+          issuedAt: new Date(),
+          expiresAt: badge.expiresAt ?? null,
+          pluginId,
+        },
+      });
 
-    const vcJwt = await issueVc(issuer, badge.type, subjectDid, claims as Record<string, unknown>, {
-      jti: created.id,
-      expiresIn: "1y",
-    });
+      const vcJwt = await issueVc(
+        issuer,
+        badge.type,
+        subjectDid,
+        claims as Record<string, unknown>,
+        { jti: created.id, expiresIn: "1y" },
+      );
 
-    await prisma.badge.update({
-      where: { id: created.id },
-      data: { vcJwt },
-    });
+      await tx.badge.update({
+        where: { id: created.id },
+        data: { vcJwt },
+      });
 
-    createdIds.push(created.id);
-
-    if (badge.eligibilities && badge.eligibilities.length > 0) {
-      for (const e of badge.eligibilities) {
-        await prisma.eligibility.upsert({
-          where: {
-            userId_badgeType: { userId, badgeType: e.badgeType },
-          },
-          create: {
-            userId,
-            badgeType: e.badgeType,
-            eligibleAt: e.eligibleAt,
-            fuzzDays: e.fuzzDays,
-            source: pluginId,
-          },
-          update: {
-            eligibleAt: e.eligibleAt,
-            fuzzDays: e.fuzzDays,
-            source: pluginId,
-          },
-        });
+      if (badge.eligibilities && badge.eligibilities.length > 0) {
+        for (const e of badge.eligibilities) {
+          await tx.eligibility.upsert({
+            where: {
+              userId_badgeType: { userId, badgeType: e.badgeType },
+            },
+            create: {
+              userId,
+              badgeType: e.badgeType,
+              eligibleAt: e.eligibleAt,
+              fuzzDays: e.fuzzDays,
+              source: pluginId,
+            },
+            update: {
+              eligibleAt: e.eligibleAt,
+              fuzzDays: e.fuzzDays,
+              source: pluginId,
+            },
+          });
+        }
       }
-    }
 
-    await audit(userId, "badge.issued", {
-      badgeId: created.id,
-      type: badge.type,
-      pluginId,
+      await tx.auditLog.create({
+        data: {
+          userId,
+          action: "badge.issued",
+          metadata: {
+            badgeId: created.id,
+            type: badge.type,
+            pluginId,
+          } as Prisma.InputJsonValue,
+        },
+      });
+
+      return created.id;
     });
+
+    createdIds.push(createdId);
   }
 
   await prisma.wizardSession.update({
