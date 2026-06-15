@@ -32,15 +32,11 @@ describe("pairwiseSub", () => {
   });
 
   it("returns different subs for different clients (same user)", () => {
-    expect(pairwiseSub("user_1", "client_A")).not.toBe(
-      pairwiseSub("user_1", "client_B"),
-    );
+    expect(pairwiseSub("user_1", "client_A")).not.toBe(pairwiseSub("user_1", "client_B"));
   });
 
   it("returns different subs for different users (same client)", () => {
-    expect(pairwiseSub("user_1", "client_A")).not.toBe(
-      pairwiseSub("user_2", "client_A"),
-    );
+    expect(pairwiseSub("user_1", "client_A")).not.toBe(pairwiseSub("user_2", "client_A"));
   });
 
   it("output length matches HMAC-SHA-256 (32 bytes → 43 base64url chars)", () => {
@@ -75,9 +71,7 @@ describe("verifyPkceS256", () => {
   it("rejects a verifier that doesn't match the challenge", () => {
     const correctVerifier = "abc123";
     const wrongVerifier = "xyz789";
-    expect(verifyPkceS256(wrongVerifier, challengeFor(correctVerifier))).toBe(
-      false,
-    );
+    expect(verifyPkceS256(wrongVerifier, challengeFor(correctVerifier))).toBe(false);
   });
 
   it("rejects a malformed challenge (not base64url)", () => {

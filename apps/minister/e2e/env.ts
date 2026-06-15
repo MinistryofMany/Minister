@@ -16,8 +16,7 @@ export const E2E_DATABASE_URL =
   process.env.E2E_DATABASE_URL ??
   "postgresql://minister:minister@localhost:5433/minister_e2e?schema=public";
 
-export const E2E_AUTH_SECRET =
-  "e2e-only-secret-0123456789abcdef0123456789abcdef";
+export const E2E_AUTH_SECRET = "e2e-only-secret-0123456789abcdef0123456789abcdef";
 
 export const ARTIFACTS_DIR = path.join(here, ".artifacts");
 export const MAIL_FILE = path.join(ARTIFACTS_DIR, "mail.jsonl");

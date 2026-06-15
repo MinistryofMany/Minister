@@ -6,10 +6,7 @@ import { redirect } from "next/navigation";
 import { z } from "zod";
 
 import { audit } from "@/lib/audit";
-import {
-  buildErrorRedirect,
-  buildSuccessRedirect,
-} from "@/lib/oidc-authorize";
+import { buildErrorRedirect, buildSuccessRedirect } from "@/lib/oidc-authorize";
 import { verifyOidcRequest } from "@/lib/oidc-request-token";
 import { prisma } from "@/lib/prisma";
 import { getCurrentSession } from "@/lib/session";
@@ -51,8 +48,7 @@ export async function approveConsent(
     request = await verifyOidcRequest(parsed.data.requestToken);
   } catch {
     return {
-      error:
-        "This consent request expired or has been tampered with. Reload and try again.",
+      error: "This consent request expired or has been tampered with. Reload and try again.",
     };
   }
 
@@ -67,9 +63,7 @@ export async function approveConsent(
       })
     ).map((b) => b.id),
   );
-  const approvedBadgeIds = parsed.data.approvedBadgeIds.filter((id) =>
-    ownedIds.has(id),
-  );
+  const approvedBadgeIds = parsed.data.approvedBadgeIds.filter((id) => ownedIds.has(id));
 
   const code = newAuthCode();
   await prisma.oidcAuthorizationCode.create({

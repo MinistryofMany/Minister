@@ -18,7 +18,7 @@ import { z } from "zod";
 const VerifyOk = z.object({
   ok: z.literal(true),
   transcript: z.object({
-    sent: z.string(),     // bytes the client sent (request)
+    sent: z.string(), // bytes the client sent (request)
     received: z.string(), // bytes the server returned (response)
     serverName: z.string(),
   }),
@@ -59,9 +59,7 @@ function verifierUrl(): string {
   return process.env.TLSN_VERIFIER_URL ?? "http://tlsn-verifier:7048";
 }
 
-export async function verifyPresentation(
-  args: VerifyArgs,
-): Promise<VerifiedTranscript> {
+export async function verifyPresentation(args: VerifyArgs): Promise<VerifiedTranscript> {
   const url = `${verifierUrl().replace(/\/$/, "")}/verify`;
   let response: Response;
   try {
@@ -85,9 +83,7 @@ export async function verifyPresentation(
   try {
     json = await response.json();
   } catch {
-    throw new TlsnVerifierError(
-      `tlsn-verifier returned non-JSON (HTTP ${response.status})`,
-    );
+    throw new TlsnVerifierError(`tlsn-verifier returned non-JSON (HTTP ${response.status})`);
   }
 
   const parsed = VerifyResponse.safeParse(json);

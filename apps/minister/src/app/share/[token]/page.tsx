@@ -2,13 +2,7 @@ import { headers } from "next/headers";
 import Link from "next/link";
 
 import { BadgeCard } from "@/components/badge-card";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { prisma } from "@/lib/prisma";
 import { clientIpFrom, shareViewLimiter } from "@/lib/rate-limit";
@@ -40,8 +34,7 @@ export default async function SharePage({ params }: PageProps) {
     return (
       <Shell title="Link unavailable">
         <p className="text-sm text-neutral-600 dark:text-neutral-400">
-          This share link doesn&apos;t exist, has been revoked by its
-          owner, or has expired.
+          This share link doesn&apos;t exist, has been revoked by its owner, or has expired.
         </p>
         <Button asChild variant="outline" className="mt-4 self-start">
           <Link href="/">Minister home</Link>
@@ -64,8 +57,7 @@ export default async function SharePage({ params }: PageProps) {
     return (
       <Shell title="Sign-in required">
         <p className="text-sm text-neutral-600 dark:text-neutral-400">
-          The sender requires viewers to have a Minister account. Sign
-          in and the link will load.
+          The sender requires viewers to have a Minister account. Sign in and the link will load.
         </p>
         <Button asChild className="mt-4 self-start">
           <Link href={`/?from=${encodeURIComponent(from)}`}>Sign in</Link>
@@ -86,16 +78,11 @@ export default async function SharePage({ params }: PageProps) {
   return (
     <div className="mx-auto flex max-w-2xl flex-col gap-6 px-4 py-12">
       <header className="space-y-1">
-        <h1 className="text-2xl font-semibold tracking-tight">
-          Shared Minister badges
-        </h1>
+        <h1 className="text-2xl font-semibold tracking-tight">Shared Minister badges</h1>
         <p className="text-sm text-neutral-600 dark:text-neutral-400">
           {link.badges.length} verifiable credential
           {link.badges.length === 1 ? "" : "s"}, valid until{" "}
-          <time dateTime={link.expiresAt.toISOString()}>
-            {link.expiresAt.toLocaleString()}
-          </time>
-          .
+          <time dateTime={link.expiresAt.toISOString()}>{link.expiresAt.toLocaleString()}</time>.
         </p>
       </header>
 
@@ -104,8 +91,7 @@ export default async function SharePage({ params }: PageProps) {
           <CardHeader>
             <CardTitle>Nothing here</CardTitle>
             <CardDescription>
-              The shared badges have been deleted since this link was
-              created.
+              The shared badges have been deleted since this link was created.
             </CardDescription>
           </CardHeader>
         </Card>
@@ -140,9 +126,8 @@ export default async function SharePage({ params }: PageProps) {
       )}
 
       <p className="text-xs text-neutral-500">
-        Each badge above is backed by a JWT-VC signed by Minister —
-        verifiers can replay them against{" "}
-        <code>/.well-known/jwks.json</code>.
+        Each badge above is backed by a JWT-VC signed by Minister — verifiers can replay them
+        against <code>/.well-known/jwks.json</code>.
       </p>
     </div>
   );
@@ -160,4 +145,3 @@ function Shell({ title, children }: { title: string; children: React.ReactNode }
     </div>
   );
 }
-

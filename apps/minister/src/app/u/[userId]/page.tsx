@@ -24,7 +24,7 @@ export default async function PublicProfile({ params }: PageProps) {
   return (
     <div className="mx-auto flex max-w-2xl flex-col gap-6 px-4 py-12">
       <header className="flex items-center gap-4">
-        {user.avatarUrl ?? user.image ? (
+        {(user.avatarUrl ?? user.image) ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img
             src={user.avatarUrl ?? user.image ?? undefined}
@@ -32,10 +32,7 @@ export default async function PublicProfile({ params }: PageProps) {
             className="h-12 w-12 rounded-full border border-neutral-200 object-cover dark:border-neutral-800"
           />
         ) : (
-          <div
-            aria-hidden
-            className="h-12 w-12 rounded-full bg-neutral-200 dark:bg-neutral-800"
-          />
+          <div aria-hidden className="h-12 w-12 rounded-full bg-neutral-200 dark:bg-neutral-800" />
         )}
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">{name}</h1>

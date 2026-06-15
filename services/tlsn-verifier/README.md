@@ -8,12 +8,13 @@ Rust HTTP sidecar. Verifies TLSNotary presentations produced by the Minister bro
 
 ```json
 {
-  "presentation":   "<base64>",
+  "presentation": "<base64>",
   "expectedDomain": "id.me"
 }
 ```
 
 On success (HTTP 200):
+
 ```json
 {
   "ok": true,
@@ -23,6 +24,7 @@ On success (HTTP 200):
 ```
 
 On verification failure (also HTTP 200 — protocol-level error rather than HTTP-level):
+
 ```json
 { "ok": false, "error": "server name mismatch" }
 ```
@@ -47,6 +49,7 @@ On verification failure (also HTTP 200 — protocol-level error rather than HTTP
 Inside docker-compose: the `tlsn-verifier` service is enabled and exposes `:7048`. Minister reads `TLSN_VERIFIER_URL` (defaults to `http://tlsn-verifier:7048` for in-network calls).
 
 Standalone:
+
 ```
 cd services/tlsn-verifier
 cargo run

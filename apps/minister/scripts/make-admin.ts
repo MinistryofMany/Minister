@@ -41,18 +41,12 @@ async function main() {
       metadata: { via: "scripts/make-admin.ts" },
     },
   });
-  console.log(
-    `${user.email}: isAdmin = ${user.isAdmin} (userId ${user.id})`,
-  );
+  console.log(`${user.email}: isAdmin = ${user.isAdmin} (userId ${user.id})`);
 }
 
 main()
   .catch((err) => {
-    if (
-      err instanceof Error &&
-      "code" in err &&
-      (err as { code?: string }).code === "P2025"
-    ) {
+    if (err instanceof Error && "code" in err && (err as { code?: string }).code === "P2025") {
       console.error(`No user with email ${values.email}`);
     } else {
       console.error(err);

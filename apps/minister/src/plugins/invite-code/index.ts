@@ -41,10 +41,7 @@ export const inviteCodePlugin: Plugin = {
       };
     }
 
-    const result = await redeemInviteCode(
-      normalizeInviteCode(parsed.data.code),
-      ctx.userId,
-    );
+    const result = await redeemInviteCode(normalizeInviteCode(parsed.data.code), ctx.userId);
     if (!result.ok) {
       return { kind: "error", message: result.message };
     }

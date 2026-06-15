@@ -9,6 +9,7 @@ We use the `ghcr.io/tlsnotary/notary-server` image pinned to a specific tag (see
 ## Config
 
 The bundled `config.yaml` is a minimal dev config:
+
 - Listens on `0.0.0.0:7047`.
 - Generates a notary signing key on first boot and persists it to `/data/notary.key`. Mount `notary_data` to keep it across container restarts.
 - TLS termination off (dev only). In prod the notary is reachable over TLS.

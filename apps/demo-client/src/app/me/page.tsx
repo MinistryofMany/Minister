@@ -19,31 +19,27 @@ export default async function MePage() {
 
   // Properly verify one of the VCs against Minister's JWKS so we can
   // show the RP "did the signature check pass?" affordance.
-  const verifiedEmail = await findVerifiedBadge(
-    session.ministerBadges ?? [],
-    "email-domain",
-  );
+  const verifiedEmail = await findVerifiedBadge(session.ministerBadges ?? [], "email-domain");
 
   return (
     <main className="mx-auto flex max-w-3xl flex-col gap-6 px-4 py-12">
       <header className="space-y-1">
-        <h1 className="text-2xl font-semibold tracking-tight">
-          What the RP got back
-        </h1>
+        <h1 className="text-2xl font-semibold tracking-tight">What the RP got back</h1>
         <p className="text-sm text-neutral-600">
-          This is everything Minister gave us during the OIDC handshake. In a
-          real RP you&apos;d probably never show users their own tokens —
-          rendered here to make the protocol legible.
+          This is everything Minister gave us during the OIDC handshake. In a real RP you&apos;d
+          probably never show users their own tokens — rendered here to make the protocol legible.
         </p>
       </header>
 
       <Block title="Session (RP-side)">
-        <Json value={{
-          sub: session.ministerSub,
-          name: session.ministerName,
-          picture: session.ministerPicture,
-          badgeCount: session.ministerBadges?.length ?? 0,
-        }} />
+        <Json
+          value={{
+            sub: session.ministerSub,
+            name: session.ministerName,
+            picture: session.ministerPicture,
+            badgeCount: session.ministerBadges?.length ?? 0,
+          }}
+        />
       </Block>
 
       <Block title="id_token (verified by Auth.js)">
@@ -67,8 +63,7 @@ export default async function MePage() {
           />
         ) : (
           <p className="text-sm text-neutral-600">
-            None disclosed. The user chose not to share an{" "}
-            <code>email-domain</code> badge.
+            None disclosed. The user chose not to share an <code>email-domain</code> badge.
           </p>
         )}
       </Block>

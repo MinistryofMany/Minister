@@ -6,11 +6,7 @@ import { Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { revokeShareLink } from "@/server/share-actions";
 
-export function ShareLinkRevokeButton({
-  shareLinkId,
-}: {
-  shareLinkId: string;
-}) {
+export function ShareLinkRevokeButton({ shareLinkId }: { shareLinkId: string }) {
   const [pending, startTransition] = useTransition();
 
   return (

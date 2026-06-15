@@ -15,13 +15,7 @@ import type {
 // narrowing rather than `as` casts.
 
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { submitStepAction } from "@/server/wizard-actions";
 
@@ -75,11 +69,7 @@ export function WizardClient({ sessionId, initialState }: Props) {
         // Exhaustive: 'info' is the last kind in the WizardStep union.
         // TypeScript verifies this dispatch covers every variant; adding
         // a new step kind will fail the typecheck here.
-        <InfoStep
-          payload={step.payload}
-          pending={pending}
-          onSubmit={() => handleSubmit({})}
-        />
+        <InfoStep payload={step.payload} pending={pending} onSubmit={() => handleSubmit({})} />
       )}
     </Card>
   );
@@ -98,9 +88,7 @@ function FormStep({
     <>
       <CardHeader>
         <CardTitle>{payload.title}</CardTitle>
-        {payload.description ? (
-          <CardDescription>{payload.description}</CardDescription>
-        ) : null}
+        {payload.description ? <CardDescription>{payload.description}</CardDescription> : null}
       </CardHeader>
       <CardContent>
         <form
@@ -126,9 +114,7 @@ function FormStep({
                 required={field.required}
               />
               {field.helpText ? (
-                <span className="text-xs text-neutral-500">
-                  {field.helpText}
-                </span>
+                <span className="text-xs text-neutral-500">{field.helpText}</span>
               ) : null}
             </label>
           ))}
@@ -165,11 +151,7 @@ function RedirectStep({ payload }: { payload: RedirectStepPayload }) {
   );
 }
 
-function ExtensionActionStep({
-  payload,
-}: {
-  payload: ExtensionActionStepPayload;
-}) {
+function ExtensionActionStep({ payload }: { payload: ExtensionActionStepPayload }) {
   // Polled by the extension via the browser bridge. The page itself
   // does nothing reactive — when the extension POSTs the presentation
   // to /api/tlsn/submit and completes the wizard, the user navigates
@@ -187,9 +169,8 @@ function ExtensionActionStep({
       </CardHeader>
       <CardContent className="space-y-3 text-sm text-neutral-600 dark:text-neutral-400">
         <p>
-          Open the extension popup. It will recognize this in-flight
-          wizard and walk you through the TLSNotary proof. When it&apos;s done,
-          come back here and refresh.
+          Open the extension popup. It will recognize this in-flight wizard and walk you through the
+          TLSNotary proof. When it&apos;s done, come back here and refresh.
         </p>
         <p className="text-xs text-neutral-500">
           Action: <code>{payload.action}</code>
@@ -205,9 +186,8 @@ function MagicLinkStep({ payload }: { payload: MagicLinkStepPayload }) {
       <CardHeader>
         <CardTitle>Check your inbox</CardTitle>
         <CardDescription>
-          We sent a verification link to{" "}
-          <span className="font-medium">{payload.sentTo}</span>. Click it to
-          finish issuing this badge.
+          We sent a verification link to <span className="font-medium">{payload.sentTo}</span>.
+          Click it to finish issuing this badge.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-3 text-sm text-neutral-600 dark:text-neutral-400">
@@ -236,9 +216,7 @@ function InfoStep({
         <CardTitle>{payload.title}</CardTitle>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
-        <p className="text-sm text-neutral-700 dark:text-neutral-300">
-          {payload.body}
-        </p>
+        <p className="text-sm text-neutral-700 dark:text-neutral-300">{payload.body}</p>
         <Button onClick={onSubmit} disabled={pending}>
           {payload.continueLabel ?? "Continue"}
         </Button>

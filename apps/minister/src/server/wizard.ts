@@ -1,9 +1,5 @@
 import { BADGE_TYPES } from "@minister/shared";
-import type {
-  IssuedBadge,
-  PluginContext,
-  WizardState,
-} from "@minister/plugin-sdk";
+import type { IssuedBadge, PluginContext, WizardState } from "@minister/plugin-sdk";
 import { buildUserDid, issueVc } from "@minister/vc";
 
 import type { Prisma } from "@/generated/prisma";
@@ -30,14 +26,12 @@ function serializeState(state: WizardState): Prisma.InputJsonValue {
   } as unknown as Prisma.InputJsonValue;
 }
 
-function hydrate(
-  row: {
-    id: string;
-    userId: string;
-    pluginId: string;
-    state: unknown;
-  },
-): WizardState {
+function hydrate(row: {
+  id: string;
+  userId: string;
+  pluginId: string;
+  state: unknown;
+}): WizardState {
   const s = row.state as {
     currentStep: WizardState["currentStep"];
     data: WizardState["data"];
@@ -99,10 +93,7 @@ export async function startWizard(
   return { sessionId: row.id, state };
 }
 
-export async function loadWizard(
-  sessionId: string,
-  userId: string,
-): Promise<WizardState | null> {
+export async function loadWizard(sessionId: string, userId: string): Promise<WizardState | null> {
   const row = await prisma.wizardSession.findFirst({
     where: { id: sessionId, userId, completedAt: null },
   });
@@ -190,7 +181,8 @@ export async function resumeViaPendingToken(args: {
   if (row.userId !== args.userId) {
     return {
       kind: "error",
-      message: "Link belongs to a different account. Sign in as that user and click the link again.",
+      message:
+        "Link belongs to a different account. Sign in as that user and click the link again.",
     };
   }
   if (row.expiresAt < new Date()) {
@@ -229,9 +221,7 @@ async function issueBadgesAndComplete(args: {
   for (const badge of issued) {
     const meta = BADGE_TYPES[badge.type];
     if (!meta) {
-      throw new Error(
-        `Plugin ${pluginId} produced an unknown badge type: ${badge.type}`,
-      );
+      throw new Error(`Plugin ${pluginId} produced an unknown badge type: ${badge.type}`);
     }
     const claims = meta.schema.parse(badge.claims);
 
@@ -251,13 +241,10 @@ async function issueBadgesAndComplete(args: {
       },
     });
 
-    const vcJwt = await issueVc(
-      issuer,
-      badge.type,
-      subjectDid,
-      claims as Record<string, unknown>,
-      { jti: created.id, expiresIn: "1y" },
-    );
+    const vcJwt = await issueVc(issuer, badge.type, subjectDid, claims as Record<string, unknown>, {
+      jti: created.id,
+      expiresIn: "1y",
+    });
 
     await prisma.badge.update({
       where: { id: created.id },

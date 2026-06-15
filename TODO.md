@@ -66,7 +66,7 @@ to:
 - Implement `verify_real()` against the crate API — call its
   `Verifier::verify(&presentation, ...)`, extract the verified TLS
   transcript, return it in the same `Transcript { sent, received,
-  serverName }` shape.
+serverName }` shape.
 - Switch `VERIFIER_MODE=real` in compose / prod env.
 - Add tests with a real captured presentation as a test fixture.
 

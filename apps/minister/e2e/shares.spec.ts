@@ -5,10 +5,7 @@ import { ANON_STATE, acceptDialogs, issueEmailDomainBadge } from "./helpers";
 
 test.use({ storageState: STORAGE.user });
 
-test("share link: create, anonymous view, revoke, unavailable", async ({
-  page,
-  browser,
-}) => {
+test("share link: create, anonymous view, revoke, unavailable", async ({ page, browser }) => {
   // Self-contained: make sure the user holds at least one badge.
   await issueEmailDomainBadge(page, "share-proof@example-corp.com");
 
@@ -22,22 +19,15 @@ test("share link: create, anonymous view, revoke, unavailable", async ({
   const anon = await browser.newContext({ storageState: ANON_STATE });
   const anonPage = await anon.newPage();
   await anonPage.goto(url);
-  await expect(
-    anonPage.getByRole("heading", { name: "Email domain" }),
-  ).toBeVisible();
+  await expect(anonPage.getByRole("heading", { name: "Email domain" })).toBeVisible();
 
   // Revoke; the same URL goes dark without admitting why.
   acceptDialogs(page);
   await page.goto("/shares");
-  await page
-    .getByRole("button", { name: "Revoke this share link" })
-    .first()
-    .click();
+  await page.getByRole("button", { name: "Revoke this share link" }).first().click();
   await expect(page.getByText("revoked").first()).toBeVisible();
 
   await anonPage.goto(url);
-  await expect(
-    anonPage.getByRole("heading", { name: "Link unavailable" }),
-  ).toBeVisible();
+  await expect(anonPage.getByRole("heading", { name: "Link unavailable" })).toBeVisible();
   await anon.close();
 });

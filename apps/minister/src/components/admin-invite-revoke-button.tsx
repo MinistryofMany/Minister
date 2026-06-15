@@ -6,11 +6,7 @@ import { Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { revokeInviteCode } from "@/server/admin-actions";
 
-export function AdminInviteRevokeButton({
-  inviteCodeId,
-}: {
-  inviteCodeId: string;
-}) {
+export function AdminInviteRevokeButton({ inviteCodeId }: { inviteCodeId: string }) {
   const [pending, startTransition] = useTransition();
 
   return (

@@ -53,10 +53,7 @@ export async function POST(request: Request) {
   const body = new URLSearchParams(await request.text());
 
   if (body.get("grant_type") !== "authorization_code") {
-    return tokenError(
-      "unsupported_grant_type",
-      "Only grant_type=authorization_code is supported",
-    );
+    return tokenError("unsupported_grant_type", "Only grant_type=authorization_code is supported");
   }
 
   const code = body.get("code");
@@ -85,10 +82,7 @@ export async function POST(request: Request) {
     if (!clientCreds.clientSecret) {
       return clientError("client_secret required", clientCreds.fromBasic);
     }
-    const ok = await verifyClientSecret(
-      clientCreds.clientSecret,
-      client.clientSecretHash,
-    );
+    const ok = await verifyClientSecret(clientCreds.clientSecret, client.clientSecretHash);
     if (!ok) {
       return clientError("Bad client_secret", clientCreds.fromBasic);
     }
@@ -155,10 +149,7 @@ export async function POST(request: Request) {
   const sub = pairwiseSub(user.id, client.clientId);
   const issuer = await getIssuer();
 
-  const minister_badges = await loadApprovedBadgeJwts(
-    user.id,
-    stored.approvedBadgeIds,
-  );
+  const minister_badges = await loadApprovedBadgeJwts(user.id, stored.approvedBadgeIds);
 
   const idToken = await mintIdToken(issuer, {
     sub,
@@ -223,10 +214,7 @@ interface ClientCreds {
   fromBasic: boolean;
 }
 
-function readClientCredentials(
-  request: Request,
-  body: URLSearchParams,
-): ClientCreds {
+function readClientCredentials(request: Request, body: URLSearchParams): ClientCreds {
   const authz = request.headers.get("authorization");
   if (authz?.startsWith("Basic ")) {
     try {
@@ -250,10 +238,7 @@ function readClientCredentials(
   };
 }
 
-async function loadApprovedBadgeJwts(
-  userId: string,
-  badgeIds: string[],
-): Promise<string[]> {
+async function loadApprovedBadgeJwts(userId: string, badgeIds: string[]): Promise<string[]> {
   if (badgeIds.length === 0) return [];
   const rows = await prisma.badge.findMany({
     where: { userId, id: { in: badgeIds } },
@@ -262,11 +247,7 @@ async function loadApprovedBadgeJwts(
   return rows.map((r) => r.vcJwt);
 }
 
-function tokenError(
-  error: string,
-  description: string,
-  status = 400,
-): NextResponse {
+function tokenError(error: string, description: string, status = 400): NextResponse {
   return NextResponse.json(
     { error, error_description: description },
     { status, headers: { "Cache-Control": "no-store" } },

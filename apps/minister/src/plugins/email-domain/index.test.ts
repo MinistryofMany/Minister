@@ -31,11 +31,7 @@ describe("emailDomainPlugin.handleStep — collect-email → magic-link", () => 
   it("emits a magic-link step + sends an email containing the verify URL", async () => {
     const start = await emailDomainPlugin.startWizard(ctx());
     const c = ctx();
-    const result = await emailDomainPlugin.handleStep(
-      start,
-      { email: "alice@example.com" },
-      c,
-    );
+    const result = await emailDomainPlugin.handleStep(start, { email: "alice@example.com" }, c);
     expect(result.kind).toBe("continue");
     if (result.kind !== "continue") throw new Error("kind");
     expect(result.state.currentStep.kind).toBe("magic-link");
@@ -50,9 +46,7 @@ describe("emailDomainPlugin.handleStep — collect-email → magic-link", () => 
     expect(c.sendMail).toHaveBeenCalledOnce();
     const message = vi.mocked(c.sendMail).mock.calls[0]?.[0];
     expect(message?.to).toBe("alice@example.com");
-    expect(message?.text).toContain(
-      `${c.origin}/badges/new/email-domain/verify?token=`,
-    );
+    expect(message?.text).toContain(`${c.origin}/badges/new/email-domain/verify?token=`);
     expect(message?.text).toContain(magic.expectedToken!);
   });
 
@@ -69,11 +63,7 @@ describe("emailDomainPlugin.handleStep — collect-email → magic-link", () => 
 
   it("rejects malformed email input", async () => {
     const start = await emailDomainPlugin.startWizard(ctx());
-    const result = await emailDomainPlugin.handleStep(
-      start,
-      { email: "not-an-email" },
-      ctx(),
-    );
+    const result = await emailDomainPlugin.handleStep(start, { email: "not-an-email" }, ctx());
     expect(result.kind).toBe("error");
   });
 });
@@ -119,11 +109,7 @@ describe("emailDomainPlugin.handleStep — magic-link → complete", () => {
       },
       data: {},
     };
-    const result = await emailDomainPlugin.handleStep(
-      state,
-      { token: "T" },
-      ctx(),
-    );
+    const result = await emailDomainPlugin.handleStep(state, { token: "T" }, ctx());
     expect(result.kind).toBe("error");
   });
 });

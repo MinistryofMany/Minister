@@ -2,13 +2,7 @@ import Link from "next/link";
 
 import { AdminOidcClientActions } from "@/components/admin-oidc-client-actions";
 import { AdminOidcCreateForm } from "@/components/admin-oidc-create-form";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { allOidcScopes } from "@/lib/oidc-client-admin";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session";
@@ -26,9 +20,9 @@ export default async function AdminOidcClientsPage() {
         <CardHeader>
           <CardTitle>Register a relying party</CardTitle>
           <CardDescription>
-            Any site that speaks OpenID Connect can use these credentials
-            for &ldquo;Sign in with Minister&rdquo;. Confidential clients get
-            a secret (shown once); public clients are PKCE-only.
+            Any site that speaks OpenID Connect can use these credentials for &ldquo;Sign in with
+            Minister&rdquo;. Confidential clients get a secret (shown once); public clients are
+            PKCE-only.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -38,10 +32,7 @@ export default async function AdminOidcClientsPage() {
 
       <section className="space-y-3">
         <h2 className="text-lg font-semibold">
-          Clients{" "}
-          <span className="text-sm font-normal text-neutral-500">
-            ({clients.length})
-          </span>
+          Clients <span className="text-sm font-normal text-neutral-500">({clients.length})</span>
         </h2>
 
         {clients.length === 0 ? (

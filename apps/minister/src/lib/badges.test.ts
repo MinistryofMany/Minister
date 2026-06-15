@@ -4,15 +4,13 @@ import { summarizeAttributes } from "./badges";
 
 describe("summarizeAttributes", () => {
   it("returns the domain for email-domain", () => {
-    expect(
-      summarizeAttributes("email-domain", { domain: "example.com" }),
-    ).toBe("example.com");
+    expect(summarizeAttributes("email-domain", { domain: "example.com" })).toBe("example.com");
   });
 
   it("returns the email for email-exact", () => {
-    expect(
-      summarizeAttributes("email-exact", { email: "alice@example.com" }),
-    ).toBe("alice@example.com");
+    expect(summarizeAttributes("email-exact", { email: "alice@example.com" })).toBe(
+      "alice@example.com",
+    );
   });
 
   it("joins provider + handle for oauth-account", () => {
@@ -39,15 +37,11 @@ describe("summarizeAttributes", () => {
   });
 
   it("returns just the country for residency-country", () => {
-    expect(summarizeAttributes("residency-country", { country: "US" })).toBe(
-      "US",
-    );
+    expect(summarizeAttributes("residency-country", { country: "US" })).toBe("US");
   });
 
   it("joins state + country for residency-state", () => {
-    expect(
-      summarizeAttributes("residency-state", { country: "US", state: "MD" }),
-    ).toBe("MD, US");
+    expect(summarizeAttributes("residency-state", { country: "US", state: "MD" })).toBe("MD, US");
   });
 
   it("joins city + state + country for residency-city", () => {

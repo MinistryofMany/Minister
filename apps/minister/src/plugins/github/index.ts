@@ -107,8 +107,7 @@ export const githubPlugin: Plugin = {
       };
     }
 
-    const redirectUri =
-      typeof state.data.redirectUri === "string" ? state.data.redirectUri : "";
+    const redirectUri = typeof state.data.redirectUri === "string" ? state.data.redirectUri : "";
     if (!redirectUri) {
       return {
         kind: "error",

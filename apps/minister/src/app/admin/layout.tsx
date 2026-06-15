@@ -6,11 +6,7 @@ import { getSessionFlags } from "@/lib/session";
 // Every /admin page lives under this layout, so the isAdmin gate runs
 // exactly once per request. Middleware already bounced anonymous
 // visitors; this catches signed-in non-admins.
-export default async function AdminLayout({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
+export default async function AdminLayout({ children }: { children: React.ReactNode }) {
   const flags = await getSessionFlags();
   if (!flags?.isAdmin) redirect("/");
 
@@ -35,13 +31,7 @@ export default async function AdminLayout({
   );
 }
 
-function AdminTab({
-  href,
-  children,
-}: {
-  href: string;
-  children: React.ReactNode;
-}) {
+function AdminTab({ href, children }: { href: string; children: React.ReactNode }) {
   // Server layouts can't read the current pathname without a client
   // boundary; a plain link row keeps this whole tree RSC-only. The
   // active page is obvious from its own heading.

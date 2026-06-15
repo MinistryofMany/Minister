@@ -30,9 +30,7 @@ function key(): Uint8Array {
   return new TextEncoder().encode(secret);
 }
 
-export async function signOidcRequest(
-  req: ValidAuthorizeRequest,
-): Promise<string> {
+export async function signOidcRequest(req: ValidAuthorizeRequest): Promise<string> {
   return new SignJWT({ req })
     .setProtectedHeader({ alg: ALG, typ: "minister-oidc-req" })
     .setIssuedAt()
@@ -40,9 +38,7 @@ export async function signOidcRequest(
     .sign(key());
 }
 
-export async function verifyOidcRequest(
-  token: string,
-): Promise<ValidAuthorizeRequest> {
+export async function verifyOidcRequest(token: string): Promise<ValidAuthorizeRequest> {
   const { payload } = await jwtVerify(token, key(), {
     algorithms: [ALG],
     typ: "minister-oidc-req",

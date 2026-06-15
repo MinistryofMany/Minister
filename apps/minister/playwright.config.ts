@@ -1,12 +1,6 @@
 import { defineConfig, devices } from "@playwright/test";
 
-import {
-  BASE_URL,
-  E2E_AUTH_SECRET,
-  E2E_DATABASE_URL,
-  E2E_PORT,
-  MAIL_FILE,
-} from "./e2e/env";
+import { BASE_URL, E2E_AUTH_SECRET, E2E_DATABASE_URL, E2E_PORT, MAIL_FILE } from "./e2e/env";
 
 // E2E suite. Boots its own dev server on a dedicated port against a
 // dedicated database (see e2e/env.ts) so it never collides with a

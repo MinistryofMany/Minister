@@ -62,6 +62,16 @@ export function getOidcDiscovery(): OidcDiscovery {
       "none", // PKCE-only public clients
     ],
     code_challenge_methods_supported: ["S256"],
-    claims_supported: ["sub", "iss", "aud", "iat", "exp", "nonce", "name", "picture", "minister_badges"],
+    claims_supported: [
+      "sub",
+      "iss",
+      "aud",
+      "iat",
+      "exp",
+      "nonce",
+      "name",
+      "picture",
+      "minister_badges",
+    ],
   };
 }

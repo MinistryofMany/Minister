@@ -1,10 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  allOidcScopes,
-  parseRedirectUris,
-  validateClientScopes,
-} from "./oidc-client-admin";
+import { allOidcScopes, parseRedirectUris, validateClientScopes } from "./oidc-client-admin";
 
 describe("parseRedirectUris", () => {
   it("accepts one https URI per line and dedupes", () => {
@@ -13,17 +9,12 @@ describe("parseRedirectUris", () => {
     );
     expect(result).toEqual({
       ok: true,
-      uris: [
-        "https://app.example.com/cb",
-        "https://other.example.com/auth/callback",
-      ],
+      uris: ["https://app.example.com/cb", "https://other.example.com/auth/callback"],
     });
   });
 
   it("accepts http on localhost and 127.0.0.1 only", () => {
-    expect(
-      parseRedirectUris("http://localhost:3100/api/auth/callback/minister").ok,
-    ).toBe(true);
+    expect(parseRedirectUris("http://localhost:3100/api/auth/callback/minister").ok).toBe(true);
     expect(parseRedirectUris("http://127.0.0.1:8080/cb").ok).toBe(true);
     const rejected = parseRedirectUris("http://app.example.com/cb");
     expect(rejected.ok).toBe(false);
@@ -48,11 +39,7 @@ describe("parseRedirectUris", () => {
 
 describe("validateClientScopes", () => {
   it("accepts openid plus known scopes", () => {
-    const result = validateClientScopes([
-      "openid",
-      "profile",
-      "badge:email-domain",
-    ]);
+    const result = validateClientScopes(["openid", "profile", "badge:email-domain"]);
     expect(result).toEqual({
       ok: true,
       scopes: ["openid", "profile", "badge:email-domain"],

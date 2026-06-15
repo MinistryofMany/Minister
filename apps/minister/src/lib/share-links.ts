@@ -21,25 +21,22 @@ export function generateShareToken(): string {
 //
 // Does NOT enforce `requiresAccount` — that's a UI/route concern; this
 // helper is shared by both the public landing and any future API.
-export async function loadShareLinkByToken(token: string): Promise<
-  | {
-      id: string;
-      ownerUserId: string;
-      requiresAccount: boolean;
-      expiresAt: Date;
-      createdAt: Date;
-      badges: Array<{
-        id: string;
-        type: string;
-        label: string;
-        description: string;
-        iconKey: string;
-        attributes: Record<string, unknown>;
-        vcJwt: string;
-      }>;
-    }
-  | null
-> {
+export async function loadShareLinkByToken(token: string): Promise<{
+  id: string;
+  ownerUserId: string;
+  requiresAccount: boolean;
+  expiresAt: Date;
+  createdAt: Date;
+  badges: Array<{
+    id: string;
+    type: string;
+    label: string;
+    description: string;
+    iconKey: string;
+    attributes: Record<string, unknown>;
+    vcJwt: string;
+  }>;
+} | null> {
   const row = await prisma.shareLink.findUnique({
     where: { token },
     select: {
@@ -68,9 +65,7 @@ export async function loadShareLinkByToken(token: string): Promise<
 
   // Preserve the user's chosen badge order from the ShareLink.
   const badgeOrder = new Map(row.badgeIds.map((id, i) => [id, i]));
-  badges.sort(
-    (a, b) => (badgeOrder.get(a.id) ?? 0) - (badgeOrder.get(b.id) ?? 0),
-  );
+  badges.sort((a, b) => (badgeOrder.get(a.id) ?? 0) - (badgeOrder.get(b.id) ?? 0));
 
   return {
     id: row.id,
@@ -110,9 +105,7 @@ export interface ShareLinkSummary {
   status: "active" | "expired" | "revoked";
 }
 
-export async function loadUserShareLinks(
-  userId: string,
-): Promise<ShareLinkSummary[]> {
+export async function loadUserShareLinks(userId: string): Promise<ShareLinkSummary[]> {
   const rows = await prisma.shareLink.findMany({
     where: { userId },
     orderBy: { createdAt: "desc" },
@@ -137,10 +130,6 @@ export async function loadUserShareLinks(
     expiresAt: r.expiresAt,
     revokedAt: r.revokedAt,
     viewCount: r._count.views,
-    status: r.revokedAt
-      ? "revoked"
-      : r.expiresAt < now
-        ? "expired"
-        : "active",
+    status: r.revokedAt ? "revoked" : r.expiresAt < now ? "expired" : "active",
   }));
 }

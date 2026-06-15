@@ -70,9 +70,7 @@ export async function loadUserBadges(userId: string): Promise<DisplayBadge[]> {
     .filter((b): b is DisplayBadge => b !== undefined);
 }
 
-export async function loadPublicBadges(
-  userId: string,
-): Promise<DisplayBadge[]> {
+export async function loadPublicBadges(userId: string): Promise<DisplayBadge[]> {
   const rows = await prisma.badge.findMany({
     where: { userId, isPublic: true },
     orderBy: [{ sortOrder: "asc" }, { issuedAt: "asc" }],
@@ -100,18 +98,14 @@ export async function loadPublicBadges(
     .filter((b): b is DisplayBadge => b !== undefined);
 }
 
-export function summarizeAttributes(
-  type: string,
-  attributes: Record<string, unknown>,
-): string {
+export function summarizeAttributes(type: string, attributes: Record<string, unknown>): string {
   switch (type) {
     case "email-domain":
       return typeof attributes.domain === "string" ? attributes.domain : "";
     case "email-exact":
       return typeof attributes.email === "string" ? attributes.email : "";
     case "oauth-account": {
-      const p =
-        typeof attributes.provider === "string" ? attributes.provider : "";
+      const p = typeof attributes.provider === "string" ? attributes.provider : "";
       const h = typeof attributes.handle === "string" ? attributes.handle : "";
       return h ? `${p} · @${h}` : p;
     }
@@ -120,9 +114,7 @@ export function summarizeAttributes(
     case "residency-state":
       return [attributes.state, attributes.country].filter(Boolean).join(", ");
     case "residency-city":
-      return [attributes.city, attributes.state, attributes.country]
-        .filter(Boolean)
-        .join(", ");
+      return [attributes.city, attributes.state, attributes.country].filter(Boolean).join(", ");
     default:
       if (type.startsWith("age-over-")) {
         const t = type.slice("age-over-".length);

@@ -1,12 +1,6 @@
 import { redirect } from "next/navigation";
 
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { SignInForm } from "@/components/sign-in-form";
 import { getCurrentSession } from "@/lib/session";
 
@@ -32,8 +26,7 @@ export default async function HomePage({
       <header className="space-y-2">
         <h1 className="text-3xl font-semibold tracking-tight">Minister</h1>
         <p className="text-sm text-neutral-600 dark:text-neutral-400">
-          Your verifiable identity, your terms. Sign in to start collecting
-          badges.
+          Your verifiable identity, your terms. Sign in to start collecting badges.
         </p>
       </header>
 

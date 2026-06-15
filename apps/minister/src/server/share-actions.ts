@@ -7,20 +7,11 @@ import { audit } from "@/lib/audit";
 import { sendMail } from "@/lib/mailer";
 import { prisma } from "@/lib/prisma";
 import { requireSession } from "@/lib/session";
-import {
-  DEFAULT_SHARE_TTL_DAYS,
-  MAX_SHARE_TTL_DAYS,
-  generateShareToken,
-} from "@/lib/share-links";
+import { DEFAULT_SHARE_TTL_DAYS, MAX_SHARE_TTL_DAYS, generateShareToken } from "@/lib/share-links";
 
 const CreateInput = z.object({
   badgeIds: z.array(z.string().cuid()).min(1, "Pick at least one badge"),
-  ttlDays: z.coerce
-    .number()
-    .int()
-    .min(1)
-    .max(MAX_SHARE_TTL_DAYS)
-    .default(DEFAULT_SHARE_TTL_DAYS),
+  ttlDays: z.coerce.number().int().min(1).max(MAX_SHARE_TTL_DAYS).default(DEFAULT_SHARE_TTL_DAYS),
   requiresAccount: z.boolean().default(false),
   // Optional recipient — if provided, we email them the URL. Empty
   // string is treated as "don't email."

@@ -19,9 +19,7 @@ export interface VerifiedMinisterVc {
 // JWKS for the Minister issuer. did:web's JWKS lives at
 // /.well-known/jwks.json on the issuer's HTTP origin.
 function ministerJwks() {
-  const base =
-    process.env.MINISTER_ISSUER_URL?.replace(/\/$/, "") ??
-    "http://localhost:3000";
+  const base = process.env.MINISTER_ISSUER_URL?.replace(/\/$/, "") ?? "http://localhost:3000";
   return createRemoteJWKSet(new URL(`${base}/.well-known/jwks.json`));
 }
 

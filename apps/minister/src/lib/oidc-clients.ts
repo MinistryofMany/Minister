@@ -17,10 +17,7 @@ export async function hashClientSecret(plaintext: string): Promise<string> {
   return argonHash(plaintext, ARGON_PARAMS);
 }
 
-export async function verifyClientSecret(
-  plaintext: string,
-  encoded: string,
-): Promise<boolean> {
+export async function verifyClientSecret(plaintext: string, encoded: string): Promise<boolean> {
   try {
     return await argonVerify(encoded, plaintext);
   } catch {

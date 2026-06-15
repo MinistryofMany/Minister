@@ -64,11 +64,7 @@ export function buildErrorRedirect(
 }
 
 // Build the success redirect carrying code/state per RFC 6749 §4.1.2.
-export function buildSuccessRedirect(
-  redirectUri: string,
-  code: string,
-  state: string,
-): string {
+export function buildSuccessRedirect(redirectUri: string, code: string, state: string): string {
   const url = new URL(redirectUri);
   url.searchParams.set("code", code);
   url.searchParams.set("state", state);
@@ -125,10 +121,9 @@ export async function validateAuthorizeRequest(
       redirectUri,
       state,
       error: "unsupported_response_type",
-      description:
-        responseType
-          ? `response_type=${responseType} is not supported; use 'code'.`
-          : "response_type is required",
+      description: responseType
+        ? `response_type=${responseType} is not supported; use 'code'.`
+        : "response_type is required",
     };
   }
 

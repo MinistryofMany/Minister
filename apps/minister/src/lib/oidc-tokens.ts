@@ -21,13 +21,9 @@ const ACCESS_TOKEN_TTL_SECONDS = 60 * 60;
 export function pairwiseSub(userId: string, clientId: string): string {
   const secret = process.env.OIDC_PAIRWISE_SECRET ?? process.env.AUTH_SECRET;
   if (!secret) {
-    throw new Error(
-      "OIDC_PAIRWISE_SECRET (or AUTH_SECRET fallback) must be set",
-    );
+    throw new Error("OIDC_PAIRWISE_SECRET (or AUTH_SECRET fallback) must be set");
   }
-  const mac = createHmac("sha256", secret)
-    .update(`${userId}:${clientId}`)
-    .digest();
+  const mac = createHmac("sha256", secret).update(`${userId}:${clientId}`).digest();
   return mac.toString("base64url");
 }
 
@@ -37,10 +33,7 @@ export function pairwiseSub(userId: string, clientId: string): string {
 // Compare in constant time. The challenge was public to anyone who
 // sniffed /authorize, but the verifier is supposed to be a secret
 // known only to the RP — defense-in-depth.
-export function verifyPkceS256(
-  codeVerifier: string,
-  storedChallenge: string,
-): boolean {
+export function verifyPkceS256(codeVerifier: string, storedChallenge: string): boolean {
   const computed = createHash("sha256").update(codeVerifier).digest();
   let stored: Buffer;
   try {
@@ -62,10 +55,7 @@ export interface IdTokenClaims {
   minister_badges?: string[];
 }
 
-export async function mintIdToken(
-  issuer: Issuer,
-  claims: IdTokenClaims,
-): Promise<string> {
+export async function mintIdToken(issuer: Issuer, claims: IdTokenClaims): Promise<string> {
   const payload: Record<string, unknown> = {
     nonce: claims.nonce,
   };
@@ -88,8 +78,8 @@ export async function mintIdToken(
 }
 
 export interface AccessTokenClaims {
-  jti: string;          // random; key into the OidcAccessToken row
-  sub: string;          // pairwise pseudonymous identifier, same as ID token
+  jti: string; // random; key into the OidcAccessToken row
+  sub: string; // pairwise pseudonymous identifier, same as ID token
   clientId: string;
   scopes: string[];
 }
@@ -102,10 +92,7 @@ export interface AccessTokenClaims {
 // This preserves the pairwise pseudonymous `sub` privacy property —
 // two RPs that decode their access tokens see different `sub` and *no*
 // shared underlying identifier.
-export async function mintAccessToken(
-  issuer: Issuer,
-  claims: AccessTokenClaims,
-): Promise<string> {
+export async function mintAccessToken(issuer: Issuer, claims: AccessTokenClaims): Promise<string> {
   return new SignJWT({
     scope: claims.scopes.join(" "),
     client_id: claims.clientId,

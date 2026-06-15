@@ -5,21 +5,12 @@ import { z } from "zod";
 
 import { audit } from "@/lib/audit";
 import { generateInviteCode, normalizeInviteCode } from "@/lib/invite-codes";
-import {
-  parseRedirectUris,
-  validateClientScopes,
-} from "@/lib/oidc-client-admin";
-import {
-  generateClientId,
-  generateClientSecret,
-  hashClientSecret,
-} from "@/lib/oidc-clients";
+import { parseRedirectUris, validateClientScopes } from "@/lib/oidc-client-admin";
+import { generateClientId, generateClientSecret, hashClientSecret } from "@/lib/oidc-clients";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session";
 
-export type AdminActionResult =
-  | { ok: true }
-  | { ok: false; error: string };
+export type AdminActionResult = { ok: true } | { ok: false; error: string };
 
 // ---------------------------------------------------------------------------
 // Users
@@ -130,9 +121,7 @@ const CreateInviteCodeInput = z.object({
     .or(z.literal("").transform(() => undefined)),
 });
 
-export type CreateInviteCodeResult =
-  | { ok: true; code: string }
-  | { ok: false; error: string };
+export type CreateInviteCodeResult = { ok: true; code: string } | { ok: false; error: string };
 
 export async function createInviteCode(
   input: z.infer<typeof CreateInviteCodeInput>,
@@ -148,9 +137,7 @@ export async function createInviteCode(
   const { label, customCode, usesTotal, ttlDays } = parsed.data;
 
   const code = normalizeInviteCode(customCode ?? generateInviteCode());
-  const expiresAt = ttlDays
-    ? new Date(Date.now() + ttlDays * 24 * 60 * 60 * 1000)
-    : null;
+  const expiresAt = ttlDays ? new Date(Date.now() + ttlDays * 24 * 60 * 60 * 1000) : null;
 
   const existing = await prisma.inviteCode.findUnique({ where: { code } });
   if (existing) {
@@ -253,9 +240,7 @@ export async function createOidcClient(
   const row = await prisma.oidcClient.create({
     data: {
       clientId,
-      clientSecretHash: clientSecret
-        ? await hashClientSecret(clientSecret)
-        : null,
+      clientSecretHash: clientSecret ? await hashClientSecret(clientSecret) : null,
       name: parsed.data.name,
       redirectUris: uris.uris,
       allowedScopes: scopes.scopes,

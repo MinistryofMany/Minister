@@ -19,13 +19,19 @@
     "db:migrate": "pnpm --filter @minister/app db:migrate",
     "db:studio": "pnpm --filter @minister/app db:studio",
     "compose:up": "docker compose up --build",
-    "compose:down": "docker compose down"
+    "compose:down": "docker compose down",
+    "prepare": "husky"
   },
   "devDependencies": {
+    "husky": "^9.1.7",
+    "lint-staged": "^17.0.7",
     "prettier": "^3.3.3",
     "typescript": "^5.6.3",
     "vitest": "^2.1.8"
   },
   "license": "AGPL-3.0-only",
-  "author": "AtHeartEngineer"
+  "author": "AtHeartEngineer",
+  "lint-staged": {
+    "*.{ts,tsx,js,jsx,json,md,yml,yaml,css}": "prettier --write"
+  }
 }

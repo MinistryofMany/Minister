@@ -19,8 +19,7 @@ export function getIssuer(): Promise<Issuer> {
       // In prod, ISSUER_PRIVATE_JWK is required. We still pass devKeyPath
       // so that fresh dev boots (no env) generate + persist a key rather
       // than erroring out.
-      devKeyPath:
-        process.env.NODE_ENV === "production" ? undefined : DEV_KEY_PATH,
+      devKeyPath: process.env.NODE_ENV === "production" ? undefined : DEV_KEY_PATH,
     });
   }
   return globalThis.__ministerIssuerPromise;

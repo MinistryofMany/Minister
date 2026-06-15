@@ -6,12 +6,12 @@ function, `apps/minister/src/lib/mailer.ts:sendMail`.
 
 ## Transport selection
 
-| Environment | `RESEND_API_KEY` + `MAIL_FROM` set? | Behavior |
-|---|---|---|
-| dev / test | no | prints the message to the server log (links stay clickable) |
-| dev / test | yes | sends via Resend |
-| production | no | **throws** — never silently drops mail |
-| production | yes | sends via Resend |
+| Environment | `RESEND_API_KEY` + `MAIL_FROM` set? | Behavior                                                    |
+| ----------- | ----------------------------------- | ----------------------------------------------------------- |
+| dev / test  | no                                  | prints the message to the server log (links stay clickable) |
+| dev / test  | yes                                 | sends via Resend                                            |
+| production  | no                                  | **throws** — never silently drops mail                      |
+| production  | yes                                 | sends via Resend                                            |
 
 `MAIL_FROM` must be an address on a domain **verified in the Resend
 account**, e.g. `Minister <noreply@your-domain.com>`. An unverified

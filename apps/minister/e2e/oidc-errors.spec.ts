@@ -17,9 +17,7 @@ function authorizeUrl(params: Record<string, string>): string {
   return u.toString();
 }
 
-test("unknown client_id renders a fatal error, never redirects", async ({
-  page,
-}) => {
+test("unknown client_id renders a fatal error, never redirects", async ({ page }) => {
   await page.goto(
     authorizeUrl({
       response_type: "code",
@@ -36,9 +34,7 @@ test("unknown client_id renders a fatal error, never redirects", async ({
   await expect(page).toHaveURL(/\/oidc\/authorize/); // stayed put
 });
 
-test("unregistered redirect_uri renders a fatal error (no open redirect)", async ({
-  page,
-}) => {
+test("unregistered redirect_uri renders a fatal error (no open redirect)", async ({ page }) => {
   const clientId = await createPublicOidcClient(RP_CALLBACK, ["openid", "profile"]);
   await page.goto(
     authorizeUrl({
@@ -56,9 +52,7 @@ test("unregistered redirect_uri renders a fatal error (no open redirect)", async
   await expect(page).toHaveURL(/\/oidc\/authorize/);
 });
 
-test("missing PKCE redirects back to the RP with error=invalid_request", async ({
-  page,
-}) => {
+test("missing PKCE redirects back to the RP with error=invalid_request", async ({ page }) => {
   const clientId = await createPublicOidcClient(RP_CALLBACK, ["openid", "profile"]);
   await page.goto(
     authorizeUrl({
@@ -77,9 +71,7 @@ test("missing PKCE redirects back to the RP with error=invalid_request", async (
   expect(url.searchParams.get("state")).toBe("the-state");
 });
 
-test("denying consent redirects back to the RP with error=access_denied", async ({
-  page,
-}) => {
+test("denying consent redirects back to the RP with error=access_denied", async ({ page }) => {
   const clientId = await createPublicOidcClient(RP_CALLBACK, ["openid", "profile"]);
   await page.goto(
     authorizeUrl({

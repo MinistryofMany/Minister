@@ -9,8 +9,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "Minister",
-  description:
-    "Identity platform — verifiable credential badges, your wallet, your terms.",
+  description: "Identity platform — verifiable credential badges, your wallet, your terms.",
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {

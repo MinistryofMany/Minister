@@ -5,10 +5,7 @@ import { useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
 import { CopyButton } from "@/components/copy-button";
 import { Input } from "@/components/ui/input";
-import {
-  deleteOidcClient,
-  rotateOidcClientSecret,
-} from "@/server/admin-actions";
+import { deleteOidcClient, rotateOidcClientSecret } from "@/server/admin-actions";
 
 export function AdminOidcClientActions({
   id,
@@ -84,18 +81,9 @@ export function AdminOidcClientActions({
             New client_secret — shown once, copy it now:
           </span>
           <div className="flex items-center gap-2">
-            <Input
-              readOnly
-              value={rotatedSecret}
-              className="font-mono text-xs"
-            />
+            <Input readOnly value={rotatedSecret} className="font-mono text-xs" />
             <CopyButton value={rotatedSecret} />
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              onClick={() => setRotatedSecret(null)}
-            >
+            <Button type="button" variant="ghost" size="sm" onClick={() => setRotatedSecret(null)}>
               Dismiss
             </Button>
           </div>

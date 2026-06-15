@@ -5,13 +5,7 @@ import { Plus } from "lucide-react";
 import { BadgeGrid } from "@/components/badge-grid";
 import { RegisterPasskeyButton } from "@/components/register-passkey-button";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { loadUserBadges } from "@/lib/badges";
 import { getCurrentSession } from "@/lib/session";
 
@@ -40,19 +34,14 @@ export default async function ProfilePage() {
               </Link>
             </>
           ) : (
-            <span className="text-neutral-500">
-              All badges private — public profile is empty.
-            </span>
+            <span className="text-neutral-500">All badges private — public profile is empty.</span>
           )}
         </p>
       </header>
 
       <div className="flex items-center justify-between">
         <h2 className="text-lg font-semibold">
-          Badges{" "}
-          <span className="text-sm font-normal text-neutral-500">
-            ({badges.length})
-          </span>
+          Badges <span className="text-sm font-normal text-neutral-500">({badges.length})</span>
         </h2>
         <Button asChild size="sm">
           <Link href="/badges/new">
@@ -67,8 +56,7 @@ export default async function ProfilePage() {
           <CardHeader>
             <CardTitle>No badges yet</CardTitle>
             <CardDescription>
-              Pick a plugin and walk through its wizard to claim your first
-              badge.
+              Pick a plugin and walk through its wizard to claim your first badge.
             </CardDescription>
           </CardHeader>
           <CardContent className="flex gap-2">

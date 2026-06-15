@@ -63,15 +63,8 @@ export function BadgeGrid({ badges }: BadgeGridProps) {
   if (order.length === 0) return null;
 
   return (
-    <DndContext
-      sensors={sensors}
-      collisionDetection={closestCenter}
-      onDragEnd={handleDragEnd}
-    >
-      <SortableContext
-        items={order.map((b) => b.id)}
-        strategy={verticalListSortingStrategy}
-      >
+    <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+      <SortableContext items={order.map((b) => b.id)} strategy={verticalListSortingStrategy}>
         <ul className="flex flex-col gap-3">
           {order.map((badge) => (
             <SortableBadgeRow key={badge.id} badge={badge} />
@@ -83,14 +76,9 @@ export function BadgeGrid({ badges }: BadgeGridProps) {
 }
 
 function SortableBadgeRow({ badge }: { badge: DisplayBadge }) {
-  const {
-    attributes,
-    listeners,
-    setNodeRef,
-    transform,
-    transition,
-    isDragging,
-  } = useSortable({ id: badge.id });
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: badge.id,
+  });
 
   const style = {
     transform: CSS.Transform.toString(transform),
@@ -106,10 +94,7 @@ function SortableBadgeRow({ badge }: { badge: DisplayBadge }) {
         dragHandleProps={{ ...attributes, ...listeners }}
         action={
           <>
-            <BadgeToggleForm
-              badgeId={badge.id}
-              isPublic={badge.isPublic}
-            />
+            <BadgeToggleForm badgeId={badge.id} isPublic={badge.isPublic} />
             <BadgeDeleteForm badgeId={badge.id} />
           </>
         }

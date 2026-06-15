@@ -2,18 +2,9 @@ import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 
 import { ConsentScreen } from "@/components/consent-screen";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { loadUserBadges, type DisplayBadge } from "@/lib/badges";
-import {
-  buildErrorRedirect,
-  validateAuthorizeRequest,
-} from "@/lib/oidc-authorize";
+import { buildErrorRedirect, validateAuthorizeRequest } from "@/lib/oidc-authorize";
 import { signOidcRequest } from "@/lib/oidc-request-token";
 import { clientIpFrom, oidcAuthorizeLimiter } from "@/lib/rate-limit";
 import { getCurrentSession } from "@/lib/session";
@@ -49,12 +40,7 @@ export default async function OidcAuthorizePage({ searchParams }: PageProps) {
 
   if (result.kind === "redirect-error") {
     redirect(
-      buildErrorRedirect(
-        result.redirectUri,
-        result.error,
-        result.description,
-        result.state,
-      ),
+      buildErrorRedirect(result.redirectUri, result.error, result.description, result.state),
     );
   }
 
@@ -73,9 +59,8 @@ export default async function OidcAuthorizePage({ searchParams }: PageProps) {
       <header className="space-y-1">
         <h1 className="text-2xl font-semibold tracking-tight">Approve access</h1>
         <p className="text-sm text-neutral-600 dark:text-neutral-400">
-          <span className="font-medium">{request.clientName}</span> is
-          requesting information from your Minister profile. Pick exactly what
-          to disclose.
+          <span className="font-medium">{request.clientName}</span> is requesting information from
+          your Minister profile. Pick exactly what to disclose.
         </p>
       </header>
 
@@ -101,10 +86,7 @@ interface BadgeChoiceGroup {
   }>;
 }
 
-function buildBadgeChoices(
-  scopes: string[],
-  badges: DisplayBadge[],
-): BadgeChoiceGroup[] {
+function buildBadgeChoices(scopes: string[], badges: DisplayBadge[]): BadgeChoiceGroup[] {
   const groups: BadgeChoiceGroup[] = [];
   for (const scope of scopes) {
     if (!scope.startsWith("badge:")) continue;
@@ -113,8 +95,7 @@ function buildBadgeChoices(
     groups.push({
       scope,
       badgeType,
-      description:
-        matched[0]?.meta.description ?? `Badge of type ${badgeType}.`,
+      description: matched[0]?.meta.description ?? `Badge of type ${badgeType}.`,
       badges: matched.map((b) => ({
         id: b.id,
         label: matched[0]?.meta.label ?? badgeType,
@@ -145,13 +126,7 @@ function summarize(b: DisplayBadge): string {
   }
 }
 
-function FatalError({
-  title,
-  description,
-}: {
-  title: string;
-  description: string;
-}) {
+function FatalError({ title, description }: { title: string; description: string }) {
   return (
     <div className="mx-auto flex max-w-lg flex-col gap-6 px-4 py-12">
       <Card>
@@ -160,8 +135,8 @@ function FatalError({
           <CardDescription>{description}</CardDescription>
         </CardHeader>
         <CardContent className="text-sm text-neutral-600 dark:text-neutral-400">
-          This is a configuration problem with the relying party. Nothing was
-          shared; contact the operator of the app that sent you here.
+          This is a configuration problem with the relying party. Nothing was shared; contact the
+          operator of the app that sent you here.
         </CardContent>
       </Card>
     </div>

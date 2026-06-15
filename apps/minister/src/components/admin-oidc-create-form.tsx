@@ -70,8 +70,7 @@ export function AdminOidcCreateForm({ allScopes }: Props) {
           <>
             <CopyRow label="client_secret" value={created.clientSecret} />
             <p className="text-xs text-amber-700 dark:text-amber-400">
-              The secret is hashed at rest — this is the only time it will
-              be shown. Copy it now.
+              The secret is hashed at rest — this is the only time it will be shown. Copy it now.
             </p>
           </>
         ) : (
@@ -102,18 +101,16 @@ export function AdminOidcCreateForm({ allScopes }: Props) {
 
       <label className="flex flex-col gap-1 text-sm">
         <span className="font-medium">Name</span>
-        <Input
-          placeholder="Their app"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-        />
+        <Input placeholder="Their app" value={name} onChange={(e) => setName(e.target.value)} />
       </label>
 
       <label className="flex flex-col gap-1 text-sm">
         <span className="font-medium">Redirect URIs</span>
         <textarea
           className="min-h-20 rounded-md border border-neutral-300 bg-transparent px-3 py-2 font-mono text-xs shadow-sm placeholder:text-neutral-400 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-neutral-400 dark:border-neutral-700"
-          placeholder={"https://theirapp.com/auth/callback\nhttp://localhost:3100/api/auth/callback/minister"}
+          placeholder={
+            "https://theirapp.com/auth/callback\nhttp://localhost:3100/api/auth/callback/minister"
+          }
           value={redirectUris}
           onChange={(e) => setRedirectUris(e.target.value)}
         />
@@ -142,8 +139,8 @@ export function AdminOidcCreateForm({ allScopes }: Props) {
           ))}
         </div>
         <span className="text-xs text-neutral-500">
-          The RP can request any subset of these; the user still picks
-          which badges to disclose at consent time.
+          The RP can request any subset of these; the user still picks which badges to disclose at
+          consent time.
         </span>
       </fieldset>
 
@@ -157,8 +154,8 @@ export function AdminOidcCreateForm({ allScopes }: Props) {
         <span className="flex-1">
           <span className="block font-medium">Public client</span>
           <span className="text-neutral-600 dark:text-neutral-400">
-            For SPAs and native apps that can&apos;t keep a secret. PKCE-only;
-            no client_secret is issued.
+            For SPAs and native apps that can&apos;t keep a secret. PKCE-only; no client_secret is
+            issued.
           </span>
         </span>
       </label>
@@ -178,9 +175,7 @@ export function AdminOidcCreateForm({ allScopes }: Props) {
 function CopyRow({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex items-center gap-2">
-      <span className="w-28 shrink-0 font-mono text-xs text-neutral-500">
-        {label}
-      </span>
+      <span className="w-28 shrink-0 font-mono text-xs text-neutral-500">{label}</span>
       <Input readOnly value={value} className="font-mono text-xs" />
       <CopyButton value={value} />
     </div>

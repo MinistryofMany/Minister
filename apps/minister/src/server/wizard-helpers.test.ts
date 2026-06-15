@@ -144,14 +144,11 @@ describe("effectiveScopes", () => {
 
   it("handles mixed scopes and preserves request order", () => {
     expect(
-      effectiveScopes(
-        ["openid", "profile", "badge:email-domain", "badge:oauth-account"],
-        {
-          approveProfile: true,
-          approvedBadgeIds: ["b_2"],
-          userBadges,
-        },
-      ),
+      effectiveScopes(["openid", "profile", "badge:email-domain", "badge:oauth-account"], {
+        approveProfile: true,
+        approvedBadgeIds: ["b_2"],
+        userBadges,
+      }),
     ).toEqual(["openid", "profile", "badge:oauth-account"]);
   });
 

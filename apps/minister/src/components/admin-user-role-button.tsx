@@ -5,13 +5,7 @@ import { useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
 import { setUserAdmin } from "@/server/admin-actions";
 
-export function AdminUserRoleButton({
-  userId,
-  isAdmin,
-}: {
-  userId: string;
-  isAdmin: boolean;
-}) {
+export function AdminUserRoleButton({ userId, isAdmin }: { userId: string; isAdmin: boolean }) {
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
 

@@ -103,9 +103,7 @@ describe("validateAuthorizeRequest — post-redirect_uri errors redirect back", 
   });
 
   it("code_challenge_method != S256 → invalid_request", async () => {
-    const res = await validateAuthorizeRequest(
-      build({ code_challenge_method: "plain" }),
-    );
+    const res = await validateAuthorizeRequest(build({ code_challenge_method: "plain" }));
     if (res.kind !== "redirect-error") throw new Error("expected redirect-error");
     expect(res.error).toBe("invalid_request");
     expect(res.description).toMatch(/S256/);
@@ -118,9 +116,7 @@ describe("validateAuthorizeRequest — post-redirect_uri errors redirect back", 
   });
 
   it("scope outside client.allowedScopes → invalid_scope", async () => {
-    const res = await validateAuthorizeRequest(
-      build({ scope: "openid badge:not-allowed" }),
-    );
+    const res = await validateAuthorizeRequest(build({ scope: "openid badge:not-allowed" }));
     if (res.kind !== "redirect-error") throw new Error("expected redirect-error");
     expect(res.error).toBe("invalid_scope");
   });
@@ -162,12 +158,7 @@ describe("buildErrorRedirect / buildSuccessRedirect", () => {
   });
 
   it("error redirect omits state when caller passes null", () => {
-    const url = buildErrorRedirect(
-      "http://x.test/cb",
-      "invalid_request",
-      "no state",
-      null,
-    );
+    const url = buildErrorRedirect("http://x.test/cb", "invalid_request", "no state", null);
     expect(new URL(url).searchParams.has("state")).toBe(false);
   });
 
@@ -179,11 +170,7 @@ describe("buildErrorRedirect / buildSuccessRedirect", () => {
   });
 
   it("preserves existing query on the redirect_uri", () => {
-    const url = buildSuccessRedirect(
-      "http://x.test/cb?existing=1",
-      "CODE",
-      "STATE",
-    );
+    const url = buildSuccessRedirect("http://x.test/cb?existing=1", "CODE", "STATE");
     const parsed = new URL(url);
     expect(parsed.searchParams.get("existing")).toBe("1");
     expect(parsed.searchParams.get("code")).toBe("CODE");

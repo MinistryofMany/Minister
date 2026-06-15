@@ -48,9 +48,7 @@ const fixedClientSecret = values["client-secret"];
 const isPublic = Boolean(values.public);
 
 if (!name || redirectUris.length === 0) {
-  console.error(
-    "Required: --name <string> and at least one --redirect-uri <url>",
-  );
+  console.error("Required: --name <string> and at least one --redirect-uri <url>");
   process.exit(2);
 }
 if (fixedClientSecret && !fixedClientId) {
@@ -65,17 +63,9 @@ try {
   // Whether to display the plaintext secret post-run. Only do this
   // when WE generated it — if the operator passed --client-secret they
   // already have it.
-  const generatedSecret =
-    isPublic
-      ? null
-      : fixedClientSecret
-        ? null
-        : generateClientSecret();
-  const effectiveSecret =
-    isPublic ? null : (fixedClientSecret ?? generatedSecret);
-  const clientSecretHash = effectiveSecret
-    ? await hashClientSecret(effectiveSecret)
-    : null;
+  const generatedSecret = isPublic ? null : fixedClientSecret ? null : generateClientSecret();
+  const effectiveSecret = isPublic ? null : (fixedClientSecret ?? generatedSecret);
+  const clientSecretHash = effectiveSecret ? await hashClientSecret(effectiveSecret) : null;
 
   const data = {
     clientId,

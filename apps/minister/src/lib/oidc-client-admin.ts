@@ -9,9 +9,7 @@ export function allOidcScopes(): string[] {
   return [...BASE_SCOPES, ...badgeScopes()];
 }
 
-export type RedirectUrisResult =
-  | { ok: true; uris: string[] }
-  | { ok: false; error: string };
+export type RedirectUrisResult = { ok: true; uris: string[] } | { ok: false; error: string };
 
 // One URI per line. Exact-match semantics downstream (RFC 6749
 // §3.1.2.2), so we normalize nothing beyond trimming whitespace —
@@ -57,9 +55,7 @@ export function parseRedirectUris(text: string): RedirectUrisResult {
   return { ok: true, uris: unique };
 }
 
-export type ScopesResult =
-  | { ok: true; scopes: string[] }
-  | { ok: false; error: string };
+export type ScopesResult = { ok: true; scopes: string[] } | { ok: false; error: string };
 
 // openid is mandatory (the flow is useless without it); everything
 // else must come from the known set: profile + badge:<registered type>.

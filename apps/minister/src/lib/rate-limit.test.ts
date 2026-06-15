@@ -57,9 +57,7 @@ describe("clientIpFrom", () => {
   }
 
   it("takes the first hop of x-forwarded-for", () => {
-    expect(
-      clientIpFrom(headersOf({ "x-forwarded-for": "1.2.3.4, 10.0.0.1" })),
-    ).toBe("1.2.3.4");
+    expect(clientIpFrom(headersOf({ "x-forwarded-for": "1.2.3.4, 10.0.0.1" }))).toBe("1.2.3.4");
   });
 
   it("falls back to x-real-ip", () => {

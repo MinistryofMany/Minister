@@ -91,11 +91,7 @@ export async function POST(request: Request) {
   }
   const parsed = Body.safeParse(body);
   if (!parsed.success) {
-    return submitErr(
-      parsed.error.issues[0]?.message ?? "invalid_body",
-      400,
-      origin,
-    );
+    return submitErr(parsed.error.issues[0]?.message ?? "invalid_body", 400, origin);
   }
 
   // Resolve the wizard session via sessionToken == pendingToken. The
@@ -123,20 +119,12 @@ export async function POST(request: Request) {
     // The plugin asked for another round trip. Tell the extension —
     // it doesn't know what to do here yet (no multi-step extension
     // flows in v1), but be explicit rather than silent.
-    return submitErr(
-      `plugin_wants_continuation:${result.pluginId}`,
-      409,
-      origin,
-    );
+    return submitErr(`plugin_wants_continuation:${result.pluginId}`, 409, origin);
   }
   return submitErr(result.message, 400, origin);
 }
 
-function submitErr(
-  error: string,
-  status: number,
-  origin: string | null,
-): NextResponse {
+function submitErr(error: string, status: number, origin: string | null): NextResponse {
   return NextResponse.json(
     { ok: false, error },
     { status, headers: { ...corsHeaders(origin), "Cache-Control": "no-store" } },

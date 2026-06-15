@@ -36,10 +36,7 @@ export default auth((req) => {
     // Preserve full path INCLUDING query string. This matters for
     // /oidc/authorize?client_id=...&state=... — losing the query
     // would orphan the OIDC request mid-flow.
-    url.searchParams.set(
-      "from",
-      req.nextUrl.pathname + req.nextUrl.search,
-    );
+    url.searchParams.set("from", req.nextUrl.pathname + req.nextUrl.search);
     return Response.redirect(url);
   }
 });

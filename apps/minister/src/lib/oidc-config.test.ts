@@ -1,10 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import {
-  badgeScopes,
-  getOidcDiscovery,
-  oidcIssuerUrl,
-} from "./oidc-config";
+import { badgeScopes, getOidcDiscovery, oidcIssuerUrl } from "./oidc-config";
 
 describe("oidcIssuerUrl", () => {
   const ORIGINAL_AUTH_URL = process.env.AUTH_URL;
@@ -66,9 +62,7 @@ describe("getOidcDiscovery", () => {
   it("emits issuer + all four endpoint URLs under that issuer", () => {
     const d = getOidcDiscovery();
     expect(d.issuer).toBe("http://localhost:3000");
-    expect(d.authorization_endpoint).toBe(
-      "http://localhost:3000/oidc/authorize",
-    );
+    expect(d.authorization_endpoint).toBe("http://localhost:3000/oidc/authorize");
     expect(d.token_endpoint).toBe("http://localhost:3000/oidc/token");
     expect(d.userinfo_endpoint).toBe("http://localhost:3000/oidc/userinfo");
     expect(d.jwks_uri).toBe("http://localhost:3000/.well-known/jwks.json");
@@ -87,9 +81,7 @@ describe("getOidcDiscovery", () => {
     const d = getOidcDiscovery();
     expect(d.scopes_supported).toContain("openid");
     expect(d.scopes_supported).toContain("profile");
-    expect(
-      d.scopes_supported.some((s) => s.startsWith("badge:")),
-    ).toBe(true);
+    expect(d.scopes_supported.some((s) => s.startsWith("badge:"))).toBe(true);
   });
 
   it("includes the minister_badges custom claim in claims_supported", () => {

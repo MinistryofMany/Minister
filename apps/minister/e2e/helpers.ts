@@ -49,9 +49,7 @@ export async function waitForMailTo(
 }
 
 export function extractUrl(text: string, pathFragment: string): string {
-  const match = text
-    .split(/\s+/)
-    .find((w) => w.startsWith("http") && w.includes(pathFragment));
+  const match = text.split(/\s+/).find((w) => w.startsWith("http") && w.includes(pathFragment));
   if (!match) {
     throw new Error(`No URL containing "${pathFragment}" in: ${text}`);
   }
@@ -64,10 +62,7 @@ export function extractUrl(text: string, pathFragment: string): string {
 // The click is retried: in dev mode the first visit can win the race
 // against hydration, in which case the button renders but the handler
 // isn't attached yet and the click is a no-op.
-export async function requestMagicLink(
-  page: Page,
-  email: string,
-): Promise<string> {
+export async function requestMagicLink(page: Page, email: string): Promise<string> {
   let mail: CapturedMail | null = null;
   for (let attempt = 0; attempt < 3 && !mail; attempt++) {
     // Fresh navigation each attempt — a successful click moves the page
@@ -87,10 +82,7 @@ export async function requestMagicLink(
 
 // Full magic-link sign-in through the real UI + capture file. Ends on
 // /profile (Auth.js default callback for our sign-in form).
-export async function signInViaMagicLink(
-  page: Page,
-  email: string,
-): Promise<void> {
+export async function signInViaMagicLink(page: Page, email: string): Promise<void> {
   const url = await requestMagicLink(page, email);
   await page.goto(url);
   await expect(page.getByRole("link", { name: "Profile" })).toBeVisible();
@@ -99,17 +91,12 @@ export async function signInViaMagicLink(
 export async function signOut(page: Page): Promise<void> {
   await page.goto("/settings");
   await page.getByRole("button", { name: "Sign out", exact: true }).click();
-  await expect(
-    page.getByRole("button", { name: "Email me a magic link" }),
-  ).toBeVisible();
+  await expect(page.getByRole("button", { name: "Email me a magic link" })).toBeVisible();
 }
 
 // Drives the email-domain wizard end-to-end for whatever user the page
 // is signed in as. `proofEmail`'s domain becomes the badge claim.
-export async function issueEmailDomainBadge(
-  page: Page,
-  proofEmail: string,
-): Promise<void> {
+export async function issueEmailDomainBadge(page: Page, proofEmail: string): Promise<void> {
   const since = Date.now();
   await page.goto("/badges/new/email-domain");
   await page.locator('input[type="email"]').fill(proofEmail);

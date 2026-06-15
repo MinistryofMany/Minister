@@ -77,14 +77,14 @@ pnpm dev
 
 Documented in [`.env.example`](./.env.example) (compose-level) and [`apps/minister/.env.example`](./apps/minister/.env.example) (app-level). Required:
 
-| Variable | Purpose |
-|---|---|
-| `DATABASE_URL` | postgres connection string |
-| `AUTH_SECRET` | Auth.js session/JWT signing secret. Must be ≥32 chars. |
-| `AUTH_URL` | URL the browser sees the app on. WebAuthn requires exact origin match. |
-| `AUTH_TRUST_HOST` | `"true"` when running behind a reverse proxy or in docker-compose. |
-| `MINISTER_ISSUER_DOMAIN` | Domain for did:web and OIDC `iss`. Default `minister.local`. |
-| `OIDC_PAIRWISE_SECRET` | Secret for deriving pairwise OIDC subs. Optional until Stage 3. |
+| Variable                 | Purpose                                                                |
+| ------------------------ | ---------------------------------------------------------------------- |
+| `DATABASE_URL`           | postgres connection string                                             |
+| `AUTH_SECRET`            | Auth.js session/JWT signing secret. Must be ≥32 chars.                 |
+| `AUTH_URL`               | URL the browser sees the app on. WebAuthn requires exact origin match. |
+| `AUTH_TRUST_HOST`        | `"true"` when running behind a reverse proxy or in docker-compose.     |
+| `MINISTER_ISSUER_DOMAIN` | Domain for did:web and OIDC `iss`. Default `minister.local`.           |
+| `OIDC_PAIRWISE_SECRET`   | Secret for deriving pairwise OIDC subs. Optional until Stage 3.        |
 
 ## What's _not_ implemented yet
 

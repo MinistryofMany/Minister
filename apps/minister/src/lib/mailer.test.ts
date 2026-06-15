@@ -95,9 +95,7 @@ describe("sendMail", () => {
     });
 
     it("omits html when not provided", async () => {
-      const fetchMock = vi
-        .fn()
-        .mockResolvedValue(new Response("{}", { status: 200 }));
+      const fetchMock = vi.fn().mockResolvedValue(new Response("{}", { status: 200 }));
       vi.stubGlobal("fetch", fetchMock);
 
       await sendMail({ to: "c@example.com", subject: "s", text: "t" });
@@ -108,21 +106,17 @@ describe("sendMail", () => {
     it("throws with Resend's error detail on a non-2xx (e.g. unverified domain)", async () => {
       const fetchMock = vi
         .fn()
-        .mockResolvedValue(
-          new Response("The example.com domain is not verified", { status: 403 }),
-        );
+        .mockResolvedValue(new Response("The example.com domain is not verified", { status: 403 }));
       vi.stubGlobal("fetch", fetchMock);
 
-      await expect(
-        sendMail({ to: "d@example.com", subject: "s", text: "t" }),
-      ).rejects.toThrow(/Resend send failed \(HTTP 403\): The example.com domain is not verified/);
+      await expect(sendMail({ to: "d@example.com", subject: "s", text: "t" })).rejects.toThrow(
+        /Resend send failed \(HTTP 403\): The example.com domain is not verified/,
+      );
     });
 
     it("prefers Resend over the production throw", async () => {
       setEnv("NODE_ENV", "production");
-      const fetchMock = vi
-        .fn()
-        .mockResolvedValue(new Response("{}", { status: 200 }));
+      const fetchMock = vi.fn().mockResolvedValue(new Response("{}", { status: 200 }));
       vi.stubGlobal("fetch", fetchMock);
 
       await expect(

@@ -1,13 +1,4 @@
-import {
-  afterAll,
-  afterEach,
-  beforeAll,
-  beforeEach,
-  describe,
-  expect,
-  it,
-  vi,
-} from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { TlsnVerifierError, verifyPresentation } from "./tlsn-verifier";
 
@@ -62,9 +53,7 @@ describe("verifyPresentation", () => {
   });
 
   it("throws TlsnVerifierError with the verifier's message on a failure", async () => {
-    fetchSpy.mockResolvedValueOnce(
-      jsonResponse({ ok: false, error: "server name mismatch" }),
-    );
+    fetchSpy.mockResolvedValueOnce(jsonResponse({ ok: false, error: "server name mismatch" }));
     const promise = verifyPresentation({
       presentation: "x",
       expectedDomain: "y",
@@ -72,32 +61,30 @@ describe("verifyPresentation", () => {
     await expect(promise).rejects.toBeInstanceOf(TlsnVerifierError);
     // Re-mock and re-call to assert the message separately (each
     // verifyPresentation call consumes one fetch).
-    fetchSpy.mockResolvedValueOnce(
-      jsonResponse({ ok: false, error: "server name mismatch" }),
+    fetchSpy.mockResolvedValueOnce(jsonResponse({ ok: false, error: "server name mismatch" }));
+    await expect(verifyPresentation({ presentation: "x", expectedDomain: "y" })).rejects.toThrow(
+      /server name mismatch/,
     );
-    await expect(
-      verifyPresentation({ presentation: "x", expectedDomain: "y" }),
-    ).rejects.toThrow(/server name mismatch/);
   });
 
   it("throws on an unreachable verifier", async () => {
     fetchSpy.mockRejectedValueOnce(new Error("ECONNREFUSED"));
-    await expect(
-      verifyPresentation({ presentation: "x", expectedDomain: "y" }),
-    ).rejects.toThrow(/Could not reach/);
+    await expect(verifyPresentation({ presentation: "x", expectedDomain: "y" })).rejects.toThrow(
+      /Could not reach/,
+    );
   });
 
   it("throws on a non-JSON response", async () => {
     fetchSpy.mockResolvedValueOnce(new Response("plain text", { status: 200 }));
-    await expect(
-      verifyPresentation({ presentation: "x", expectedDomain: "y" }),
-    ).rejects.toThrow(/non-JSON/);
+    await expect(verifyPresentation({ presentation: "x", expectedDomain: "y" })).rejects.toThrow(
+      /non-JSON/,
+    );
   });
 
   it("throws when the response shape doesn't match", async () => {
     fetchSpy.mockResolvedValueOnce(jsonResponse({ unexpected: "shape" }));
-    await expect(
-      verifyPresentation({ presentation: "x", expectedDomain: "y" }),
-    ).rejects.toThrow(/expected shape/);
+    await expect(verifyPresentation({ presentation: "x", expectedDomain: "y" })).rejects.toThrow(
+      /expected shape/,
+    );
   });
 });

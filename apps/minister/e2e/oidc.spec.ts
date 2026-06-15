@@ -48,19 +48,14 @@ async function exchangeCode(
   });
 }
 
-test("authorization-code + PKCE dance end-to-end", async ({
-  browser,
-  request,
-}) => {
+test("authorization-code + PKCE dance end-to-end", async ({ browser, request }) => {
   // Register the RP through the admin UI; capture the one-time secret.
   const admin = await browser.newContext({ storageState: STORAGE.admin });
   const adminPage = await admin.newPage();
   await adminPage.goto("/admin/oidc-clients");
   await adminPage.getByPlaceholder("Their app").fill("E2E relying party");
   await adminPage.getByPlaceholder(/theirapp\.com/).fill(REDIRECT_URI);
-  await adminPage
-    .getByRole("checkbox", { name: "badge:email-domain" })
-    .check();
+  await adminPage.getByRole("checkbox", { name: "badge:email-domain" }).check();
   await adminPage.getByRole("button", { name: "Register client" }).click();
   await expect(adminPage.getByText("Client registered")).toBeVisible();
   const readonlies = adminPage.locator("input[readonly]");
@@ -88,9 +83,7 @@ test("authorization-code + PKCE dance end-to-end", async ({
     `&code_challenge=${challenge}&code_challenge_method=S256`;
 
   await page.goto(authorizeUrl);
-  await expect(
-    page.getByRole("heading", { name: "Approve access" }),
-  ).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Approve access" })).toBeVisible();
   for (const box of await page.getByRole("checkbox").all()) {
     await box.check();
   }

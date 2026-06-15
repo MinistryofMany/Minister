@@ -2,13 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { headers } from "next/headers";
 
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { getCurrentSession } from "@/lib/session";
 import { resumeViaPendingToken } from "@/server/wizard";
@@ -17,9 +11,7 @@ interface PageProps {
   searchParams: Promise<{ token?: string }>;
 }
 
-export default async function EmailDomainVerifyPage({
-  searchParams,
-}: PageProps) {
+export default async function EmailDomainVerifyPage({ searchParams }: PageProps) {
   const { token } = await searchParams;
   const session = await getCurrentSession();
 
@@ -27,9 +19,8 @@ export default async function EmailDomainVerifyPage({
     return (
       <ResultShell title="Sign in to finish verifying">
         <CardDescription>
-          You opened a Minister verification link, but aren&apos;t signed in
-          here. Sign in (in this browser) and click the link from your email
-          again.
+          You opened a Minister verification link, but aren&apos;t signed in here. Sign in (in this
+          browser) and click the link from your email again.
         </CardDescription>
         <Button asChild className="mt-4 self-start">
           <Link href="/">Go to sign-in</Link>
@@ -42,8 +33,7 @@ export default async function EmailDomainVerifyPage({
     return (
       <ResultShell title="Missing token">
         <CardDescription>
-          This link is malformed — it has no token attached. Restart the
-          wizard if you need to.
+          This link is malformed — it has no token attached. Restart the wizard if you need to.
         </CardDescription>
         <Button asChild variant="outline" className="mt-4 self-start">
           <Link href="/badges/new/email-domain">Restart</Link>
@@ -69,9 +59,7 @@ export default async function EmailDomainVerifyPage({
   }
 
   if (result.kind === "continue") {
-    redirect(
-      `/badges/new/${result.pluginId}?wsid=${encodeURIComponent(result.sessionId)}`,
-    );
+    redirect(`/badges/new/${result.pluginId}?wsid=${encodeURIComponent(result.sessionId)}`);
   }
 
   return (
@@ -84,13 +72,7 @@ export default async function EmailDomainVerifyPage({
   );
 }
 
-function ResultShell({
-  title,
-  children,
-}: {
-  title: string;
-  children: React.ReactNode;
-}) {
+function ResultShell({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div className="mx-auto flex max-w-md flex-col gap-6 px-4 py-12">
       <Card>

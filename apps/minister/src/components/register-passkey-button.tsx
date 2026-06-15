@@ -7,10 +7,7 @@ import { Button } from "@/components/ui/button";
 // their account (e.g. after signing in via magic link).
 export function RegisterPasskeyButton() {
   return (
-    <Button
-      variant="outline"
-      onClick={() => signIn("passkey", { action: "register" })}
-    >
+    <Button variant="outline" onClick={() => signIn("passkey", { action: "register" })}>
       Add a passkey
     </Button>
   );

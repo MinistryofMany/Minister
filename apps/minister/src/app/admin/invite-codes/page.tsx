@@ -1,12 +1,6 @@
 import { AdminInviteCreateForm } from "@/components/admin-invite-create-form";
 import { AdminInviteRevokeButton } from "@/components/admin-invite-revoke-button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session";
 
@@ -38,8 +32,8 @@ export default async function AdminInviteCodesPage() {
         <CardHeader>
           <CardTitle>Mint an invite code</CardTitle>
           <CardDescription>
-            Users redeem codes through the &ldquo;Invite code&rdquo; badge
-            wizard. The issued credential names the label, never the code.
+            Users redeem codes through the &ldquo;Invite code&rdquo; badge wizard. The issued
+            credential names the label, never the code.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -49,16 +43,11 @@ export default async function AdminInviteCodesPage() {
 
       <section className="space-y-3">
         <h2 className="text-lg font-semibold">
-          Codes{" "}
-          <span className="text-sm font-normal text-neutral-500">
-            ({codes.length})
-          </span>
+          Codes <span className="text-sm font-normal text-neutral-500">({codes.length})</span>
         </h2>
 
         {codes.length === 0 ? (
-          <p className="text-sm text-neutral-600 dark:text-neutral-400">
-            No invite codes yet.
-          </p>
+          <p className="text-sm text-neutral-600 dark:text-neutral-400">No invite codes yet.</p>
         ) : (
           <ul className="flex flex-col gap-2">
             {codes.map((c) => {
@@ -71,9 +60,7 @@ export default async function AdminInviteCodesPage() {
                   <StatusChip status={status} />
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
-                      <code className="truncate font-mono text-sm">
-                        {c.code}
-                      </code>
+                      <code className="truncate font-mono text-sm">{c.code}</code>
                       <span className="truncate text-sm text-neutral-600 dark:text-neutral-400">
                         {c.label}
                       </span>

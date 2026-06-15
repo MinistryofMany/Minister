@@ -23,10 +23,7 @@ export default async function AdminUsersPage() {
   return (
     <section className="space-y-3">
       <h2 className="text-lg font-semibold">
-        Users{" "}
-        <span className="text-sm font-normal text-neutral-500">
-          ({users.length})
-        </span>
+        Users <span className="text-sm font-normal text-neutral-500">({users.length})</span>
       </h2>
 
       <ul className="flex flex-col gap-2">
@@ -42,26 +39,19 @@ export default async function AdminUsersPage() {
                   <span className="truncate font-medium">{label}</span>
                   {u.isAdmin ? <Chip tone="violet">admin</Chip> : null}
                   {u.isBanned ? <Chip tone="red">banned</Chip> : null}
-                  {u.id === session.user.id ? (
-                    <Chip tone="neutral">you</Chip>
-                  ) : null}
+                  {u.id === session.user.id ? <Chip tone="neutral">you</Chip> : null}
                 </div>
                 <div className="mt-0.5 truncate text-xs text-neutral-500">
                   {u.email ?? "no email"} · {u._count.badges} badge
-                  {u._count.badges === 1 ? "" : "s"} · joined{" "}
-                  {u.createdAt.toLocaleDateString()}
+                  {u._count.badges === 1 ? "" : "s"} · joined {u.createdAt.toLocaleDateString()}
                 </div>
               </div>
               {u.id !== session.user.id ? (
                 <div className="flex items-center gap-2">
                   {/* Banned users can't be promoted (unban first), and
                       admins can't be banned (demote first). */}
-                  {!u.isBanned ? (
-                    <AdminUserRoleButton userId={u.id} isAdmin={u.isAdmin} />
-                  ) : null}
-                  {!u.isAdmin ? (
-                    <AdminUserBanButton userId={u.id} banned={u.isBanned} />
-                  ) : null}
+                  {!u.isBanned ? <AdminUserRoleButton userId={u.id} isAdmin={u.isAdmin} /> : null}
+                  {!u.isAdmin ? <AdminUserBanButton userId={u.id} banned={u.isBanned} /> : null}
                 </div>
               ) : null}
             </li>

@@ -95,9 +95,7 @@ describe("tlsnAttestationPlugin.handleStep — verification path", () => {
   });
 
   it("errors when the verifier rejects the presentation", async () => {
-    vi.mocked(verifyPresentation).mockRejectedValueOnce(
-      new Error("server name mismatch"),
-    );
+    vi.mocked(verifyPresentation).mockRejectedValueOnce(new Error("server name mismatch"));
     const result = await tlsnAttestationPlugin.handleStep(
       proveState(),
       { presentation: "BASE64" },
@@ -125,11 +123,7 @@ describe("tlsnAttestationPlugin.handleStep — verification path", () => {
   });
 
   it("errors when input is missing presentation bytes", async () => {
-    const result = await tlsnAttestationPlugin.handleStep(
-      proveState(),
-      {},
-      ctx(),
-    );
+    const result = await tlsnAttestationPlugin.handleStep(proveState(), {}, ctx());
     expect(result.kind).toBe("error");
     expect(vi.mocked(verifyPresentation)).not.toHaveBeenCalled();
   });
@@ -139,11 +133,7 @@ describe("tlsnAttestationPlugin.handleStep — verification path", () => {
       ...proveState(),
       data: {}, // missing domain / needle
     };
-    const result = await tlsnAttestationPlugin.handleStep(
-      state,
-      { presentation: "BASE64" },
-      ctx(),
-    );
+    const result = await tlsnAttestationPlugin.handleStep(state, { presentation: "BASE64" }, ctx());
     expect(result.kind).toBe("error");
   });
 
@@ -156,20 +146,14 @@ describe("tlsnAttestationPlugin.handleStep — verification path", () => {
         payload: { title: "x", body: "y" },
       },
     };
-    const result = await tlsnAttestationPlugin.handleStep(
-      state,
-      { presentation: "B" },
-      ctx(),
-    );
+    const result = await tlsnAttestationPlugin.handleStep(state, { presentation: "B" }, ctx());
     expect(result.kind).toBe("error");
   });
 });
 
 describe("tlsnAttestationPlugin manifest", () => {
   it("declares the tlsn-attestation badge type + requiresExtension", () => {
-    expect(tlsnAttestationPlugin.manifest.badgeTypes).toEqual([
-      "tlsn-attestation",
-    ]);
+    expect(tlsnAttestationPlugin.manifest.badgeTypes).toEqual(["tlsn-attestation"]);
     expect(tlsnAttestationPlugin.manifest.requiresExtension).toBe(true);
   });
 });

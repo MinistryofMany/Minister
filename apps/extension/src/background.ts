@@ -33,10 +33,7 @@ async function performProof(_req: ProveRequest): Promise<string> {
   );
 }
 
-async function submitPresentation(
-  req: ProveRequest,
-  presentationBase64: string,
-): Promise<void> {
+async function submitPresentation(req: ProveRequest, presentationBase64: string): Promise<void> {
   const response = await fetch(req.submitUrl, {
     method: "POST",
     credentials: "include", // need the Minister session cookie
@@ -56,12 +53,7 @@ async function submitPresentation(
 // Popup → background message router. Kept narrow on purpose; the
 // surface area an extension exposes is part of its threat model.
 chrome.runtime.onMessage.addListener((msg: unknown, _sender, sendResponse) => {
-  if (
-    !msg ||
-    typeof msg !== "object" ||
-    !("kind" in msg) ||
-    msg.kind !== "tlsn-prove"
-  ) {
+  if (!msg || typeof msg !== "object" || !("kind" in msg) || msg.kind !== "tlsn-prove") {
     return false;
   }
   const req = (msg as unknown as { request: ProveRequest }).request;

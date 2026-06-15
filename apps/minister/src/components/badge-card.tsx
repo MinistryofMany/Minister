@@ -1,13 +1,5 @@
 import { Eye, EyeOff, GripVertical, type LucideIcon } from "lucide-react";
-import {
-  AtSign,
-  Cake,
-  Globe,
-  Link as LinkIcon,
-  Mail,
-  MapPin,
-  ShieldCheck,
-} from "lucide-react";
+import { AtSign, Cake, Globe, Link as LinkIcon, Mail, MapPin, ShieldCheck } from "lucide-react";
 
 import type { DisplayBadge } from "@/lib/badges";
 import { summarizeAttributes } from "@/lib/badges";
@@ -35,12 +27,7 @@ interface BadgeCardProps {
   dragHandleProps?: React.HTMLAttributes<HTMLButtonElement>;
 }
 
-export function BadgeCard({
-  badge,
-  editable,
-  action,
-  dragHandleProps,
-}: BadgeCardProps) {
+export function BadgeCard({ badge, editable, action, dragHandleProps }: BadgeCardProps) {
   const Icon = ICONS[badge.meta.iconKey] ?? ShieldCheck;
   const summary = summarizeAttributes(badge.type, badge.attributes);
 
@@ -79,19 +66,13 @@ export function BadgeCard({
               )}
               title={badge.isPublic ? "Visible on public profile" : "Private"}
             >
-              {badge.isPublic ? (
-                <Eye className="h-3 w-3" />
-              ) : (
-                <EyeOff className="h-3 w-3" />
-              )}
+              {badge.isPublic ? <Eye className="h-3 w-3" /> : <EyeOff className="h-3 w-3" />}
               {badge.isPublic ? "Public" : "Private"}
             </span>
           ) : null}
         </div>
         {summary ? (
-          <p className="truncate text-sm text-neutral-600 dark:text-neutral-400">
-            {summary}
-          </p>
+          <p className="truncate text-sm text-neutral-600 dark:text-neutral-400">{summary}</p>
         ) : null}
       </div>
 

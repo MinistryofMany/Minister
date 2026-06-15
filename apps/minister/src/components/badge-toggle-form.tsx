@@ -28,11 +28,7 @@ export function BadgeToggleForm({ badgeId, isPublic }: Props) {
         })
       }
     >
-      {isPublic ? (
-        <Eye className="h-4 w-4" />
-      ) : (
-        <EyeOff className="h-4 w-4" />
-      )}
+      {isPublic ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
     </Button>
   );
 }

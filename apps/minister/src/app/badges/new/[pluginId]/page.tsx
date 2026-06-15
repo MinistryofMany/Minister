@@ -11,10 +11,7 @@ interface PageProps {
   searchParams: Promise<{ wsid?: string }>;
 }
 
-export default async function PluginWizardPage({
-  params,
-  searchParams,
-}: PageProps) {
+export default async function PluginWizardPage({ params, searchParams }: PageProps) {
   const { pluginId } = await params;
   const { wsid } = await searchParams;
 
@@ -45,9 +42,7 @@ export default async function PluginWizardPage({
   return (
     <div className="mx-auto flex max-w-md flex-col gap-6 px-4 py-12">
       <header className="space-y-1">
-        <h1 className="text-2xl font-semibold tracking-tight">
-          {plugin.manifest.name}
-        </h1>
+        <h1 className="text-2xl font-semibold tracking-tight">{plugin.manifest.name}</h1>
         <p className="text-sm text-neutral-600 dark:text-neutral-400">
           {plugin.manifest.description}
         </p>

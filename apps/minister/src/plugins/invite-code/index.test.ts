@@ -63,11 +63,7 @@ describe("inviteCodePlugin.handleStep", () => {
       label: "Beta cohort",
     });
     const c = ctx();
-    const result = await inviteCodePlugin.handleStep(
-      formState(),
-      { code: "abcd-efgh-jklm" },
-      c,
-    );
+    const result = await inviteCodePlugin.handleStep(formState(), { code: "abcd-efgh-jklm" }, c);
     expect(result.kind).toBe("complete");
     if (result.kind !== "complete") throw new Error("kind");
     expect(result.badges).toEqual([
@@ -88,11 +84,7 @@ describe("inviteCodePlugin.handleStep", () => {
 
   it("surfaces the uniform rejection message", async () => {
     redeemMock.mockResolvedValue({ ok: false, message: INVALID_CODE_MESSAGE });
-    const result = await inviteCodePlugin.handleStep(
-      formState(),
-      { code: "NOPE" },
-      ctx(),
-    );
+    const result = await inviteCodePlugin.handleStep(formState(), { code: "NOPE" }, ctx());
     expect(result).toEqual({ kind: "error", message: INVALID_CODE_MESSAGE });
   });
 
@@ -124,11 +116,7 @@ describe("inviteCodePlugin.handleStep", () => {
         payload: { title: "x", body: "y" },
       },
     };
-    const result = await inviteCodePlugin.handleStep(
-      state,
-      { code: "ABCD" },
-      ctx(),
-    );
+    const result = await inviteCodePlugin.handleStep(state, { code: "ABCD" }, ctx());
     expect(result.kind).toBe("error");
     expect(redeemMock).not.toHaveBeenCalled();
   });

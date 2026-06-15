@@ -40,11 +40,7 @@ export function mailTransportConfigured(): boolean {
 // Resend HTTP transport. A single POST, so we use fetch rather than
 // pulling in a dependency. `from` must be an address on a domain
 // verified in the Resend account, e.g. "Minister <noreply@your.domain>".
-async function sendViaResend(
-  message: MailMessage,
-  apiKey: string,
-  from: string,
-): Promise<void> {
+async function sendViaResend(message: MailMessage, apiKey: string, from: string): Promise<void> {
   const res = await fetch("https://api.resend.com/emails", {
     method: "POST",
     headers: {

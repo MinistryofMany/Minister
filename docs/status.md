@@ -4,7 +4,7 @@ Last updated: 2026-05-15 (after Stage 5).
 
 This document is a snapshot of where the codebase actually is, what
 remains for each upcoming stage, and the load-bearing design decisions
-we've made (with the *why* attached so we don't relitigate). The
+we've made (with the _why_ attached so we don't relitigate). The
 canonical design lives in [`CLAUDE.md`](../CLAUDE.md); this doc is its
 operational counterpart.
 
@@ -13,16 +13,18 @@ operational counterpart.
 ## What's built
 
 ### Stage 0 — foundation ✅
+
 - pnpm workspace (`apps/*`, `packages/*`, `services/*`).
 - Next.js 15 App Router app with Tailwind v4, Prisma 6.
 - Auth.js v5 with Passkey + email-magic-link providers; magic links are
   printed to the minister container's stdout (`src/lib/mailer.ts`) — no
   mailhog, per your call during Stage 0.
 - Prisma schema with the full domain model from CLAUDE.md (auth tables
-  + Minister domain), pushed via `prisma db push` on container start.
+  - Minister domain), pushed via `prisma db push` on container start.
 - docker-compose with postgres, minister, and the seed one-shot.
 
 ### Stage 1 — VC + did:web ✅
+
 - `@minister/vc` package: Ed25519 issuer, `issueVc` / `verifyVc`,
   `getDidDocument`, `loadIssuer` with env-driven prod + persistent
   dev-key file.
@@ -34,6 +36,7 @@ operational counterpart.
   badges.
 
 ### Stage 2 — plugins + email-domain ✅
+
 - `@minister/plugin-sdk`: `Plugin`, `PluginManifest`, `WizardStep` (with
   per-kind payload types), `PluginContext` (origin / audit / sendMail),
   `HandleStepResult` discriminated union.
@@ -47,6 +50,7 @@ operational counterpart.
   oauth-account-less VC issuance.
 
 ### Auth hardening ✅
+
 - JWT-strategy sessions, 24h sliding TTL, 1h refresh.
 - Edge middleware route protection on `/profile`, `/settings`,
   `/badges`, `/oidc/authorize`.
@@ -58,6 +62,7 @@ operational counterpart.
 - "Sign out of all devices" button on `/settings`.
 
 ### Stage 3 — OIDC provider ✅
+
 - `/.well-known/openid-configuration` (RFC 8414 / OIDC Discovery).
 - `/oidc/authorize` page: validates params per RFC 6749 + OIDC Core
   (response_type=code, scope, state, nonce, PKCE S256), renders consent
@@ -73,6 +78,7 @@ operational counterpart.
   upsert; auto-run in compose for the demo client.
 
 ### Stage 4 — demo client ✅
+
 - `apps/demo-client/`: Auth.js generic OIDC provider pointing at
   Minister. Pages: `/` (sign in), `/me` (decoded tokens + verified VC),
   `/badges/email-domain` (gated by an email-domain VC signature-checked
@@ -82,6 +88,7 @@ operational counterpart.
   issuer-URL-mismatch with the discovery doc).
 
 ### Stage 5 — github plugin + redirect step ✅
+
 - Second concrete plugin exercising the `redirect` step kind.
   `RedirectStepPayload.expectedState` lifts to `pendingToken` exactly
   like magic-link's `expectedToken`.
@@ -93,6 +100,7 @@ operational counterpart.
   sets `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET`.
 
 ### Stage 7 — shareable proof links ✅
+
 - `/share/[token]` public landing. Looks up by token, checks expiry +
   revocation + `requiresAccount`, records a `ShareLinkView` row
   (with `viewerUserId` populated when signed in, `null` for anonymous
@@ -113,6 +121,7 @@ operational counterpart.
 ### Stage 6 — TLSNotary, Minister-side ◐ partial
 
 What's wired:
+
 - `tlsn-attestation` plugin (generic; specific TLSN plugins extend it
   in Stage 8).
 - `extension-action` step kind: payload carries
@@ -140,6 +149,7 @@ What's wired:
   `/api/tlsn/submit`; it just doesn't have one to send yet.
 
 What's left to finish Stage 6:
+
 - Integrate `tlsn-js` in the extension. Prover runs in an offscreen
   document (MV3 service workers can't host heavy WASM in the worker
   context).
@@ -155,10 +165,12 @@ What's left to finish Stage 6:
 ## What's left
 
 ### Stage 6 — TLSNotary
+
 The largest unbuilt stage. Three new processes + a browser extension +
 a third plugin.
 
 **Browser extension (`apps/extension/`, doesn't exist yet)**
+
 - WebExtension MV3 manifest, background service worker, content script,
   popup UI.
 - TLSNotary prover (likely via the `tlsn-js` WASM package, runs in the
@@ -172,6 +184,7 @@ a third plugin.
   `http://localhost:3000` (configurable).
 
 **`services/ws-proxy/`**
+
 - Replace the alpine stub with a real implementation (Rust or Go
   preferred for the TCP socket handling). Accepts a WebSocket from the
   extension, opens a TCP socket to `{host}:{port}` provided in the
@@ -180,6 +193,7 @@ a third plugin.
   Defense against using us as an open proxy.
 
 **`services/notary-server/`**
+
 - Replace the alpine stub with the official `tlsn` notary binary
   pinned to a known version. Provides the trusted co-signature; runs
   on its own port (default 7047).
@@ -188,12 +202,14 @@ a third plugin.
   decision pending.
 
 **`services/tlsn-verifier/`**
+
 - Replace the alpine stub with a small Rust HTTP service wrapping the
   `tlsn-verifier` crate. Accepts a finalized presentation + expected
   domain, returns the verified transcript or an error.
 - Minister's wizard runtime calls this via HTTP.
 
 **Plugin runtime additions**
+
 - `extension-action` step kind needs a renderer (third unused step).
 - New Minister endpoint that the extension POSTs the presentation to —
   resolves wizard session by sessionId (passed from the extension),
@@ -202,11 +218,13 @@ a third plugin.
   reuse `handleStep` with an `{ presentation }` input.
 
 **Plugin: `tlsn-attestation` (generic)**
+
 - Stage 6 ships at least a generic TLSNotary plugin that lets the user
   prove "I control X at domain Y" by selecting an endpoint and a
   selector. The id.me-specific plugin is Stage 8.
 
 ### Stage 7 — shareable proof links
+
 - `/share/[token]` route: bearer-token URL, server-side validation of
   `expiresAt` + `requiresAccount` + `revokedAt`.
 - Server actions: `createShareLink`, `revokeShareLink`.
@@ -217,6 +235,7 @@ a third plugin.
   not console-log.
 
 ### Stage 8 — age via id.me + Eligibility
+
 - `id.me` plugin: TLSNotary the page that shows the user's verified
   age, extract `birthYear`, compute `age-over-N` claims for the
   current `N` and future `Eligibility` rows for higher thresholds
@@ -225,6 +244,7 @@ a third plugin.
   (need a worker — Inngest, BullMQ, or a tiny cron container).
 
 ### Stage 9 — hardening
+
 - Rate limiting on `/oidc/token`, `/oidc/authorize`,
   `/api/auth/signin/*`, share-link views. Probably Upstash Redis +
   middleware.
@@ -240,12 +260,13 @@ a third plugin.
 
 ---
 
-## Design decisions, with the *why*
+## Design decisions, with the _why_
 
 These are choices we've made that aren't obvious from reading the code.
 Documented so we don't relitigate.
 
 ### Authentication
+
 - **JWT-strategy sessions.** Lets middleware verify auth on the Edge
   Runtime without a DB hit. Trade-off: revocation isn't instant by
   default; we layered `sessionGeneration` to fix it.
@@ -263,6 +284,7 @@ Documented so we don't relitigate.
   not daily. 24h hits the security/UX sweet spot.
 
 ### OIDC provider
+
 - **Hand-rolled, not `node-oidc-provider`.** CLAUDE.md preference; we
   wanted to read every line. Worth the ~1000 lines for educational
   value + control of the consent UX.
@@ -286,6 +308,7 @@ Documented so we don't relitigate.
   literal internal routes).
 
 ### Plugins
+
 - **In-process modules, no dynamic loading.** Per CLAUDE.md. Adds a
   plugin = imports it from `plugins/registry.ts`.
 - **Per-step-kind renderer.** Plugins return `WizardStep` payloads; the
@@ -294,7 +317,7 @@ Documented so we don't relitigate.
 - **`WizardSession.pendingToken` is the round-trip key** for both
   magic-link (`expectedToken`) and OAuth-redirect (`expectedState`).
   Same column, same lookup. `resumeViaPendingToken({token, userId,
-  origin, input})` is the generic callback path.
+origin, input})` is the generic callback path.
 - **Plugins are responsible for state.** Wizard runtime just persists
   whatever the plugin returns. State is JSON in `WizardSession.state`.
 - **Claims validated against badge type's Zod schema before signing.**
@@ -303,6 +326,7 @@ Documented so we don't relitigate.
   about.
 
 ### Data privacy
+
 - **Minimum-PII.** The email-domain plugin stores only the domain, not
   the email. Eligibilities allow age verification once with ±N day
   fuzz on auto-issuance, never storing the DOB.
@@ -314,6 +338,7 @@ Documented so we don't relitigate.
   explicitly flagged.
 
 ### Repo hygiene
+
 - **`Cipher <cipher@heart.engineering>`** is the AI author per your
   global instructions.
 - **Conventional commits.** Each feat/fix/refactor commit ends with a
@@ -331,6 +356,7 @@ Documented so we don't relitigate.
   this is the dep to grab.
 
 ### Infra
+
 - **docker-compose for postgres + minister + minister-seed.** demo-client
   runs on the host (issuer-URL match with the discovery doc).
 - **TLSNotary services as alpine stubs** until Stage 6. Their

@@ -83,11 +83,7 @@ export function AdminInviteCreateForm() {
 
       <label className="flex flex-col gap-1 text-sm">
         <span className="font-medium">Label</span>
-        <Input
-          placeholder="Beta cohort"
-          value={label}
-          onChange={(e) => setLabel(e.target.value)}
-        />
+        <Input placeholder="Beta cohort" value={label} onChange={(e) => setLabel(e.target.value)} />
         <span className="text-xs text-neutral-500">
           Shown to admins and embedded in the badge the redeemer receives.
         </span>
@@ -170,13 +166,7 @@ function PillRadio({
           : "border-neutral-300 dark:border-neutral-700")
       }
     >
-      <input
-        type="radio"
-        name={name}
-        checked={checked}
-        onChange={onSelect}
-        className="sr-only"
-      />
+      <input type="radio" name={name} checked={checked} onChange={onSelect} className="sr-only" />
       {children}
     </label>
   );

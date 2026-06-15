@@ -57,33 +57,25 @@ describe("evaluateInviteCode", () => {
   });
 
   it("accepts an unlimited code regardless of usesRemaining", () => {
-    expect(
-      evaluateInviteCode(view({ usesTotal: 0, usesRemaining: 0 }), false, NOW),
-    ).toEqual({ ok: true });
+    expect(evaluateInviteCode(view({ usesTotal: 0, usesRemaining: 0 }), false, NOW)).toEqual({
+      ok: true,
+    });
   });
 
   it("rejects a revoked code", () => {
-    const verdict = evaluateInviteCode(
-      view({ revokedAt: new Date("2026-06-01") }),
-      false,
-      NOW,
-    );
+    const verdict = evaluateInviteCode(view({ revokedAt: new Date("2026-06-01") }), false, NOW);
     expect(verdict).toEqual({ ok: false, message: INVALID_CODE_MESSAGE });
   });
 
   it("rejects an expired code", () => {
-    const verdict = evaluateInviteCode(
-      view({ expiresAt: new Date("2026-06-10") }),
-      false,
-      NOW,
-    );
+    const verdict = evaluateInviteCode(view({ expiresAt: new Date("2026-06-10") }), false, NOW);
     expect(verdict).toEqual({ ok: false, message: INVALID_CODE_MESSAGE });
   });
 
   it("accepts a code expiring in the future", () => {
-    expect(
-      evaluateInviteCode(view({ expiresAt: new Date("2026-06-12") }), false, NOW),
-    ).toEqual({ ok: true });
+    expect(evaluateInviteCode(view({ expiresAt: new Date("2026-06-12") }), false, NOW)).toEqual({
+      ok: true,
+    });
   });
 
   it("rejects an exhausted limited code", () => {

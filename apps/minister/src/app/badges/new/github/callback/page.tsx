@@ -3,13 +3,7 @@ import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { getCurrentSession } from "@/lib/session";
 import { resumeViaPendingToken } from "@/server/wizard";
 
@@ -34,8 +28,8 @@ export default async function GithubCallbackPage({ searchParams }: PageProps) {
     return (
       <Shell title="Sign in to finish">
         <CardDescription>
-          You came back from GitHub but aren&apos;t signed in to Minister here.
-          Sign in (same browser) and then re-run the GitHub flow.
+          You came back from GitHub but aren&apos;t signed in to Minister here. Sign in (same
+          browser) and then re-run the GitHub flow.
         </CardDescription>
         <Button asChild className="mt-4 self-start">
           <Link href="/">Go to sign-in</Link>
@@ -47,9 +41,7 @@ export default async function GithubCallbackPage({ searchParams }: PageProps) {
   if (params.error) {
     return (
       <Shell title="GitHub declined">
-        <CardDescription>
-          {params.error_description ?? params.error}
-        </CardDescription>
+        <CardDescription>{params.error_description ?? params.error}</CardDescription>
         <Button asChild variant="outline" className="mt-4 self-start">
           <Link href="/badges/new/github">Try again</Link>
         </Button>
@@ -61,8 +53,7 @@ export default async function GithubCallbackPage({ searchParams }: PageProps) {
     return (
       <Shell title="Malformed callback">
         <CardDescription>
-          GitHub redirected without a code or state. The flow may have
-          expired — restart it.
+          GitHub redirected without a code or state. The flow may have expired — restart it.
         </CardDescription>
         <Button asChild variant="outline" className="mt-4 self-start">
           <Link href="/badges/new/github">Restart</Link>
@@ -86,9 +77,7 @@ export default async function GithubCallbackPage({ searchParams }: PageProps) {
   }
 
   if (result.kind === "continue") {
-    redirect(
-      `/badges/new/${result.pluginId}?wsid=${encodeURIComponent(result.sessionId)}`,
-    );
+    redirect(`/badges/new/${result.pluginId}?wsid=${encodeURIComponent(result.sessionId)}`);
   }
 
   return (
@@ -101,13 +90,7 @@ export default async function GithubCallbackPage({ searchParams }: PageProps) {
   );
 }
 
-function Shell({
-  title,
-  children,
-}: {
-  title: string;
-  children: React.ReactNode;
-}) {
+function Shell({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div className="mx-auto flex max-w-md flex-col gap-6 px-4 py-12">
       <Card>

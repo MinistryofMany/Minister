@@ -2,11 +2,7 @@ import { randomBytes } from "node:crypto";
 
 import { z } from "zod";
 
-import type {
-  Plugin,
-  PluginContext,
-  WizardState,
-} from "@minister/plugin-sdk";
+import type { Plugin, PluginContext, WizardState } from "@minister/plugin-sdk";
 
 const STEP_FORM = "collect-email";
 const STEP_MAGIC = "wait-magic-link";
@@ -114,8 +110,7 @@ export const emailDomainPlugin: Plugin = {
         // The wizard runtime has already confirmed `token` matches the
         // session's pendingToken before reaching the plugin. So we
         // trust the input here.
-        const domain =
-          typeof state.data.domain === "string" ? state.data.domain : "";
+        const domain = typeof state.data.domain === "string" ? state.data.domain : "";
         if (!domain) {
           return {
             kind: "error",

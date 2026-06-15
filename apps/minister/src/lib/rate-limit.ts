@@ -25,10 +25,7 @@ export interface RateLimiter {
 // growing the map without bound.
 const SWEEP_THRESHOLD = 10_000;
 
-export function createRateLimiter(opts: {
-  windowMs: number;
-  max: number;
-}): RateLimiter {
+export function createRateLimiter(opts: { windowMs: number; max: number }): RateLimiter {
   const { windowMs, max } = opts;
   const hits = new Map<string, number[]>();
 
@@ -67,9 +64,7 @@ export function createRateLimiter(opts: {
 // Behind the expected reverse proxy these are trustworthy enough for
 // rate limiting; direct-to-node traffic all lands in one bucket, which
 // fails safe (over-limits rather than under-limits).
-export function clientIpFrom(headers: {
-  get(name: string): string | null;
-}): string {
+export function clientIpFrom(headers: { get(name: string): string | null }): string {
   const xff = headers.get("x-forwarded-for");
   if (xff) {
     const first = xff.split(",")[0]?.trim();

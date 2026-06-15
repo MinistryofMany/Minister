@@ -39,9 +39,7 @@ export interface InviteCodeView {
   revokedAt: Date | null;
 }
 
-export type InviteCodeVerdict =
-  | { ok: true }
-  | { ok: false; message: string };
+export type InviteCodeVerdict = { ok: true } | { ok: false; message: string };
 
 export function evaluateInviteCode(
   row: InviteCodeView,
@@ -67,10 +65,7 @@ export type RedeemResult =
 // zero" — i.e. we lost a race to the last remaining use.
 class CodeExhausted extends Error {}
 
-export async function redeemInviteCode(
-  rawCode: string,
-  userId: string,
-): Promise<RedeemResult> {
+export async function redeemInviteCode(rawCode: string, userId: string): Promise<RedeemResult> {
   const code = normalizeInviteCode(rawCode);
   if (!code) return { ok: false, message: INVALID_CODE_MESSAGE };
 
@@ -106,10 +101,7 @@ export async function redeemInviteCode(
     // P2002 = unique-constraint violation on (inviteCodeId, userId):
     // a concurrent redemption by the same user. The transaction rolls
     // the decrement back.
-    if (
-      err instanceof Prisma.PrismaClientKnownRequestError &&
-      err.code === "P2002"
-    ) {
+    if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002") {
       return { ok: false, message: ALREADY_REDEEMED_MESSAGE };
     }
     throw err;

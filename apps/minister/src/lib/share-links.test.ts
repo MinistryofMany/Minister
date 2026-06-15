@@ -1,10 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  DEFAULT_SHARE_TTL_DAYS,
-  MAX_SHARE_TTL_DAYS,
-  generateShareToken,
-} from "./share-links";
+import { DEFAULT_SHARE_TTL_DAYS, MAX_SHARE_TTL_DAYS, generateShareToken } from "./share-links";
 
 describe("generateShareToken", () => {
   it("returns a URL-safe base64 string of ≥128 bits of entropy", () => {

@@ -2,13 +2,7 @@ import { redirect } from "next/navigation";
 
 import { RevokeAllButton } from "@/components/revoke-all-button";
 import { SignOutButton } from "@/components/sign-out-button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { getCurrentSession } from "@/lib/session";
 
 export default async function SettingsPage() {
@@ -19,8 +13,7 @@ export default async function SettingsPage() {
       <header className="space-y-1">
         <h1 className="text-2xl font-semibold tracking-tight">Settings</h1>
         <p className="text-sm text-neutral-600 dark:text-neutral-400">
-          Account controls. Display name, avatar, and privacy settings
-          arrive in Stage 1.
+          Account controls. Display name, avatar, and privacy settings arrive in Stage 1.
         </p>
       </header>
 
@@ -28,8 +21,7 @@ export default async function SettingsPage() {
         <CardHeader>
           <CardTitle>Session</CardTitle>
           <CardDescription>
-            End your current session on this device, or revoke all
-            sessions across every device.
+            End your current session on this device, or revoke all sessions across every device.
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-wrap gap-3">

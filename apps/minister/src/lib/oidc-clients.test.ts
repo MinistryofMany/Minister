@@ -54,9 +54,7 @@ describe("argon2id client-secret round trip", () => {
   });
 
   it("returns false on a malformed encoded string rather than throwing", async () => {
-    expect(await verifyClientSecret("anything", "not-an-argon2-hash")).toBe(
-      false,
-    );
+    expect(await verifyClientSecret("anything", "not-an-argon2-hash")).toBe(false);
   });
 });
 
@@ -66,10 +64,7 @@ describe("isRegisteredRedirectUri", () => {
       redirectUris: ["http://localhost:3100/api/auth/callback/minister"],
     };
     expect(
-      isRegisteredRedirectUri(
-        client,
-        "http://localhost:3100/api/auth/callback/minister",
-      ),
+      isRegisteredRedirectUri(client, "http://localhost:3100/api/auth/callback/minister"),
     ).toBe(true);
   });
 
@@ -77,9 +72,7 @@ describe("isRegisteredRedirectUri", () => {
     const client = {
       redirectUris: ["http://localhost:3100/api/auth/callback/minister"],
     };
-    expect(
-      isRegisteredRedirectUri(client, "http://localhost:3100/api/auth"),
-    ).toBe(false);
+    expect(isRegisteredRedirectUri(client, "http://localhost:3100/api/auth")).toBe(false);
   });
 
   it("rejects a path-suffix-extension attack", () => {
@@ -87,10 +80,7 @@ describe("isRegisteredRedirectUri", () => {
       redirectUris: ["http://localhost:3100/api/auth/callback/minister"],
     };
     expect(
-      isRegisteredRedirectUri(
-        client,
-        "http://localhost:3100/api/auth/callback/minister/extra",
-      ),
+      isRegisteredRedirectUri(client, "http://localhost:3100/api/auth/callback/minister/extra"),
     ).toBe(false);
   });
 
@@ -98,9 +88,7 @@ describe("isRegisteredRedirectUri", () => {
     const client = {
       redirectUris: ["http://localhost:3100/cb"],
     };
-    expect(isRegisteredRedirectUri(client, "http://localhost:3100/cb/")).toBe(
-      false,
-    );
+    expect(isRegisteredRedirectUri(client, "http://localhost:3100/cb/")).toBe(false);
   });
 
   it("supports multiple registered redirect URIs", () => {

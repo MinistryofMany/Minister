@@ -4,13 +4,7 @@ import { redirect } from "next/navigation";
 
 import { ShareLinkCreateForm } from "@/components/share-link-create-form";
 import { ShareLinkRevokeButton } from "@/components/share-link-revoke";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { loadUserBadges } from "@/lib/badges";
 import { getCurrentSession } from "@/lib/session";
 import { loadUserShareLinks } from "@/lib/share-links";
@@ -25,26 +19,22 @@ export default async function SharesPage() {
   ]);
 
   const h = await headers();
-  const origin = `${h.get("x-forwarded-proto") ?? "http"}://${
-    h.get("host") ?? "localhost:3000"
-  }`;
+  const origin = `${h.get("x-forwarded-proto") ?? "http"}://${h.get("host") ?? "localhost:3000"}`;
 
   return (
     <div className="mx-auto flex max-w-2xl flex-col gap-6 px-4 py-12">
       <header className="space-y-1">
         <h1 className="text-2xl font-semibold tracking-tight">Share links</h1>
         <p className="text-sm text-neutral-600 dark:text-neutral-400">
-          Hand a URL to anyone and they&apos;ll see exactly the badges
-          you chose, until the link expires or you revoke it.
+          Hand a URL to anyone and they&apos;ll see exactly the badges you chose, until the link
+          expires or you revoke it.
         </p>
       </header>
 
       <Card>
         <CardHeader>
           <CardTitle>Create a new link</CardTitle>
-          <CardDescription>
-            Pick badges, set an expiry, optionally email the URL.
-          </CardDescription>
+          <CardDescription>Pick badges, set an expiry, optionally email the URL.</CardDescription>
         </CardHeader>
         <CardContent>
           <ShareLinkCreateForm badges={badges} origin={origin} />
@@ -54,9 +44,7 @@ export default async function SharesPage() {
       <section className="space-y-3">
         <h2 className="text-lg font-semibold">
           Your share links{" "}
-          <span className="text-sm font-normal text-neutral-500">
-            ({shareLinks.length})
-          </span>
+          <span className="text-sm font-normal text-neutral-500">({shareLinks.length})</span>
         </h2>
 
         {shareLinks.length === 0 ? (
@@ -82,9 +70,8 @@ export default async function SharesPage() {
                     </Link>
                     <div className="mt-0.5 text-xs text-neutral-500">
                       {link.badgeCount} badge
-                      {link.badgeCount === 1 ? "" : "s"} ·{" "}
-                      {link.viewCount} view{link.viewCount === 1 ? "" : "s"}{" "}
-                      · expires{" "}
+                      {link.badgeCount === 1 ? "" : "s"} · {link.viewCount} view
+                      {link.viewCount === 1 ? "" : "s"} · expires{" "}
                       {link.expiresAt.toLocaleDateString()}
                       {link.requiresAccount ? " · account-gated" : ""}
                     </div>

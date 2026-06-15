@@ -3,14 +3,8 @@
   "name": "Minister",
   "version": "0.0.0",
   "description": "Performs TLSNotary proofs for the Minister identity wallet.",
-  "permissions": [
-    "storage",
-    "webRequest"
-  ],
-  "host_permissions": [
-    "http://localhost:3000/*",
-    "https://minister.local/*"
-  ],
+  "permissions": ["storage", "webRequest"],
+  "host_permissions": ["http://localhost:3000/*", "https://minister.local/*"],
   "background": {
     "service_worker": "src/background.ts",
     "type": "module"

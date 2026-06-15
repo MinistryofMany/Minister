@@ -27,12 +27,7 @@ interface Props {
   requestToken: string;
 }
 
-export function ConsentScreen({
-  clientName,
-  wantsProfile,
-  badgeChoices,
-  requestToken,
-}: Props) {
+export function ConsentScreen({ clientName, wantsProfile, badgeChoices, requestToken }: Props) {
   // Defaults: opt-in for everything. Each disclosure requires an
   // explicit toggle from off → on. Matches Minister's "private by
   // default" stance and forces the user to engage with each scope.
@@ -89,8 +84,8 @@ export function ConsentScreen({
             <label htmlFor="scope-profile" className="flex-1 text-sm">
               <span className="block font-medium">Display name and avatar</span>
               <span className="text-neutral-600 dark:text-neutral-400">
-                Share your Minister display name (or fall back to your email)
-                and avatar with {clientName}.
+                Share your Minister display name (or fall back to your email) and avatar with{" "}
+                {clientName}.
               </span>
             </label>
           </CardContent>
@@ -102,15 +97,13 @@ export function ConsentScreen({
           <CardContent className="space-y-3 py-4">
             <div>
               <h3 className="text-sm font-semibold">{group.badgeType}</h3>
-              <p className="text-sm text-neutral-600 dark:text-neutral-400">
-                {group.description}
-              </p>
+              <p className="text-sm text-neutral-600 dark:text-neutral-400">{group.description}</p>
             </div>
 
             {group.badges.length === 0 ? (
               <p className="rounded-md border border-amber-200 bg-amber-50 p-2 text-xs text-amber-800 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-300">
-                You don&apos;t hold any badges of this type. {clientName} will
-                receive nothing for this scope.
+                You don&apos;t hold any badges of this type. {clientName} will receive nothing for
+                this scope.
               </p>
             ) : (
               <ul className="flex flex-col gap-2">
@@ -129,9 +122,7 @@ export function ConsentScreen({
                     <label htmlFor={`badge-${b.id}`} className="flex-1 text-sm">
                       <span className="block font-medium">{b.label}</span>
                       {b.summary ? (
-                        <span className="text-neutral-600 dark:text-neutral-400">
-                          {b.summary}
-                        </span>
+                        <span className="text-neutral-600 dark:text-neutral-400">{b.summary}</span>
                       ) : null}
                     </label>
                   </li>
@@ -143,12 +134,7 @@ export function ConsentScreen({
       ))}
 
       <div className="flex justify-end gap-2 pt-2">
-        <Button
-          type="button"
-          variant="outline"
-          disabled={pending}
-          onClick={submitDeny}
-        >
+        <Button type="button" variant="outline" disabled={pending} onClick={submitDeny}>
           Deny
         </Button>
         <Button type="button" disabled={pending} onClick={submitApprove}>
@@ -157,8 +143,8 @@ export function ConsentScreen({
       </div>
 
       <p className="text-xs text-neutral-500">
-        Only the badges you tick will be disclosed. Declining a scope sends
-        nothing for it — the relying party gets whatever you approve, no more.
+        Only the badges you tick will be disclosed. Declining a scope sends nothing for it — the
+        relying party gets whatever you approve, no more.
       </p>
     </div>
   );

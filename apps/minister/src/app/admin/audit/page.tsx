@@ -36,9 +36,7 @@ export default async function AdminAuditPage({
       </h2>
 
       {entries.length === 0 ? (
-        <p className="text-sm text-neutral-600 dark:text-neutral-400">
-          Nothing here yet.
-        </p>
+        <p className="text-sm text-neutral-600 dark:text-neutral-400">Nothing here yet.</p>
       ) : (
         <ul className="flex flex-col gap-2">
           {entries.map((e) => (
@@ -47,9 +45,7 @@ export default async function AdminAuditPage({
               className="rounded-lg border border-neutral-200 bg-white p-3 text-sm dark:border-neutral-800 dark:bg-neutral-950"
             >
               <div className="flex items-baseline justify-between gap-3">
-                <code className="font-mono text-xs font-semibold">
-                  {e.action}
-                </code>
+                <code className="font-mono text-xs font-semibold">{e.action}</code>
                 <span className="shrink-0 text-xs text-neutral-500">
                   {e.createdAt.toLocaleString()}
                 </span>
@@ -68,10 +64,7 @@ export default async function AdminAuditPage({
       {pageCount > 1 ? (
         <nav className="flex items-center gap-3 text-sm">
           {page > 1 ? (
-            <Link
-              href={`/admin/audit?page=${page - 1}`}
-              className="underline underline-offset-2"
-            >
+            <Link href={`/admin/audit?page=${page - 1}`} className="underline underline-offset-2">
               Newer
             </Link>
           ) : null}
@@ -79,10 +72,7 @@ export default async function AdminAuditPage({
             Page {page} of {pageCount}
           </span>
           {page < pageCount ? (
-            <Link
-              href={`/admin/audit?page=${page + 1}`}
-              className="underline underline-offset-2"
-            >
+            <Link href={`/admin/audit?page=${page + 1}`} className="underline underline-offset-2">
               Older
             </Link>
           ) : null}

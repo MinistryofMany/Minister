@@ -76,9 +76,7 @@ export function SignInForm() {
           <Button type="submit" variant="outline" className="w-full">
             Email me a magic link
           </Button>
-          {emailError ? (
-            <p className="text-xs text-red-600">{emailError}</p>
-          ) : null}
+          {emailError ? <p className="text-xs text-red-600">{emailError}</p> : null}
         </form>
       )}
     </div>

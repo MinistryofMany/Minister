@@ -40,10 +40,7 @@ export interface EffectiveScopesInput {
   userBadges: Array<{ id: string; type: string }>;
 }
 
-export function effectiveScopes(
-  requestedScopes: string[],
-  input: EffectiveScopesInput,
-): string[] {
+export function effectiveScopes(requestedScopes: string[], input: EffectiveScopesInput): string[] {
   const out: string[] = [];
   for (const scope of requestedScopes) {
     if (scope === "openid") {

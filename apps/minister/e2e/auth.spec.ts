@@ -5,24 +5,16 @@ import { requestMagicLink, signInViaMagicLink, signOut } from "./helpers";
 // Fresh-context spec: no storage state on purpose — sign-in IS the
 // thing under test here.
 
-test("middleware bounces anonymous visitors off protected routes", async ({
-  page,
-}) => {
+test("middleware bounces anonymous visitors off protected routes", async ({ page }) => {
   await page.goto("/profile");
   await expect(page).toHaveURL(/\/\?from=%2Fprofile/);
-  await expect(
-    page.getByRole("button", { name: "Email me a magic link" }),
-  ).toBeVisible();
+  await expect(page.getByRole("button", { name: "Email me a magic link" })).toBeVisible();
 });
 
-test("magic-link sign-in lands on /profile; sign-out reverts the nav", async ({
-  page,
-}) => {
+test("magic-link sign-in lands on /profile; sign-out reverts the nav", async ({ page }) => {
   await signInViaMagicLink(page, "fresh@e2e.test");
   await page.goto("/profile");
-  await expect(
-    page.getByRole("heading", { name: "Profile" }),
-  ).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Profile" })).toBeVisible();
 
   await signOut(page);
   await page.goto("/profile");

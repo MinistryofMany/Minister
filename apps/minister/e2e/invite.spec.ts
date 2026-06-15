@@ -7,18 +7,13 @@ async function pageWith(browser: Browser, storageState: string): Promise<Page> {
   return context.newPage();
 }
 
-test("invite code: mint as admin, redeem lowercase, exhaust, reject", async ({
-  browser,
-}) => {
+test("invite code: mint as admin, redeem lowercase, exhaust, reject", async ({ browser }) => {
   // Admin mints a single-use code through the UI.
   const admin = await pageWith(browser, STORAGE.admin);
   await admin.goto("/admin/invite-codes");
   await admin.getByPlaceholder("Beta cohort").fill("E2E cohort");
   await admin.getByRole("button", { name: "Mint code" }).click();
-  const code = await admin
-    .locator("input[readonly]")
-    .first()
-    .inputValue();
+  const code = await admin.locator("input[readonly]").first().inputValue();
   expect(code).toMatch(/^[A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4}$/);
 
   // User redeems it — lowercase, to pin the normalization behavior.
@@ -37,16 +32,12 @@ test("invite code: mint as admin, redeem lowercase, exhaust, reject", async ({
   await admin.goto("/badges/new/invite-code");
   await admin.getByPlaceholder("ABCD-EFGH-JKLM").fill(code);
   await admin.getByRole("button", { name: "Redeem" }).click();
-  await expect(
-    admin.getByText("Invalid, expired, or exhausted invite code."),
-  ).toBeVisible();
+  await expect(admin.getByText("Invalid, expired, or exhausted invite code.")).toBeVisible();
 
   // Unknown codes get the same message — no oracle.
   await admin.getByPlaceholder("ABCD-EFGH-JKLM").fill("NOPE-NOPE-NOPE");
   await admin.getByRole("button", { name: "Redeem" }).click();
-  await expect(
-    admin.getByText("Invalid, expired, or exhausted invite code."),
-  ).toBeVisible();
+  await expect(admin.getByText("Invalid, expired, or exhausted invite code.")).toBeVisible();
 
   await admin.context().close();
   await user.context().close();

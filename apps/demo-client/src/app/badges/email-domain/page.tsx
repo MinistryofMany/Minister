@@ -12,25 +12,19 @@ export default async function GatedPage() {
   const session = await auth();
   if (!session?.user) redirect("/");
 
-  const vc = await findVerifiedBadge(
-    session.ministerBadges ?? [],
-    "email-domain",
-  );
+  const vc = await findVerifiedBadge(session.ministerBadges ?? [], "email-domain");
 
   if (!vc) {
-    const issuer =
-      process.env.MINISTER_ISSUER_URL?.replace(/\/$/, "") ??
-      "http://localhost:3000";
+    const issuer = process.env.MINISTER_ISSUER_URL?.replace(/\/$/, "") ?? "http://localhost:3000";
     return (
       <main className="mx-auto flex max-w-xl flex-col gap-4 px-4 py-12">
         <h1 className="text-2xl font-semibold tracking-tight">
           You don&apos;t have an email-domain badge.
         </h1>
         <p className="text-sm text-neutral-600">
-          This page requires a Minister-issued credential proving control
-          of an email address at some domain. Either you haven&apos;t
-          claimed one in Minister, or you didn&apos;t disclose it at the
-          consent screen.
+          This page requires a Minister-issued credential proving control of an email address at
+          some domain. Either you haven&apos;t claimed one in Minister, or you didn&apos;t disclose
+          it at the consent screen.
         </p>
         <div className="flex gap-2">
           <a
@@ -51,19 +45,14 @@ export default async function GatedPage() {
   }
 
   const domain =
-    typeof vc.vc.credentialSubject.domain === "string"
-      ? vc.vc.credentialSubject.domain
-      : "unknown";
+    typeof vc.vc.credentialSubject.domain === "string" ? vc.vc.credentialSubject.domain : "unknown";
 
   return (
     <main className="mx-auto flex max-w-xl flex-col gap-4 px-4 py-12">
-      <h1 className="text-2xl font-semibold tracking-tight">
-        Welcome, {domain} resident.
-      </h1>
+      <h1 className="text-2xl font-semibold tracking-tight">Welcome, {domain} resident.</h1>
       <p className="text-sm text-neutral-600">
-        Verified your email-domain credential against Minister&apos;s
-        signing key. Specifically: you control an email at{" "}
-        <span className="font-medium">{domain}</span>.
+        Verified your email-domain credential against Minister&apos;s signing key. Specifically: you
+        control an email at <span className="font-medium">{domain}</span>.
       </p>
       <div className="rounded-lg border border-neutral-200 bg-white p-4 text-xs">
         <div>
@@ -72,11 +61,7 @@ export default async function GatedPage() {
         <div>
           subject: <code>{vc.sub}</code>
         </div>
-        {vc.exp ? (
-          <div>
-            expires: {new Date(vc.exp * 1000).toISOString()}
-          </div>
-        ) : null}
+        {vc.exp ? <div>expires: {new Date(vc.exp * 1000).toISOString()}</div> : null}
       </div>
       <Link href="/" className="text-sm underline">
         ← back

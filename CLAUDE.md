@@ -229,6 +229,7 @@ model WizardSession {
 ```
 
 Notes:
+
 - The signed VC (`vcJwt`) is the authoritative artifact. `attributes` is for query/display only.
 - We store the VC even for imported credentials; the `issuer` field tells us whether to verify against Minister's key or an external DID.
 - `Eligibility` is separate from `Badge` because the user hasn't actually been issued the future badge yet — it's a promise that on the eligible date a job will auto-issue it.
@@ -238,36 +239,40 @@ Notes:
 **Strategy:** JWT-strategy Auth.js sessions. The cookie is a signed JWT (HMAC over `AUTH_SECRET`), not an opaque session-row id. This lets middleware verify auth at the Edge Runtime without a database hit.
 
 **Config split:**
+
 - `src/auth.config.ts` — edge-safe config: `providers: []`, JWT strategy, `jwt()` + `session()` callbacks, type augmentations. Imported by middleware and by the full auth module.
 - `src/auth.ts` — spreads `authConfig`, layers on `PrismaAdapter`, `Passkey`, `ConsoleEmail` (dev) providers. Only loaded from Node runtime.
 - `src/middleware.ts` — instantiates `NextAuth(authConfig)` and gates `/profile/*`, `/settings/*`, `/badges/*` with a 302 to `/?from=<path>` on missing/invalid JWT. `/`, `/u/[id]`, `/.well-known/*`, `/api/auth/*` stay public.
 
 **TTL:**
+
 - `session.maxAge: 24 * 60 * 60` (24h)
 - `session.updateAge: 60 * 60` (1h)
 
 Sliding window. An active user's JWT auto-refreshes at most once per hour, each refresh resetting the 24h clock. Idle for 24h → logged out. Minister is wallet-shaped (bursty use, not daily), so 24h hits the right point on the security/UX curve.
 
 **Revocation (sessionGeneration):**
+
 - Every `User` has `sessionGeneration: Int @default(0)`. At sign-in, the `jwt()` callback embeds `user.sessionGeneration` into `token.gen` — the adapter has already loaded the User row at this point, so no extra DB read.
 - `src/lib/session.ts:getCurrentSession()` is the server-side session getter. It calls `auth()`, then compares the JWT's gen against the user's current gen via a `findUnique`. Mismatch → null. Wrapped in `React.cache()` so multiple call sites in one render (header + page) share one query.
 - `src/server/account-actions.ts:revokeAllSessions()` increments the user's gen, audit-logs, and signs the current device out. Wired to a destructive "Sign out of all devices" button on `/settings`.
 
 **Use `getCurrentSession()` / `requireSession()` — never raw `auth()` — anywhere that gates user-specific content. Raw `auth()` only verifies the JWT signature; it doesn't catch revoked sessions or bans.**
 
-**Bans + admin:** the same cached session loader also enforces `User.isBanned` (banned ⇒ treated as signed out) and exposes `isAdmin` via `getSessionFlags()`. `requireAdmin()` gates `/admin` pages and admin server actions. The *first* admin is minted via `pnpm --filter @minister/app admin:grant --email <email>` (bootstrap only); after that, admins promote/demote on `/admin/users`. Nobody can change their own admin flag (no self-demotion lockout). Banning a user bumps their `sessionGeneration`, killing live sessions on their next request; admins can't ban admins (demote first), and banned users can't be promoted (unban first).
+**Bans + admin:** the same cached session loader also enforces `User.isBanned` (banned ⇒ treated as signed out) and exposes `isAdmin` via `getSessionFlags()`. `requireAdmin()` gates `/admin` pages and admin server actions. The _first_ admin is minted via `pnpm --filter @minister/app admin:grant --email <email>` (bootstrap only); after that, admins promote/demote on `/admin/users`. Nobody can change their own admin flag (no self-demotion lockout). Banning a user bumps their `sessionGeneration`, killing live sessions on their next request; admins can't ban admins (demote first), and banned users can't be promoted (unban first).
 
 **Per-request cost:**
 
-| Page | DB hits for session |
-|---|---|
-| Unauthenticated → protected | 0 (Edge middleware bounces) |
-| Authenticated → protected page | 1 |
+| Page                             | DB hits for session                   |
+| -------------------------------- | ------------------------------------- |
+| Unauthenticated → protected      | 0 (Edge middleware bounces)           |
+| Authenticated → protected page   | 1                                     |
 | Authenticated → `/` or `/u/[id]` | 1 (header + page share via `cache()`) |
-| `/u/[id]` viewed by anyone | 1 (header only) |
-| `/.well-known/*` | 0 |
+| `/u/[id]` viewed by anyone       | 1 (header only)                       |
+| `/.well-known/*`                 | 0                                     |
 
 **Two-layer model:**
+
 - Layer 1 — Edge middleware: cheap JWT-signature check. Catches no-cookie and bad-signature.
 - Layer 2 — server components via `getCurrentSession`: gen check against DB. Catches stale-but-cryptographically-valid (revoked) JWTs.
 
@@ -297,6 +302,7 @@ Each native badge is a VC issued by Minister. Imported badges keep their origina
 ```
 
 `packages/vc` exports:
+
 - `loadIssuer({ domain, privateJwk?, devKeyPath? })` → `Issuer`. Env-driven in prod (`ISSUER_PRIVATE_JWK`); ephemeral persistent key on first dev boot (`apps/minister/dev-keys/issuer.jwk`, gitignored).
 - `issueVc(issuer, type, subjectId, claims, options?)` → `vcJwt`. Stamps `iat`/`nbf`/`exp`/`jti`; protected header carries `kid` matching the DID document.
 - `verifyVc(issuer, vcJwt)` → typed credential or throws.
@@ -335,8 +341,7 @@ export interface PluginManifest {
   iconKey?: string;
 }
 
-export type WizardStepKind =
-  | "form" | "redirect" | "extension-action" | "magic-link" | "info";
+export type WizardStepKind = "form" | "redirect" | "extension-action" | "magic-link" | "info";
 
 // Discriminated union on `kind`: switch(step.kind) narrows payload to
 // the exact per-kind type. No `as` casts at the call sites.
@@ -351,20 +356,20 @@ export interface WizardState {
   pluginId: string;
   userId: string;
   currentStep: WizardStep;
-  data: Record<string, unknown>;                     // accumulated step data, server-side only
+  data: Record<string, unknown>; // accumulated step data, server-side only
 }
 
 export interface IssuedBadge {
   type: string;
-  attributes: Record<string, unknown>;               // denormalized display, lands on Badge.attributes
-  claims: Record<string, unknown>;                   // goes into VC credentialSubject; must pass the badge type's Zod schema
+  attributes: Record<string, unknown>; // denormalized display, lands on Badge.attributes
+  claims: Record<string, unknown>; // goes into VC credentialSubject; must pass the badge type's Zod schema
   expiresAt?: Date;
   eligibilities?: Array<{ badgeType: string; eligibleAt: Date; fuzzDays: number }>;
 }
 
 export interface PluginContext {
   userId: string;
-  origin: string;                                    // for building callback URLs (magic-link, OAuth, etc.)
+  origin: string; // for building callback URLs (magic-link, OAuth, etc.)
   audit: { log(action: string, metadata: Record<string, unknown>): Promise<void> };
   sendMail(msg: { to: string; subject: string; text: string; html?: string }): Promise<void>;
 }
@@ -372,7 +377,11 @@ export interface PluginContext {
 export interface Plugin {
   manifest: PluginManifest;
   startWizard(ctx: PluginContext): Promise<WizardState>;
-  handleStep(state: WizardState, input: unknown, ctx: PluginContext): Promise<
+  handleStep(
+    state: WizardState,
+    input: unknown,
+    ctx: PluginContext,
+  ): Promise<
     | { kind: "continue"; state: WizardState }
     | { kind: "complete"; badges: IssuedBadge[] }
     | { kind: "error"; message: string }
@@ -381,15 +390,17 @@ export interface Plugin {
 ```
 
 **Wizard runtime** (`apps/minister/src/server/wizard.ts`):
+
 - `startWizard(pluginId, userId, origin)` creates a `WizardSession` row and calls `plugin.startWizard`.
 - `submitStep(sessionId, userId, origin, input)` calls `plugin.handleStep`. On `continue` with a `magic-link` step, lifts the step's `expectedToken` to `WizardSession.pendingToken` (indexed column) so the verify route can resolve the session by token without a JSON-column query.
-- `resumeViaPendingToken({ token, userId, origin, input })` is the generic round-trip callback path — magic-link clicks, OAuth `state` callbacks, and extension submissions all resolve their wizard session through it. Enforces that the token belongs to the *currently signed-in user* (so a forwarded email can't grant a badge to a different account).
+- `resumeViaPendingToken({ token, userId, origin, input })` is the generic round-trip callback path — magic-link clicks, OAuth `state` callbacks, and extension submissions all resolve their wizard session through it. Enforces that the token belongs to the _currently signed-in user_ (so a forwarded email can't grant a badge to a different account).
 - `issueBadgesAndComplete` validates the plugin's claims against the badge type's Zod schema, mints the JWT-VC (`jti = badge.id`, `exp = 1y`), inserts `Badge` with the signed VC, marks the wizard completed, audit-logs.
 
 **Wizard UI** is built-in (`apps/minister/src/components/wizard-client.tsx`). It dispatches on `step.kind` to a per-kind renderer (form, magic-link, info, …). Most plugins write zero React — they define their step payloads and the runtime handles rendering.
 
 **Current plugins:**
-- `email-domain` — collect email → magic-link verify → issue `email-domain` badge. The user's email itself is *not* stored; only the domain is.
+
+- `email-domain` — collect email → magic-link verify → issue `email-domain` badge. The user's email itself is _not_ stored; only the domain is.
 - `github` — OAuth `redirect` step → /badges/new/github/callback → `oauth-account` badge with `{ provider: "github", accountId, handle }`. Requires `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET`.
 - `invite-code` — form step → atomic redemption against admin-minted `InviteCode` rows → `invite-code` badge with `{ label }`. Invalid/revoked/expired/exhausted all return one uniform error so the form can't be used as a code oracle.
 - `tlsn-attestation` — generic TLSNotary plugin. Issues an `extension-action` step, the browser extension produces a TLSNotary presentation and POSTs it to `/api/tlsn/submit`, Minister calls the `tlsn-verifier` sidecar to check it, then issues a `tlsn-attestation` badge. The extension's prover is not yet integrated — see Stage 6 status.
@@ -419,6 +430,7 @@ Relying parties are managed in the admin UI at `/admin/oidc-clients`: register (
 ### Consent screen
 
 For each `badge:<type>` scope the RP requests, the screen shows:
+
 - The badge type and its human description
 - The badges of that type the user holds (could be multiple — let them pick which to disclose, or decline)
 - A toggle per badge
@@ -454,6 +466,7 @@ Subject: `sub` is a **pairwise pseudonymous identifier**, computed as `base64url
 ## TLSNotary integration (Stage 6+)
 
 When we get to it:
+
 - Extension performs the proof, talking to `ws-proxy` to reach the target server and `notary-server` for the co-signature.
 - Extension POSTs the finalized presentation to `POST /api/tlsn/submit` with `{ pluginId, sessionId, presentation }`.
 - Minister calls the `tlsn-verifier` Rust HTTP sidecar with the presentation and the expected domain; gets back a verified transcript.
@@ -483,7 +496,7 @@ Why a separate Rust sidecar over WASM in Node: simpler operationally, pins one t
 - Conventional commits, authored under the repo's configured git identity. No tool/assistant attribution anywhere in commits, code, or comments.
 - No `any`. No `@ts-ignore` / `@ts-expect-error` without an inline justification comment.
 - Don't add a dependency without a one-line reason in the commit message.
-- Comments explain *why*, not *what*. The code says what.
+- Comments explain _why_, not _what_. The code says what.
 
 ## Stage plan
 
@@ -506,7 +519,7 @@ Why a separate Rust sidecar over WASM in Node: simpler operationally, pins one t
 - Mobile apps.
 - Selective disclosure inside a credential (zero-knowledge proofs, BBS+ signatures, SD-JWT). Stage 9+ topic.
 - Refresh tokens. We use sliding-window JWT TTL instead; revocation works at user granularity via `sessionGeneration`. Per-device revocation ("sign this device out, keep others") would require a per-JTI revocation table — deferred until we actually need it.
-- Federation with external OIDC IdPs as a *source* of badges. We may do this later, but via plugins, not via the OIDC client side of NextAuth.
+- Federation with external OIDC IdPs as a _source_ of badges. We may do this later, but via plugins, not via the OIDC client side of NextAuth.
 - A standalone wallet app, or external credential export beyond raw VC JWT download.
 
 If anything is ambiguous, ask before guessing.

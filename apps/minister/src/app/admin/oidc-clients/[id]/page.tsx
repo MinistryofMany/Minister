@@ -2,13 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 
 import { AdminOidcEditForm } from "@/components/admin-oidc-edit-form";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { allOidcScopes } from "@/lib/oidc-client-admin";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session";
@@ -26,10 +20,7 @@ export default async function AdminOidcClientEditPage({
 
   return (
     <div className="flex flex-col gap-4">
-      <Link
-        href="/admin/oidc-clients"
-        className="text-xs underline underline-offset-2"
-      >
+      <Link href="/admin/oidc-clients" className="text-xs underline underline-offset-2">
         ← All clients
       </Link>
       <Card>
@@ -37,11 +28,8 @@ export default async function AdminOidcClientEditPage({
           <CardTitle>Edit {client.name}</CardTitle>
           <CardDescription>
             client_id <code className="font-mono">{client.clientId}</code> ·{" "}
-            {client.clientSecretHash === null
-              ? "public (PKCE-only)"
-              : "confidential"}
-            . The client_id and type can&apos;t change — register a new client
-            for that.
+            {client.clientSecretHash === null ? "public (PKCE-only)" : "confidential"}. The
+            client_id and type can&apos;t change — register a new client for that.
           </CardDescription>
         </CardHeader>
         <CardContent>

@@ -1,13 +1,4 @@
-import {
-  afterAll,
-  afterEach,
-  beforeAll,
-  beforeEach,
-  describe,
-  expect,
-  it,
-  vi,
-} from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { PluginContext, WizardState } from "@minister/plugin-sdk";
 
@@ -41,9 +32,7 @@ describe("githubPlugin.startWizard", () => {
     expect(state.currentStep.kind).toBe("redirect");
     if (state.currentStep.kind !== "redirect") throw new Error("kind");
     const url = new URL(state.currentStep.payload.url);
-    expect(url.origin + url.pathname).toBe(
-      "https://github.com/login/oauth/authorize",
-    );
+    expect(url.origin + url.pathname).toBe("https://github.com/login/oauth/authorize");
     expect(url.searchParams.get("client_id")).toBe("test_client_id");
     expect(url.searchParams.get("redirect_uri")).toBe(
       "http://localhost:3000/badges/new/github/callback",
@@ -57,9 +46,7 @@ describe("githubPlugin.startWizard", () => {
 
   it("stashes the redirect URI in wizard.data for the exchange step", async () => {
     const state = await githubPlugin.startWizard(ctx());
-    expect(state.data.redirectUri).toBe(
-      "http://localhost:3000/badges/new/github/callback",
-    );
+    expect(state.data.redirectUri).toBe("http://localhost:3000/badges/new/github/callback");
   });
 
   it("throws when GitHub creds are unconfigured", async () => {
@@ -67,9 +54,7 @@ describe("githubPlugin.startWizard", () => {
     const secret = process.env.GITHUB_CLIENT_SECRET;
     delete process.env.GITHUB_CLIENT_ID;
     delete process.env.GITHUB_CLIENT_SECRET;
-    await expect(githubPlugin.startWizard(ctx())).rejects.toThrow(
-      /GITHUB_CLIENT_ID/,
-    );
+    await expect(githubPlugin.startWizard(ctx())).rejects.toThrow(/GITHUB_CLIENT_ID/);
     process.env.GITHUB_CLIENT_ID = id;
     process.env.GITHUB_CLIENT_SECRET = secret;
   });
@@ -113,11 +98,7 @@ describe("githubPlugin.handleStep — code exchange + /user fetch", () => {
       .mockResolvedValueOnce(mockOk({ access_token: "gho_test" }))
       .mockResolvedValueOnce(mockOk({ id: 42, login: "octocat" }));
 
-    const result = await githubPlugin.handleStep(
-      authState(),
-      { code: "GH_CODE" },
-      ctx(),
-    );
+    const result = await githubPlugin.handleStep(authState(), { code: "GH_CODE" }, ctx());
     expect(result.kind).toBe("complete");
     if (result.kind !== "complete") throw new Error("kind");
     expect(result.badges).toEqual([
@@ -136,16 +117,12 @@ describe("githubPlugin.handleStep — code exchange + /user fetch", () => {
     expect(body.get("code")).toBe("GH_CODE");
     expect(body.get("client_id")).toBe("test_client_id");
     expect(body.get("client_secret")).toBe("test_client_secret");
-    expect(body.get("redirect_uri")).toBe(
-      "http://localhost:3000/badges/new/github/callback",
-    );
+    expect(body.get("redirect_uri")).toBe("http://localhost:3000/badges/new/github/callback");
 
     // /user call shape.
     const [userUrl, userInit] = fetchSpy.mock.calls[1]!;
     expect(userUrl).toBe("https://api.github.com/user");
-    expect((userInit?.headers as Record<string, string>).Authorization).toBe(
-      "Bearer gho_test",
-    );
+    expect((userInit?.headers as Record<string, string>).Authorization).toBe("Bearer gho_test");
   });
 
   it("propagates a github-side error from the token endpoint", async () => {
@@ -155,11 +132,7 @@ describe("githubPlugin.handleStep — code exchange + /user fetch", () => {
         error_description: "Code expired",
       }),
     );
-    const result = await githubPlugin.handleStep(
-      authState(),
-      { code: "BAD" },
-      ctx(),
-    );
+    const result = await githubPlugin.handleStep(authState(), { code: "BAD" }, ctx());
     expect(result.kind).toBe("error");
     if (result.kind !== "error") throw new Error("kind");
     expect(result.message).toContain("Code expired");
@@ -169,11 +142,7 @@ describe("githubPlugin.handleStep — code exchange + /user fetch", () => {
     fetchSpy
       .mockResolvedValueOnce(mockOk({ access_token: "gho_test" }))
       .mockResolvedValueOnce(new Response("Unauthorized", { status: 401 }));
-    const result = await githubPlugin.handleStep(
-      authState(),
-      { code: "X" },
-      ctx(),
-    );
+    const result = await githubPlugin.handleStep(authState(), { code: "X" }, ctx());
     expect(result.kind).toBe("error");
     if (result.kind !== "error") throw new Error("kind");
     expect(result.message).toMatch(/401/);
@@ -183,11 +152,7 @@ describe("githubPlugin.handleStep — code exchange + /user fetch", () => {
     fetchSpy
       .mockResolvedValueOnce(mockOk({ access_token: "gho_test" }))
       .mockResolvedValueOnce(mockOk({ id: "not-a-number", login: 123 }));
-    const result = await githubPlugin.handleStep(
-      authState(),
-      { code: "X" },
-      ctx(),
-    );
+    const result = await githubPlugin.handleStep(authState(), { code: "X" }, ctx());
     expect(result.kind).toBe("error");
   });
 
@@ -200,11 +165,7 @@ describe("githubPlugin.handleStep — code exchange + /user fetch", () => {
         payload: { title: "x", body: "y" },
       },
     };
-    const result = await githubPlugin.handleStep(
-      state,
-      { code: "X" },
-      ctx(),
-    );
+    const result = await githubPlugin.handleStep(state, { code: "X" }, ctx());
     expect(result.kind).toBe("error");
   });
 });

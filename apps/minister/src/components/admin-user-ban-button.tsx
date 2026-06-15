@@ -5,13 +5,7 @@ import { useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
 import { setUserBanned } from "@/server/admin-actions";
 
-export function AdminUserBanButton({
-  userId,
-  banned,
-}: {
-  userId: string;
-  banned: boolean;
-}) {
+export function AdminUserBanButton({ userId, banned }: { userId: string; banned: boolean }) {
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
 
