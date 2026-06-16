@@ -5,38 +5,18 @@ on:
     branches: [main]
   pull_request:
 
-# Minister consumes the SDK packages via pnpm `link:` to sibling repos, so CI
-# recreates that layout: Minister and the three SDK repos are checked out side
-# by side, and each SDK installs its own dependencies (link: only symlinks the
-# directory, it does not install the linked package's deps).
+# The @minister/{vc,shared,plugin-sdk} libraries are in-repo workspace packages
+# under packages/*, wired in as workspace:* deps — so a single checkout plus
+# `pnpm install` resolves everything. (They used to be sibling repos linked via
+# link:, which required checking each one out separately; that is no longer the case.)
 jobs:
   ci:
     runs-on: ubuntu-latest
     env:
       HUSKY: "0" # git hooks are irrelevant in CI
     steps:
-      - name: Checkout Minister
+      - name: Checkout
         uses: actions/checkout@v4
-        with:
-          path: Minister
-
-      - name: Checkout minister-vc
-        uses: actions/checkout@v4
-        with:
-          repository: MinistryofMany/minister-vc
-          path: minister-vc
-
-      - name: Checkout minister-plugin-sdk
-        uses: actions/checkout@v4
-        with:
-          repository: MinistryofMany/minister-plugin-sdk
-          path: minister-plugin-sdk
-
-      - name: Checkout minister-shared
-        uses: actions/checkout@v4
-        with:
-          repository: MinistryofMany/minister-shared
-          path: minister-shared
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -48,30 +28,18 @@ jobs:
         with:
           node-version: 20
           cache: pnpm
-          cache-dependency-path: Minister/pnpm-lock.yaml
-
-      - name: Install SDK dependencies
-        run: |
-          for d in minister-vc minister-plugin-sdk minister-shared; do
-            (cd "$d" && pnpm install --frozen-lockfile)
-          done
 
       - name: Install
-        working-directory: Minister
         run: pnpm install --frozen-lockfile
 
       - name: Typecheck
-        working-directory: Minister
         run: pnpm typecheck
 
       - name: Lint
-        working-directory: Minister
         run: pnpm lint
 
       - name: Format check
-        working-directory: Minister
         run: pnpm format:check
 
       - name: Test
-        working-directory: Minister
         run: pnpm test
