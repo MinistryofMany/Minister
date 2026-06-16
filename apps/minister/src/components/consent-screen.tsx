@@ -14,7 +14,7 @@ interface BadgeChoice {
 
 interface BadgeChoiceGroup {
   scope: string;
-  badgeType: string;
+  typeLabel: string;
   description: string;
   badges: BadgeChoice[];
 }
@@ -95,7 +95,7 @@ export function ConsentScreen({ clientName, wantsProfile, badgeChoices, requestT
         <Card key={group.scope}>
           <CardContent className="space-y-3 py-4">
             <div>
-              <h3 className="text-sm font-semibold">{group.badgeType}</h3>
+              <h3 className="text-sm font-semibold">{group.typeLabel}</h3>
               <p className="text-sm text-neutral-600 dark:text-neutral-400">{group.description}</p>
             </div>
 

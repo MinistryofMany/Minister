@@ -54,6 +54,16 @@ describe("summarizeAttributes", () => {
     ).toBe("Baltimore, MD, US");
   });
 
+  it("returns the campaign label for invite-code (not raw JSON)", () => {
+    expect(summarizeAttributes("invite-code", { label: "Welcome 2026" })).toBe("Welcome 2026");
+  });
+
+  it("joins claim + domain for tlsn-attestation", () => {
+    expect(summarizeAttributes("tlsn-attestation", { domain: "id.me", claim: "age-over-18" })).toBe(
+      "age-over-18 · id.me",
+    );
+  });
+
   it("returns empty string for unknown type", () => {
     expect(summarizeAttributes("not-a-real-type", { foo: "bar" })).toBe("");
   });

@@ -98,6 +98,16 @@ export function summarizeAttributes(type: string, attributes: Record<string, unk
       return [attributes.state, attributes.country].filter(Boolean).join(", ");
     case "residency-city":
       return [attributes.city, attributes.state, attributes.country].filter(Boolean).join(", ");
+    case "invite-code":
+      // `label` is the campaign/cohort name (the code string never enters
+      // attributes). Show it, not the raw `{ label }` object.
+      return typeof attributes.label === "string" ? attributes.label : "";
+    case "tlsn-attestation": {
+      const claim = typeof attributes.claim === "string" ? attributes.claim : "";
+      const domain = typeof attributes.domain === "string" ? attributes.domain : "";
+      if (claim && domain) return `${claim} · ${domain}`;
+      return claim || domain;
+    }
     default:
       if (type.startsWith("age-over-")) {
         const t = type.slice("age-over-".length);

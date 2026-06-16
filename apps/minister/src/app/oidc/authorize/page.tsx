@@ -1,9 +1,11 @@
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 
+import { getBadgeType } from "@minister/shared";
+
 import { ConsentScreen } from "@/components/consent-screen";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { loadUserBadges, type DisplayBadge } from "@/lib/badges";
+import { loadUserBadges, summarizeAttributes, type DisplayBadge } from "@/lib/badges";
 import { buildErrorRedirect, validateAuthorizeRequest } from "@/lib/oidc-authorize";
 import { signOidcRequest } from "@/lib/oidc-request-token";
 import { clientIpFrom, oidcAuthorizeLimiter } from "@/lib/rate-limit";
@@ -76,7 +78,10 @@ export default async function OidcAuthorizePage({ searchParams }: PageProps) {
 
 interface BadgeChoiceGroup {
   scope: string;
-  badgeType: string;
+  // Human-readable badge-type name (registry label), falling back to the
+  // raw slug only for unknown types. Drives the group heading.
+  typeLabel: string;
+  // One-line human description from the @minister/shared registry.
   description: string;
   badges: Array<{
     id: string;
@@ -90,39 +95,24 @@ function buildBadgeChoices(scopes: string[], badges: DisplayBadge[]): BadgeChoic
   for (const scope of scopes) {
     if (!scope.startsWith("badge:")) continue;
     const badgeType = scope.slice("badge:".length);
+    // Pull name + description from the registry directly so they render
+    // even when the user holds no badge of this type (the request is for
+    // a *type*; the user may or may not have one).
+    const meta = getBadgeType(badgeType);
     const matched = badges.filter((b) => b.type === badgeType);
     groups.push({
       scope,
-      badgeType,
-      description: matched[0]?.meta.description ?? `Badge of type ${badgeType}.`,
+      typeLabel: meta?.label ?? badgeType,
+      description: meta?.description ?? `Badge of type ${badgeType}.`,
       badges: matched.map((b) => ({
         id: b.id,
-        label: matched[0]?.meta.label ?? badgeType,
-        summary: summarize(b),
+        label: b.meta.label,
+        // Human summary of the badge's key attributes — never raw JSON.
+        summary: summarizeAttributes(b.type, b.attributes),
       })),
     });
   }
   return groups;
-}
-
-function summarize(b: DisplayBadge): string {
-  const { attributes, type } = b;
-  switch (type) {
-    case "email-domain":
-      return typeof attributes.domain === "string" ? attributes.domain : "";
-    case "email-exact":
-      return typeof attributes.email === "string" ? attributes.email : "";
-    case "oauth-account": {
-      const p = String(attributes.provider ?? "");
-      const h = attributes.handle ? `@${attributes.handle}` : "";
-      return [p, h].filter(Boolean).join(" · ");
-    }
-    default:
-      if (type.startsWith("age-over-")) {
-        return `Over ${type.slice("age-over-".length)}`;
-      }
-      return JSON.stringify(attributes);
-  }
 }
 
 function FatalError({ title, description }: { title: string; description: string }) {
