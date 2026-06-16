@@ -61,7 +61,7 @@ test("authorization-code + PKCE dance end-to-end", async ({ browser, request }) 
   const readonlies = adminPage.locator("input[readonly]");
   const clientId = await readonlies.nth(0).inputValue();
   const clientSecret = await readonlies.nth(1).inputValue();
-  expect(clientId).toMatch(/^tc_/);
+  expect(clientId).toMatch(/^mc_/);
   expect(clientSecret.length).toBeGreaterThan(20);
   await admin.close();
 

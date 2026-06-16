@@ -13,7 +13,7 @@
 //     --name "Demo client" \
 //     --redirect-uri http://localhost:3100/api/auth/callback/minister \
 //     --scope openid --scope profile --scope badge:email-domain \
-//     [--client-id tc_demo --client-secret <secret>] \
+//     [--client-id demo_client --client-secret <secret>] \
 //     [--public]
 //
 // Set DATABASE_URL the same way the app does.

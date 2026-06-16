@@ -9,9 +9,9 @@ import {
 } from "./oidc-clients";
 
 describe("generateClientId", () => {
-  it("returns the `tc_` prefix + base64url suffix", () => {
+  it("returns the `mc_` prefix + base64url suffix", () => {
     const id = generateClientId();
-    expect(id).toMatch(/^tc_[A-Za-z0-9_-]+$/);
+    expect(id).toMatch(/^mc_[A-Za-z0-9_-]+$/);
   });
 
   it("returns unique values on each call", () => {
@@ -22,8 +22,8 @@ describe("generateClientId", () => {
 
   it("encodes >= 128 bits of entropy", () => {
     // 18 random bytes → 24 base64url chars (no padding); plus the
-    // 3-char "tc_" prefix = 27.
-    const suffix = generateClientId().slice("tc_".length);
+    // 3-char "mc_" prefix = 27.
+    const suffix = generateClientId().slice("mc_".length);
     expect(suffix.length).toBeGreaterThanOrEqual(24);
   });
 });

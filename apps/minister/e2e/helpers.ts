@@ -129,7 +129,7 @@ export async function createPublicOidcClient(
   redirectUri: string,
   scopes: string[],
 ): Promise<string> {
-  const clientId = `tc_e2e_${++oidcClientSeq}_${Math.floor(Date.now() % 1e6)}`;
+  const clientId = `mc_e2e_${++oidcClientSeq}_${Math.floor(Date.now() % 1e6)}`;
   await prisma.oidcClient.create({
     data: {
       clientId,
@@ -149,7 +149,7 @@ export async function createConfidentialOidcClient(
   redirectUri: string,
   scopes: string[],
 ): Promise<{ clientId: string; clientSecret: string }> {
-  const clientId = `tc_e2e_${++oidcClientSeq}_${Math.floor(Date.now() % 1e6)}`;
+  const clientId = `mc_e2e_${++oidcClientSeq}_${Math.floor(Date.now() % 1e6)}`;
   const clientSecret = randomBytes(24).toString("base64url");
   await prisma.oidcClient.create({
     data: {

@@ -19,7 +19,7 @@ import { findClient, isRegisteredRedirectUri } from "./oidc-clients";
 
 const VALID_PARAMS = {
   response_type: "code",
-  client_id: "tc_demo",
+  client_id: "mc_demo",
   redirect_uri: "http://localhost:3100/cb",
   scope: "openid profile",
   state: "STATE_1",
@@ -29,7 +29,7 @@ const VALID_PARAMS = {
 };
 
 const DEMO_CLIENT = {
-  clientId: "tc_demo",
+  clientId: "mc_demo",
   name: "Demo",
   allowedScopes: ["openid", "profile", "badge:email-domain"],
   redirectUris: ["http://localhost:3100/cb"],
@@ -129,7 +129,7 @@ describe("validateAuthorizeRequest — success", () => {
     const res = await validateAuthorizeRequest(build({}));
     if (res.kind !== "ok") throw new Error(`expected ok, got ${res.kind}`);
     expect(res.request).toEqual({
-      clientId: "tc_demo",
+      clientId: "mc_demo",
       clientName: "Demo",
       allowedScopes: DEMO_CLIENT.allowedScopes,
       redirectUri: "http://localhost:3100/cb",

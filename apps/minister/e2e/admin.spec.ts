@@ -55,7 +55,7 @@ test("OIDC client lifecycle: register public client, delete it", async ({ page }
 
   await expect(page.getByText("Public client — no secret")).toBeVisible();
   const clientId = await page.locator("input[readonly]").first().inputValue();
-  expect(clientId).toMatch(/^tc_/);
+  expect(clientId).toMatch(/^mc_/);
 
   const row = page.locator("li", { hasText: "E2E throwaway" });
   await expect(row.getByText("public · PKCE-only")).toBeVisible();

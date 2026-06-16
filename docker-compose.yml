@@ -82,7 +82,7 @@ services:
         --scope openid
         --scope profile
         --scope badge:email-domain
-        --client-id ${DEMO_CLIENT_ID:-tc_demo}
+        --client-id ${DEMO_CLIENT_ID:-demo_client}
         --client-secret ${DEMO_CLIENT_SECRET:-dev-only-demo-client-secret-replace-me}
 
   # ---------------------------------------------------------------------------

@@ -21,7 +21,7 @@ test("unknown client_id renders a fatal error, never redirects", async ({ page }
   await page.goto(
     authorizeUrl({
       response_type: "code",
-      client_id: "tc_does_not_exist",
+      client_id: "mc_does_not_exist",
       redirect_uri: RP_CALLBACK,
       scope: "openid",
       state: "s",

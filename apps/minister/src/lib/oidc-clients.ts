@@ -29,7 +29,7 @@ export async function verifyClientSecret(plaintext: string, encoded: string): Pr
 // of entropy and URL-safe so it can land in Authorization headers
 // without re-encoding.
 export function generateClientId(): string {
-  return `tc_${randomBytes(18).toString("base64url")}`;
+  return `mc_${randomBytes(18).toString("base64url")}`;
 }
 
 export function generateClientSecret(): string {

@@ -19,7 +19,7 @@ describe("OIDC request token round trip", () => {
   });
 
   const request: ValidAuthorizeRequest = {
-    clientId: "tc_test",
+    clientId: "mc_test",
     clientName: "Test Client",
     allowedScopes: ["openid", "profile", "badge:email-domain"],
     redirectUri: "http://localhost:3100/cb",
