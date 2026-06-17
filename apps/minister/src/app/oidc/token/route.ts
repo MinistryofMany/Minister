@@ -5,12 +5,7 @@ import { NextResponse } from "next/server";
 import { getIssuer } from "@/lib/issuer";
 import { loadApprovedBadgeJwts, resolveUserClaims } from "@/lib/oidc-claims";
 import { findClient, verifyClientSecret } from "@/lib/oidc-clients";
-import {
-  ACCESS_TOKEN_TTL,
-  mintAccessToken,
-  mintIdToken,
-  verifyPkceS256,
-} from "@/lib/oidc-tokens";
+import { ACCESS_TOKEN_TTL, mintAccessToken, mintIdToken, verifyPkceS256 } from "@/lib/oidc-tokens";
 import { resolveSub } from "@/lib/oidc-subject";
 import { prisma } from "@/lib/prisma";
 import { audit } from "@/lib/audit";

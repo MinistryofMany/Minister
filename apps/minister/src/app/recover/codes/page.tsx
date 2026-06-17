@@ -23,7 +23,8 @@ export default function RecoverWithCodesPage() {
           <CardTitle>Use a recovery code</CardTitle>
           <CardDescription>
             This signs you in with reduced access. You&apos;ll be asked to add a new passkey right
-            away — until you do, your session can&apos;t change other credentials or disclose badges.
+            away — until you do, your session can&apos;t change other credentials or disclose
+            badges.
           </CardDescription>
         </CardHeader>
         <CardContent>

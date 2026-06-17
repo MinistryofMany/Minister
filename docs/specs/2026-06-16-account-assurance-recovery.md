@@ -1,7 +1,8 @@
 # Account assurance, recovery, and merge
 
-Status: in progress (branch `feat/account-assurance-recovery`). Design approved
-2026-06-15; implementation 2026-06-16.
+Status: all 5 slices implemented + unit-tested + green on branch
+`feat/account-assurance-recovery` (not yet run against a live DB/browser — see
+DESIGNDECISIONS.md #19). Design approved 2026-06-15; implementation 2026-06-16.
 
 ## Problem
 
@@ -33,6 +34,7 @@ every badge (IAL), used as recovery weight.
 ## The five slices
 
 ### Slice 1 — Multi-credential identity
+
 - `UserEmail` (many per user, one `isPrimary`, each `verifiedAt`, global-unique
   `email`). `User.email` is now a denormalized cache of the primary.
 - Custom Auth.js adapter: `getUserByEmail` and the email sign-in path resolve
@@ -43,6 +45,7 @@ every badge (IAL), used as recovery weight.
   email; set primary; add/remove passkey; everything gated by the AAL2 guard.
 
 ### Slice 2 — Assurance + step-up + quarantine + notify
+
 - `aal` claim on the session JWT, set from the authenticating credential.
 - `requireAal(session, floor)` server guard. Floor for any credential mutation,
   primary-email promotion, recovery start, or merge start = AAL2.
@@ -53,6 +56,7 @@ every badge (IAL), used as recovery weight.
   addresses with a one-click "wasn't me -> revoke + lock" link.
 
 ### Slice 3 — Recovery codes
+
 - `RecoveryCode` (Argon2id hashes, single-use). Generate 10, show once, hash at
   rest. Regenerate deletes unused rows.
 - Redeeming one lands a **quarantined, reduced-assurance** session: can enroll a
@@ -60,6 +64,7 @@ every badge (IAL), used as recovery weight.
 - Cold-start backstop for the user with one passkey and no badges.
 
 ### Slice 4 — Weighted badge-threshold recovery
+
 - Per-badge `assuranceLevel` (set at issuance from a registry of (type, provenance)
   -> IAL). Code-level weight map IAL -> points.
 - `RecoveryAttempt` (nonce, requiredScore, accumulatedScore) + `RecoveryProof`
@@ -70,6 +75,7 @@ every badge (IAL), used as recovery weight.
   recovery codes. Threshold calibrated >= front-door auth strength.
 
 ### Slice 5 — Account merge
+
 - Dual-control: prove control of both accounts at AAL2 in one ceremony before
   anything moves.
 - Survivor keeps its `userId`; donor is reconciled in and tombstoned
@@ -110,5 +116,3 @@ every badge (IAL), used as recovery weight.
 - Built on a worktree against a scratch DB (`minister_spike`); the live dev DB and
   `main` are untouched. No migration is applied to the live DB — see
   DESIGNDECISIONS.md (migrations vs db push).
-</content>
-</invoke>

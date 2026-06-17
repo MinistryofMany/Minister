@@ -11,6 +11,7 @@ one place to flip it.
 ---
 
 ## 1. Primary key stays `cuid()`, not UUID
+
 - **Chose:** leave `User.id` as `@default(cuid())`. The architectural ask ("don't
   key identity on email") is satisfied by demoting `User.email`, not by changing the
   PK — the id was already opaque.
@@ -20,6 +21,7 @@ one place to flip it.
   unless you need UUID specifically for external interop.
 
 ## 2. Schema is synced with `db push`, no migration files
+
 - **Context:** Minister has no `prisma/migrations/` dir — dev uses `db push`. This
   change (drop a unique, add 6 tables) is big enough that a reviewable migration is
   arguably worth it.
@@ -31,6 +33,7 @@ one place to flip it.
   decide; it will create the baseline + this delta. Open question for you.
 
 ## 3. AAL is numeric `0|1|2`; magic link = AAL1, passkey = AAL2
+
 - **Chose:** `type Aal = 0 | 1 | 2`. Email magic link authenticates at AAL1
   (single factor, inbox-bound). Passkey authenticates at AAL2 (phishing-resistant).
   Recovery code / threshold recovery land at AAL1 **and** quarantined.
@@ -40,19 +43,21 @@ one place to flip it.
 - **Change:** `aalForCredential` in `src/lib/assurance.ts`.
 
 ## 4. Credential mutations require AAL2; first-passkey bootstrap is the exception
+
 - **Chose:** adding/removing an email or passkey, promoting a primary email, starting
   recovery, and starting merge all require AAL2. **Exception:** a brand-new
   magic-link-only user (no passkey yet) may enroll their FIRST passkey from an AAL1
-  session — otherwise they could never reach AAL2. Adding a *second login email* or a
-  *second/replacement passkey* requires AAL2.
+  session — otherwise they could never reach AAL2. Adding a _second login email_ or a
+  _second/replacement passkey_ requires AAL2.
 - **Why:** kills the takeover scenario (a leaked magic link is AAL1 and cannot graft
   an attacker credential) without bricking new accounts.
 - **Risk to weigh:** the bootstrap exception means a leaked magic link on a
   passkey-less account CAN enroll the first passkey. Mitigation: that enrollment is
-  quarantined + notified, and any *second* mutation needs AAL2. Acceptable? Your call.
+  quarantined + notified, and any _second_ mutation needs AAL2. Acceptable? Your call.
 - **Change:** `requireAal` call sites + the bootstrap check in the add-passkey action.
 
 ## 5. New-credential quarantine window = 72h
+
 - **Chose:** `CREDENTIAL_QUARANTINE_MS = 72h`. A newly added email/passkey can sign in
   but can't mutate other credentials or start recovery/merge for 72h.
 - **Why:** long enough that the notification email ("a credential was added") reaches a
@@ -61,6 +66,7 @@ one place to flip it.
 - **Change:** `CREDENTIAL_QUARANTINE_MS` in `src/lib/assurance.ts`.
 
 ## 6. Recovery codes: 10 codes, single-use, Argon2id, regenerate invalidates
+
 - **Chose:** generate 10 codes (`base32`, grouped), show once, store only Argon2id
   hashes (same hasher as `OidcClient.clientSecretHash`). Regenerating deletes all
   unused codes. Redeeming one consumes it and lands a quarantined AAL1 session.
@@ -68,18 +74,19 @@ one place to flip it.
 - **Change:** `RECOVERY_CODE_COUNT` in the recovery-codes lib.
 
 ## 7. Badge IAL mapping + recovery weights (THE scoring — most worth your review)
+
 - **Context:** your idea — recovery weight should reflect how hard a credential is to
   forge or for an attacker to also hold. Passport >> Steam.
 - **Chose (proposed, tunable):**
 
-  | Badge type | IAL | Weight |
-  |---|---|---|
-  | `tlsn-attestation` (passport / gov-doc provenance) | IAL3 | 100 |
-  | `age-over-N`, `residency-*` backed by tlsn/gov doc | IAL2 | 60 |
-  | `oauth-account` (github/google) | IAL1 | 20 |
-  | `oauth-account` (discord/steam-class) | IAL1 | 10 |
-  | `email-domain` / `email-exact` | IAL1 | 15 |
-  | `invite-code` | IAL0 | 0 (not recovery-eligible) |
+  | Badge type                                         | IAL  | Weight                    |
+  | -------------------------------------------------- | ---- | ------------------------- |
+  | `tlsn-attestation` (passport / gov-doc provenance) | IAL3 | 100                       |
+  | `age-over-N`, `residency-*` backed by tlsn/gov doc | IAL2 | 60                        |
+  | `oauth-account` (github/google)                    | IAL1 | 20                        |
+  | `oauth-account` (discord/steam-class)              | IAL1 | 10                        |
+  | `email-domain` / `email-exact`                     | IAL1 | 15                        |
+  | `invite-code`                                      | IAL0 | 0 (not recovery-eligible) |
 
 - **`RECOVERY_THRESHOLD = 100`** — satisfiable by one gov-doc proof, OR a couple of
   IAL2 proofs, OR many low-value ones (deliberately hard: 5+ OAuth links). A single
@@ -91,6 +98,7 @@ one place to flip it.
   This is the knob you'll most likely want to turn — it's isolated on purpose.
 
 ## 8. Only LIVE re-proof counts for recovery; stored VCs and public badges don't
+
 - **Chose:** threshold recovery re-runs the actual plugin verification (re-do the
   OAuth dance / TLSNotary proof) bound to `RecoveryAttempt.nonce`. A stored
   `Badge.vcJwt` is never accepted (replay defense). `Badge.isPublic` badges do not
@@ -102,6 +110,7 @@ one place to flip it.
   hooks.
 
 ## 9. Recovered / quarantined session capabilities
+
 - **Chose:** a session obtained via recovery code OR threshold recovery is AAL1 +
   flagged `recovered`. It can: enroll a fresh passkey (to climb to AAL2), view the
   account. It cannot: remove other credentials, change primary email, start a merge,
@@ -112,6 +121,7 @@ one place to flip it.
 - **Change:** the capability checks keyed on the `recovered` session flag.
 
 ## 10. Single-primary-email enforced in app logic, not a DB constraint
+
 - **Context:** Postgres can't portably express "exactly one `isPrimary=true` per
   user" via Prisma.
 - **Chose:** enforce inside the transaction that flips primary (clear others, set one).
@@ -121,6 +131,7 @@ one place to flip it.
   want belt-and-suspenders).
 
 ## 11. `SubjectOverride` has no `@@unique([clientId, sub])`
+
 - **Context:** during the merge reversal window the donor still exists (tombstoned).
   A unique on `(clientId, sub)` could collide with the donor's still-derivable sub.
 - **Chose:** no such constraint; the invariant ("a client never sees one sub for two
@@ -128,6 +139,7 @@ one place to flip it.
 - **Change:** add the constraint only if reversal is dropped.
 
 ## 12. Merge survivor = the account you're signed into; donor proven second
+
 - **Chose:** you start merge from the account you want to KEEP (already AAL2), then
   prove control of the donor (passkey or magic-link round-trip). Survivor keeps its
   RP identities for free; the override seam carries the donor's over.
@@ -135,11 +147,13 @@ one place to flip it.
 - **Change:** the merge ceremony entry point.
 
 ## 13. Merge reversal window = 7 days; ban sticky-OR; admin never escalates
+
 - **Chose:** donor tombstoned, hard-deleted after 7 days. `isBanned` survivor = donor
   OR survivor. `isAdmin` = survivor's existing value (merge never grants admin).
 - **Change:** `MERGE_REVERSAL_DAYS`; the flag-merge rules in the merge transaction.
 
 ## 14. TOTP not built tonight
+
 - **Context:** you asked about TOTP. It fits the AAL model as an AAL2-when-paired
   factor, but it's weaker than the passkey already supported and isn't one of the five
   slices.
@@ -148,11 +162,73 @@ one place to flip it.
 - **Change:** add a TOTP credential table + enroll/verify flow later; the AAL plumbing
   already accepts it.
 
+## 15. Acting-credential quarantine can't be fully enforced yet
+
+- **Context:** the design says a _quarantined_ credential can sign in but can't mutate
+  other credentials. The session JWT carries the AAL but NOT which credential row
+  authenticated it, so the server can't say "the credential this session was obtained
+  with is itself quarantined."
+- **Chose:** enforce what the JWT proves — the AAL2 floor — and additionally fail
+  closed on `session.recovered`. This already blocks the main attack (a quarantined
+  magic-link credential is AAL1 and can't pass the AAL2 floor).
+- **Gap:** a quarantined _passkey_ (AAL2) could pass the floor. To close this fully,
+  thread the authenticating credential id onto the JWT and reject if it's quarantined.
+- **Change:** add a `cred` claim in `auth.config.ts` jwt callback + check it in the
+  credential actions. Small follow-on.
+
+## 16. reverseMerge restores ownership, not content
+
+- **Chose:** `reverseMerge` (within the 7-day window) un-tombstones the donor, moves
+  every snapshotted row back by primary key, recreates deleted collision losers,
+  restores flags + demoted primary emails, and removes created subject-overrides.
+- **Does NOT restore:** if the survivor _edited the content_ of a moved row during the
+  window, reversal moves the row back to the donor with the edited content (it restores
+  ownership, not the pre-merge field values). Documented in the `reverseMerge` doc
+  comment. Acceptable for a 7-day undo window; full content-versioning is out of scope.
+
+## 17. Live re-proof wired for email-domain only; oauth + tlsn are typed stubs
+
+- **Chose:** slice 4's threshold _accounting_ is complete and exhaustively tested, and
+  `email-domain` re-proof is wired end-to-end (nonce-bound single-use link).
+  `oauth-account` and `tlsn-attestation` re-proof are typed integration points that
+  **throw "not yet wired"** — they are not faked. `email-exact` is eligible/weighted
+  but has no plugin in the repo, so no live path exists.
+- **Impact:** today, threshold recovery is only reachable by someone with an
+  `email-domain` badge. Wiring the OAuth dance (state === attempt nonce) and the
+  TLSNotary re-presentation is the remaining work to make slice 4 fully useful.
+- **Change:** implement the two `complete*ReProof` functions in
+  `recovery-threshold-actions.ts`.
+
+## 18. Donor-proof hand-off is copy-paste (v1)
+
+- **Chose:** the merge donor authenticates via a magic link to a verified donor email;
+  the donor confirm page shows a single-use code the human pastes into the survivor's
+  session to finish the merge. Keeps `confirmMerge` inside the survivor's AAL2 session.
+- **Alt:** a fully redirected ceremony (no paste). More polish, more flow state.
+- **Change:** `merge-actions.ts` + the `/settings/merge/confirm-donor` page.
+
+## 19. Not applied to the live DB; no end-to-end run yet
+
+- All work is on the `feat/account-assurance-recovery` worktree against the scratch DB
+  `minister_spike`. The live dev DB and `main` are untouched. The schema change has NOT
+  been applied to the live DB (see #2).
+- **Tested:** typecheck clean; 323 unit tests green (pure logic + crypto, Prisma mocked
+  following the house pattern). **Not yet run:** the DB-backed server actions, the
+  WebAuthn ceremonies, the email round-trips, and the OIDC flows against a live server —
+  these need an integration/e2e pass (and the e2e helpers may need to resolve users via
+  `UserEmail`). Nothing DB-backed has executed against Postgres yet.
+
 ---
 
-## Status of each slice (updated as built)
+## Build status by slice
 
-See the final session report / commit log on this branch for what is fully
-implemented + tested vs. scaffolded. Anything not green is called out explicitly —
-nothing is labeled done that hasn't run.
-</content>
+| Slice                        | Logic + tests             | UI    | Notes                                          |
+| ---------------------------- | ------------------------- | ----- | ---------------------------------------------- |
+| Spine (AAL/adapter/sub-seam) | done, 38 tests            | n/a   | verified by orchestrator                       |
+| 1+2 Credentials + step-up    | done, 28 tests            | built | acting-cred quarantine gap (#15)               |
+| 3 Recovery codes             | done, 17 tests            | built | actions not live-DB-tested                     |
+| 4 Weighted badge recovery    | accounting done, 30 tests | built | only email-domain re-proof wired (#17)         |
+| 5 Account merge              | done, 25 tests            | built | reverseMerge content caveat (#16); paste (#18) |
+
+323 unit tests total, typecheck + lint clean. Nothing here has been run against a live
+database or browser — see #19.

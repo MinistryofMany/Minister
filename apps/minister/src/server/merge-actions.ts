@@ -62,7 +62,10 @@ async function origin(): Promise<string> {
 async function resolveVerifiedUserIdByEmail(email: string): Promise<string | null> {
   const owned = await prisma.userEmail.findUnique({
     where: { email },
-    select: { verifiedAt: true, user: { select: { id: true, isBanned: true, mergedIntoUserId: true } } },
+    select: {
+      verifiedAt: true,
+      user: { select: { id: true, isBanned: true, mergedIntoUserId: true } },
+    },
   });
   if (!owned || !owned.verifiedAt) return null;
   const u = owned.user;
@@ -304,7 +307,10 @@ export async function confirmMerge(
     return { ok: false, error: "Your account is no longer in a state that can absorb a merge." };
   }
   if (!donor || donor.mergedIntoUserId !== null) {
-    return { ok: false, error: "That account can no longer be merged (already merged or missing)." };
+    return {
+      ok: false,
+      error: "That account can no longer be merged (already merged or missing).",
+    };
   }
   // A banned donor is NOT a hard block on the merge itself — the survivor inherits
   // the ban via sticky-OR (DESIGNDECISIONS #13). We allow it through to

@@ -41,8 +41,9 @@ export default async function MergePage() {
               settings stay exactly as they are.
             </li>
             <li>
-              <strong>The other account&apos;s data moves here:</strong> its emails, passkeys, linked
-              logins, badges, share links, and recovery codes all become part of this account.
+              <strong>The other account&apos;s data moves here:</strong> its emails, passkeys,
+              linked logins, badges, share links, and recovery codes all become part of this
+              account.
             </li>
             <li>
               <strong>Apps you signed into stay connected.</strong> For any app the other account
@@ -50,10 +51,10 @@ export default async function MergePage() {
               identity, so you stay signed in there.
             </li>
             <li>
-              <strong>One thing can&apos;t be carried over:</strong> if BOTH accounts signed into the
-              same app, that app can only ever see one of you. This account&apos;s identity wins
-              there, and the other account&apos;s identity for that one app is left behind. You&apos;ll
-              see the exact list after the merge.
+              <strong>One thing can&apos;t be carried over:</strong> if BOTH accounts signed into
+              the same app, that app can only ever see one of you. This account&apos;s identity wins
+              there, and the other account&apos;s identity for that one app is left behind.
+              You&apos;ll see the exact list after the merge.
             </li>
             <li>
               <strong>The other account is closed</strong> and can be restored for a limited time if

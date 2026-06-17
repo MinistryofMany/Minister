@@ -78,7 +78,13 @@ const { db, client } = vi.hoisted(() => {
     nextId,
     recoveryAttempt: {
       create: vi.fn(
-        async ({ data, select }: { data: Partial<AttemptRow>; select?: Record<string, boolean> }) => {
+        async ({
+          data,
+          select,
+        }: {
+          data: Partial<AttemptRow>;
+          select?: Record<string, boolean>;
+        }) => {
           const row: AttemptRow = {
             id: nextId("ra"),
             userId: data.userId!,
@@ -155,7 +161,11 @@ const { db, client } = vi.hoisted(() => {
       create: vi.fn(
         async ({ data }: { data: { attemptId: string; badgeType: string; weight: number } }) => {
           // (attemptId, badgeType) is @@unique — the no-double-count gate.
-          if (store.proofs.some((p) => p.attemptId === data.attemptId && p.badgeType === data.badgeType)) {
+          if (
+            store.proofs.some(
+              (p) => p.attemptId === data.attemptId && p.badgeType === data.badgeType,
+            )
+          ) {
             p2002();
           }
           const row: ProofRow = { id: nextId("rp"), ...data };
@@ -436,11 +446,17 @@ describe("recordReProof — threshold satisfaction shapes", () => {
         { type: "residency-state" },
       ],
     });
-    expect(await recordReProof(attemptId, "email-domain")).toMatchObject({ satisfied: false, accumulatedScore: 15 });
-    expect(await recordReProof(attemptId, "email-exact")).toMatchObject({ satisfied: false, accumulatedScore: 30 });
-    expect(
-      await recordReProof(attemptId, "oauth-account", { provenance: "github" }),
-    ).toMatchObject({ satisfied: false, accumulatedScore: 50 });
+    expect(await recordReProof(attemptId, "email-domain")).toMatchObject({
+      satisfied: false,
+      accumulatedScore: 15,
+    });
+    expect(await recordReProof(attemptId, "email-exact")).toMatchObject({
+      satisfied: false,
+      accumulatedScore: 30,
+    });
+    expect(await recordReProof(attemptId, "oauth-account", { provenance: "github" })).toMatchObject(
+      { satisfied: false, accumulatedScore: 50 },
+    );
     // residency-state is eligible? It is NOT in RECOVERY_ELIGIBLE_TYPES — only
     // oauth/email/tlsn are re-provable. So it must be rejected, proving that
     // weight alone never lets an un-re-provable type count.
@@ -513,7 +529,11 @@ describe("end-to-end accounting: satisfy then consume", () => {
     expect(reproof).toMatchObject({ ok: true, satisfied: true, accumulatedScore: 100 });
 
     const status = await getAttemptStatus(started.attemptId);
-    expect(status).toMatchObject({ status: "satisfied", accumulatedScore: 100, provenTypes: ["tlsn-attestation"] });
+    expect(status).toMatchObject({
+      status: "satisfied",
+      accumulatedScore: 100,
+      provenTypes: ["tlsn-attestation"],
+    });
 
     const consumed = await consumeSatisfiedAttempt(started.attemptId);
     expect(consumed).toEqual({ ok: true, ticket: "ticket-for:user_99", userId: "user_99" });
@@ -526,7 +546,9 @@ describe("getAttemptStatus", () => {
   });
 
   it("reflects the proven types and live tally", async () => {
-    const { attemptId } = seedAttempt({ holds: [{ type: "email-domain" }, { type: "oauth-account" }] });
+    const { attemptId } = seedAttempt({
+      holds: [{ type: "email-domain" }, { type: "oauth-account" }],
+    });
     await recordReProof(attemptId, "email-domain");
     await recordReProof(attemptId, "oauth-account", { provenance: "github" });
     const status = await getAttemptStatus(attemptId);

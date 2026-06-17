@@ -198,8 +198,7 @@ function verifyLinkBase(): string {
   // Built so the verify link is absolute in mail. NEXTAUTH_URL/AUTH_URL is the
   // canonical app origin; fall back to localhost in dev. We never embed the
   // token in the audit log.
-  const base =
-    process.env.AUTH_URL ?? process.env.NEXTAUTH_URL ?? "http://localhost:3000";
+  const base = process.env.AUTH_URL ?? process.env.NEXTAUTH_URL ?? "http://localhost:3000";
   return base.replace(/\/$/, "");
 }
 
@@ -655,7 +654,9 @@ async function run<T>(fn: () => Promise<T>): Promise<ActionResult<T>> {
   }
 }
 
-export function addEmailAction(email: string): Promise<ActionResult<{ id: string; email: string }>> {
+export function addEmailAction(
+  email: string,
+): Promise<ActionResult<{ id: string; email: string }>> {
   return run(() => addEmail(email));
 }
 

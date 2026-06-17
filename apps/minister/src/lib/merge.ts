@@ -360,8 +360,14 @@ export async function mergeAccounts(
     }
 
     // The collision-free re-points. Badge has no per-user unique, so all move.
-    await tx.account.updateMany({ where: { userId: donorUserId }, data: { userId: survivorUserId } });
-    await tx.session.updateMany({ where: { userId: donorUserId }, data: { userId: survivorUserId } });
+    await tx.account.updateMany({
+      where: { userId: donorUserId },
+      data: { userId: survivorUserId },
+    });
+    await tx.session.updateMany({
+      where: { userId: donorUserId },
+      data: { userId: survivorUserId },
+    });
     await tx.authenticator.updateMany({
       where: { userId: donorUserId },
       data: { userId: survivorUserId },

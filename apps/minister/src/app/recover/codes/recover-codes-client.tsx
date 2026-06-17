@@ -38,9 +38,7 @@ export function RecoverCodesClient() {
         return;
       }
       if (result.reason === "rate-limited") {
-        setError(
-          `Too many attempts. Wait about ${result.retryAfterSeconds}s and try again.`,
-        );
+        setError(`Too many attempts. Wait about ${result.retryAfterSeconds}s and try again.`);
       } else {
         // Opaque on purpose — never reveals whether the email or the code was
         // the wrong part.

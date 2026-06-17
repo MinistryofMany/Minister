@@ -1,11 +1,7 @@
 import { randomBytes } from "node:crypto";
 
 import { Prisma } from "@/generated/prisma";
-import {
-  recoveryWeightFor,
-  RECOVERY_ELIGIBLE_TYPES,
-  RECOVERY_THRESHOLD,
-} from "@/lib/assurance";
+import { recoveryWeightFor, RECOVERY_ELIGIBLE_TYPES, RECOVERY_THRESHOLD } from "@/lib/assurance";
 import { prisma } from "@/lib/prisma";
 import { issueRecoveryTicket } from "@/lib/recovery-ticket";
 
@@ -60,12 +56,7 @@ const NONCE_BYTES = 24;
 // trip), short enough that a half-finished attempt can't sit around.
 export const RECOVERY_ATTEMPT_TTL_MS = 15 * 60 * 1000;
 
-export type RecoveryAttemptStatus =
-  | "pending"
-  | "satisfied"
-  | "consumed"
-  | "expired"
-  | "failed";
+export type RecoveryAttemptStatus = "pending" | "satisfied" | "consumed" | "expired" | "failed";
 
 export interface StartedRecoveryAttempt {
   attemptId: string;

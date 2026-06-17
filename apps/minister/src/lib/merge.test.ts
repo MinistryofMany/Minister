@@ -136,44 +136,48 @@ const h = vi.hoisted(() => {
           return { count };
         },
       ),
-      update: vi.fn(async (args: { where: Record<string, unknown>; data: Record<string, unknown> }) => {
-        const flat: Record<string, unknown> = {};
-        for (const [k, v] of Object.entries(args.where)) {
-          if (v !== null && typeof v === "object" && !(v instanceof Date)) {
-            Object.assign(flat, v as Record<string, unknown>);
-          } else {
-            flat[k] = v;
+      update: vi.fn(
+        async (args: { where: Record<string, unknown>; data: Record<string, unknown> }) => {
+          const flat: Record<string, unknown> = {};
+          for (const [k, v] of Object.entries(args.where)) {
+            if (v !== null && typeof v === "object" && !(v instanceof Date)) {
+              Object.assign(flat, v as Record<string, unknown>);
+            } else {
+              flat[k] = v;
+            }
           }
-        }
-        const r = rows().find((row) => matchWhere(row, flat));
-        if (!r) {
-          const err = new Error("Record to update not found.") as Error & { code: string };
-          err.code = "P2025";
-          throw err;
-        }
-        for (const [k, v] of Object.entries(args.data)) {
-          if (v !== null && typeof v === "object" && "increment" in (v as object)) {
-            r[k] = (Number(r[k]) || 0) + Number((v as { increment: number }).increment);
-          } else {
-            r[k] = v;
+          const r = rows().find((row) => matchWhere(row, flat));
+          if (!r) {
+            const err = new Error("Record to update not found.") as Error & { code: string };
+            err.code = "P2025";
+            throw err;
           }
-        }
-        return { ...r };
-      }),
+          for (const [k, v] of Object.entries(args.data)) {
+            if (v !== null && typeof v === "object" && "increment" in (v as object)) {
+              r[k] = (Number(r[k]) || 0) + Number((v as { increment: number }).increment);
+            } else {
+              r[k] = v;
+            }
+          }
+          return { ...r };
+        },
+      ),
       deleteMany: vi.fn(async (args: { where: Record<string, unknown> }) => {
         const before = rows().length;
         tables[name] = rows().filter((r) => !matchWhere(r, args.where));
         return { count: before - tables[name].length };
       }),
-      create: vi.fn(async (args: { data: Record<string, unknown>; select?: Record<string, true> }) => {
-        const row = { ...args.data };
-        if (row.id === undefined) row.id = `gen_${idSeq++}`;
-        // Mirror the schema's nullable defaults Prisma would supply, so reads see
-        // the same shape (a not-yet-reversed MergeRecord has reversedAt === null).
-        if (name === "mergeRecord" && row.reversedAt === undefined) row.reversedAt = null;
-        rows().push(row);
-        return { ...row };
-      }),
+      create: vi.fn(
+        async (args: { data: Record<string, unknown>; select?: Record<string, true> }) => {
+          const row = { ...args.data };
+          if (row.id === undefined) row.id = `gen_${idSeq++}`;
+          // Mirror the schema's nullable defaults Prisma would supply, so reads see
+          // the same shape (a not-yet-reversed MergeRecord has reversedAt === null).
+          if (name === "mergeRecord" && row.reversedAt === undefined) row.reversedAt = null;
+          rows().push(row);
+          return { ...row };
+        },
+      ),
     };
   }
 
@@ -438,9 +442,7 @@ describe("mergeAccounts", () => {
     expect(summary.overridesCreated).toBe(0);
     expect(summary.strandedClients).toEqual(["rp-shared"]);
     // No override row was written for the shared client.
-    expect(
-      h.tables.subjectOverride.find((o) => o.clientId === "rp-shared"),
-    ).toBeUndefined();
+    expect(h.tables.subjectOverride.find((o) => o.clientId === "rp-shared")).toBeUndefined();
     // The snapshot records the stranded donor sub.
     const record = at(h.tables.mergeRecord, 0);
     const snap = record.snapshot as MergeSnapshot;

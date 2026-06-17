@@ -59,8 +59,9 @@ vi.mock("@/lib/prisma", () => {
         return { count };
       },
     ),
-    count: vi.fn(async ({ where }: { where: Record<string, unknown> }) =>
-      store.rows.filter((r) => matchWhere(r, where)).length,
+    count: vi.fn(
+      async ({ where }: { where: Record<string, unknown> }) =>
+        store.rows.filter((r) => matchWhere(r, where)).length,
     ),
   };
 
@@ -103,7 +104,9 @@ describe("recovery-codes", () => {
       expect(new Set(codes).size).toBe(codes.length);
       for (const code of codes) {
         // Three 4-char groups; alphabet excludes I, L, O, U.
-        expect(code).toMatch(/^[ABCDEFGHJKMNPQRSTVWXYZ0-9]{4}-[ABCDEFGHJKMNPQRSTVWXYZ0-9]{4}-[ABCDEFGHJKMNPQRSTVWXYZ0-9]{4}$/);
+        expect(code).toMatch(
+          /^[ABCDEFGHJKMNPQRSTVWXYZ0-9]{4}-[ABCDEFGHJKMNPQRSTVWXYZ0-9]{4}-[ABCDEFGHJKMNPQRSTVWXYZ0-9]{4}$/,
+        );
       }
     });
 

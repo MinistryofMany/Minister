@@ -374,9 +374,7 @@ describe("canAddPasskey bootstrap rule", () => {
 describe("markPasskeyEnrolled lifecycle", () => {
   it("leaves the bootstrap first passkey active and notifies", async () => {
     setSession(session(2));
-    db.authenticator.findMany.mockResolvedValue([
-      { credentialID: "cred_1", addedAt: new Date() },
-    ]);
+    db.authenticator.findMany.mockResolvedValue([{ credentialID: "cred_1", addedAt: new Date() }]);
     db.authenticator.update.mockResolvedValue({});
 
     const r = await markPasskeyEnrolled();
@@ -385,7 +383,10 @@ describe("markPasskeyEnrolled lifecycle", () => {
       where: { userId_credentialID: { userId: USER, credentialID: "cred_1" } },
       data: { status: "active", quarantinedUntil: null },
     });
-    expect(notifyCredentialChange).toHaveBeenCalledWith(USER, expect.stringContaining("first passkey"));
+    expect(notifyCredentialChange).toHaveBeenCalledWith(
+      USER,
+      expect.stringContaining("first passkey"),
+    );
   });
 
   it("quarantines a second passkey (requires AAL2) and notifies", async () => {
@@ -404,7 +405,10 @@ describe("markPasskeyEnrolled lifecycle", () => {
     });
     expect(arg.data.status).toBe("quarantined");
     expect(arg.data.quarantinedUntil).toBeInstanceOf(Date);
-    expect(notifyCredentialChange).toHaveBeenCalledWith(USER, expect.stringContaining("quarantined"));
+    expect(notifyCredentialChange).toHaveBeenCalledWith(
+      USER,
+      expect.stringContaining("quarantined"),
+    );
   });
 
   it("rejects finalizing a second passkey from a sub-AAL2 session", async () => {

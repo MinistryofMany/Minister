@@ -198,7 +198,9 @@ export function CredentialsManager({ initial }: { initial: CredentialListing }) 
                       ) : (
                         <Badge tone="pending">Unverified</Badge>
                       )}
-                      {e.status === "quarantined" ? <Badge tone="quarantined">Quarantined</Badge> : null}
+                      {e.status === "quarantined" ? (
+                        <Badge tone="quarantined">Quarantined</Badge>
+                      ) : null}
                     </div>
                   </div>
                   <div className="flex shrink-0 gap-2">
@@ -209,7 +211,11 @@ export function CredentialsManager({ initial }: { initial: CredentialListing }) 
                         variant="outline"
                         disabled={pending}
                         onClick={() =>
-                          dispatch(() => setPrimaryEmailAction(e.id), undefined, "Primary email updated.")
+                          dispatch(
+                            () => setPrimaryEmailAction(e.id),
+                            undefined,
+                            "Primary email updated.",
+                          )
                         }
                       >
                         Make primary
@@ -266,7 +272,9 @@ export function CredentialsManager({ initial }: { initial: CredentialListing }) 
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
           {listing.passkeys.length === 0 ? (
-            <p className="text-sm text-neutral-500">No passkeys yet. Add one to secure your account.</p>
+            <p className="text-sm text-neutral-500">
+              No passkeys yet. Add one to secure your account.
+            </p>
           ) : (
             <ul className="flex flex-col divide-y divide-neutral-200 dark:divide-neutral-800">
               {listing.passkeys.map((p) => (
@@ -292,7 +300,11 @@ export function CredentialsManager({ initial }: { initial: CredentialListing }) 
                       ) {
                         return;
                       }
-                      dispatch(() => removePasskeyAction(p.credentialID), undefined, "Passkey removed.");
+                      dispatch(
+                        () => removePasskeyAction(p.credentialID),
+                        undefined,
+                        "Passkey removed.",
+                      );
                     }}
                     aria-label="Remove passkey"
                   >
@@ -302,7 +314,13 @@ export function CredentialsManager({ initial }: { initial: CredentialListing }) 
               ))}
             </ul>
           )}
-          <Button type="button" variant="outline" className="self-start" disabled={pending} onClick={handleAddPasskey}>
+          <Button
+            type="button"
+            variant="outline"
+            className="self-start"
+            disabled={pending}
+            onClick={handleAddPasskey}
+          >
             Add a passkey
           </Button>
         </CardContent>
@@ -352,13 +370,10 @@ export function CredentialsManager({ initial }: { initial: CredentialListing }) 
 type BadgeTone = "active" | "primary" | "pending" | "quarantined";
 
 const TONE: Record<BadgeTone, string> = {
-  active:
-    "bg-green-100 text-green-800 dark:bg-green-950 dark:text-green-300",
+  active: "bg-green-100 text-green-800 dark:bg-green-950 dark:text-green-300",
   primary: "bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300",
-  pending:
-    "bg-neutral-100 text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300",
-  quarantined:
-    "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300",
+  pending: "bg-neutral-100 text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300",
+  quarantined: "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300",
 };
 
 function Badge({ tone, children }: { tone: BadgeTone; children: React.ReactNode }) {

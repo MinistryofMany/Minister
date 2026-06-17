@@ -190,7 +190,8 @@ export function RecoverBadgesClient() {
 
   // Phase 2/3: drive re-proofs and watch the score.
   const remaining = score ? Math.max(0, score.requiredScore - score.accumulatedScore) : 0;
-  const canEmailReProof = attempt.provableTypes.includes("email-domain") && attempt.domains.length > 0;
+  const canEmailReProof =
+    attempt.provableTypes.includes("email-domain") && attempt.domains.length > 0;
 
   return (
     <div className="flex flex-col gap-4">
@@ -238,8 +239,8 @@ export function RecoverBadgesClient() {
         >
           <p className="text-sm font-medium">Re-prove an email domain</p>
           <p className="text-xs text-neutral-500">
-            Enter an address at one of these domains: {attempt.domains.join(", ")}. We&apos;ll send a
-            one-time link to confirm you still control it.
+            Enter an address at one of these domains: {attempt.domains.join(", ")}. We&apos;ll send
+            a one-time link to confirm you still control it.
           </p>
           <Input
             type="email"
