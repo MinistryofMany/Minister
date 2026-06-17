@@ -2,6 +2,7 @@ import { cache } from "react";
 import type { Session } from "next-auth";
 
 import { auth } from "@/auth";
+import type { Aal } from "@/lib/assurance";
 import { prisma } from "@/lib/prisma";
 
 export interface SessionFlags {
@@ -31,11 +32,20 @@ const loadSessionFlags = cache(async (): Promise<SessionFlags | null> => {
   const expectedGen = session.sessionGeneration ?? 0;
   const fresh = await prisma.user.findUnique({
     where: { id: session.user.id },
-    select: { sessionGeneration: true, isAdmin: true, isBanned: true },
+    select: {
+      sessionGeneration: true,
+      isAdmin: true,
+      isBanned: true,
+      mergedIntoUserId: true,
+    },
   });
   if (!fresh) return null;
   if (fresh.sessionGeneration !== expectedGen) return null;
   if (fresh.isBanned) return null;
+  // A merged (tombstoned) account is treated as signed out, same as a ban:
+  // the JWT keeps verifying at the Edge, but this layer rejects it. The
+  // user now lives under the survivor account and must sign in there.
+  if (fresh.mergedIntoUserId !== null) return null;
 
   return { session, isAdmin: fresh.isAdmin };
 });
@@ -70,4 +80,40 @@ export async function requireAdmin(): Promise<Session> {
     throw new Error("Not an admin");
   }
   return flags.session;
+}
+
+// Thrown when a sensitive operation requires a higher authentication
+// assurance level than the current session carries. Distinct from a plain
+// "Not signed in": the UI catches this specifically to route the user into
+// a step-up re-auth (enroll/use a passkey) rather than a full sign-in, and
+// carries the floor that was required for messaging.
+export class StepUpRequiredError extends Error {
+  readonly requiredAal: Aal;
+  readonly currentAal: Aal;
+
+  constructor(requiredAal: Aal, currentAal: Aal) {
+    super(`Step-up required: this action needs AAL${requiredAal} (session is AAL${currentAal})`);
+    this.name = "StepUpRequiredError";
+    this.requiredAal = requiredAal;
+    this.currentAal = currentAal;
+  }
+}
+
+// AAL floor guard for sensitive server actions (credential mutation,
+// primary-email promotion, starting recovery/merge — all AAL2 per
+// DESIGNDECISIONS #4). Throws StepUpRequiredError when the session is below
+// the floor (or has no AAL, e.g. a pre-AAL JWT), which the caller turns
+// into a step-up prompt. A missing session is a StepUpRequiredError from
+// AAL0 — callers that want a hard "not signed in" should gate on
+// requireSession() first.
+//
+// Note: this checks ONLY the AAL claim on the passed session. It does not
+// re-validate the session against the DB; pair it with requireSession()/
+// getCurrentSession() (which enforce gen/ban/merge) to get a fully-checked,
+// AAL-floored principal.
+export function requireAal(session: Session | null, floor: Aal): void {
+  const current: Aal = session?.aal ?? 0;
+  if (current < floor) {
+    throw new StepUpRequiredError(floor, current);
+  }
 }

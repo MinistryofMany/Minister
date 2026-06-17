@@ -9,9 +9,9 @@ import {
   ACCESS_TOKEN_TTL,
   mintAccessToken,
   mintIdToken,
-  pairwiseSub,
   verifyPkceS256,
 } from "@/lib/oidc-tokens";
+import { resolveSub } from "@/lib/oidc-subject";
 import { prisma } from "@/lib/prisma";
 import { audit } from "@/lib/audit";
 import { clientIpFrom, oidcTokenLimiter } from "@/lib/rate-limit";
@@ -147,7 +147,11 @@ export async function POST(request: Request) {
     return tokenError("invalid_grant", "user no longer exists");
   }
 
-  const sub = pairwiseSub(user.id, client.clientId);
+  // resolveSub consults the merge override seam (SubjectOverride) first,
+  // falling back to the pure pairwiseSub HMAC. The same sub is embedded in
+  // both the id_token and the access_token, so /oidc/userinfo (which reads
+  // the sub back off the access token) inherits the override for free.
+  const sub = await resolveSub(user.id, client.clientId);
   const issuer = await getIssuer();
 
   const minister_badges = await loadApprovedBadgeJwts(user.id, stored.approvedBadgeIds);

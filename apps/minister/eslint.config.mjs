@@ -17,4 +17,20 @@ export default [
       "next-env.d.ts",
     ],
   },
+  {
+    rules: {
+      // Allow underscore-prefixed names for intentionally-unused bindings:
+      // args reserved for an interface contract (e.g. a provenance param a
+      // function accepts for forward-compatibility but doesn't yet branch
+      // on) and imports kept only to anchor a `declare module` augmentation.
+      "@typescript-eslint/no-unused-vars": [
+        "warn",
+        {
+          argsIgnorePattern: "^_",
+          varsIgnorePattern: "^_",
+          caughtErrorsIgnorePattern: "^_",
+        },
+      ],
+    },
+  },
 ];
