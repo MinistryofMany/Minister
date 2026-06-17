@@ -101,7 +101,7 @@ test("H1: a tampered consent including an unrequested badge discloses only the r
   const page = await ctx.newPage();
   await signInViaMagicLink(page, email);
   const userId = await prisma.user
-    .findUniqueOrThrow({ where: { email }, select: { id: true } })
+    .findFirstOrThrow({ where: { email }, select: { id: true } })
     .then((u) => u.id);
 
   // The RP requests ONLY age-over-21. The user also holds an email-domain

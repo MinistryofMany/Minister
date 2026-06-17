@@ -110,7 +110,10 @@ export async function issueEmailDomainBadge(page: Page, proofEmail: string): Pro
 }
 
 export async function userIdByEmail(email: string): Promise<string> {
-  const user = await prisma.user.findUnique({
+  // email is no longer @unique on User (multi-credential identity); resolve
+  // against the denormalized primary-email cache. Tests seed one user per
+  // throwaway address so findFirst is unambiguous.
+  const user = await prisma.user.findFirst({
     where: { email },
     select: { id: true },
   });
@@ -119,7 +122,7 @@ export async function userIdByEmail(email: string): Promise<string> {
 }
 
 export async function grantAdmin(email: string): Promise<void> {
-  await prisma.user.update({ where: { email }, data: { isAdmin: true } });
+  await prisma.user.updateMany({ where: { email }, data: { isAdmin: true } });
 }
 
 // Insert a public (PKCE-only, no secret) OIDC client directly. Enough for
