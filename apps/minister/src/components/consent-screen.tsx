@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useMemo, useState, useTransition } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -20,6 +20,16 @@ interface BadgeChoiceGroup {
   badges: BadgeChoice[];
 }
 
+// One row of the locked "you've already proven these to this platform"
+// section: a badge type already disclosed to this client AND requested by
+// this room, with the user's holdings. Rendered auto-checked and disabled.
+interface AlreadyGrantedType {
+  type: string;
+  typeLabel: string;
+  description: string;
+  badges: BadgeChoice[];
+}
+
 interface Props {
   clientName: string;
   wantsProfile: boolean;
@@ -31,6 +41,12 @@ interface Props {
     avatarUrl: string | null;
   };
   badgeChoices: BadgeChoiceGroup[];
+  // Phase-3 transparency: badge types already disclosed to this client AND
+  // requested by this room. Rendered in a separate locked section, auto-
+  // checked and disabled (cannot be unticked). The server independently
+  // forces these into the candidate disclosure, so the lock is a UX
+  // affordance, not the security boundary.
+  alreadyGranted: AlreadyGrantedType[];
   // Present when the RP sent a structured minister_policy: render the
   // requirement as a choice instead of flat independent groups.
   policyView: PolicyConsentView | null;
@@ -42,6 +58,7 @@ export function ConsentScreen({
   wantsProfile,
   profilePreview,
   badgeChoices,
+  alreadyGranted,
   policyView,
   requestToken,
 }: Props) {
@@ -50,26 +67,45 @@ export function ConsentScreen({
   // pre-selects the most-anonymous minimal satisfying set (the user can
   // override to another satisfying choice). The `profile` scope is split
   // into independent name/avatar grants, each default OFF.
+  // Locked ids: every badge in the "already proven" section. These seed the
+  // selection as `true` and can never be toggled off (transparency: re-hiding
+  // an already-disclosed type from the same client buys no privacy). The
+  // server forces them in regardless, so this is purely a UX affordance.
+  const lockedIds = useMemo(
+    () => new Set(alreadyGranted.flatMap((g) => g.badges.map((b) => b.id))),
+    [alreadyGranted],
+  );
+
   const [nameAllowed, setNameAllowed] = useState(false);
   const [avatarAllowed, setAvatarAllowed] = useState(false);
-  const [selectedBadges, setSelectedBadges] = useState<Record<string, boolean>>(() =>
-    policyView ? Object.fromEntries(policyView.preselectedBadgeIds.map((id) => [id, true])) : {},
-  );
+  const [selectedBadges, setSelectedBadges] = useState<Record<string, boolean>>(() => {
+    const seed: Record<string, boolean> = {};
+    if (policyView) for (const id of policyView.preselectedBadgeIds) seed[id] = true;
+    // Locked (already-granted) badges start selected and stay selected.
+    for (const g of alreadyGranted) for (const b of g.badges) seed[b.id] = true;
+    return seed;
+  });
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
 
   function toggleBadge(id: string) {
+    if (lockedIds.has(id)) return; // locked: cannot uncheck
     setSelectedBadges((m) => ({ ...m, [id]: !m[id] }));
   }
 
   // Radio semantics for a "satisfy one of" group: selecting an option in
   // the group clears every other option in that group so the user can
   // never disclose two satisfying branches at once. (The server minimizes
-  // authoritatively regardless; this is the UX guard.)
+  // authoritatively regardless; this is the UX guard.) Locked ids are never
+  // part of a pickable group, so exclusivity never clears them.
   function selectExclusive(groupIds: string[], id: string) {
+    if (lockedIds.has(id)) return;
     setSelectedBadges((m) => {
       const next = { ...m };
-      for (const gid of groupIds) next[gid] = gid === id;
+      for (const gid of groupIds) {
+        if (lockedIds.has(gid)) continue;
+        next[gid] = gid === id;
+      }
       return next;
     });
   }
@@ -169,6 +205,54 @@ export function ConsentScreen({
                 </span>
               </span>
             </label>
+          </CardContent>
+        </Card>
+      ) : null}
+
+      {alreadyGranted.length > 0 ? (
+        <Card className="border-neutral-300 bg-neutral-50 dark:border-neutral-700 dark:bg-neutral-900/40">
+          <CardContent className="space-y-3 py-4">
+            <div>
+              <h3 className="text-sm font-semibold">
+                You&apos;ve already proven these to {clientName}
+              </h3>
+              <p className="text-sm text-neutral-600 dark:text-neutral-400">
+                Already shared with this platform — included automatically when this room needs it.
+              </p>
+            </div>
+            <ul className="flex flex-col gap-2">
+              {alreadyGranted.map((g) => (
+                <li
+                  key={g.type}
+                  className="rounded-md border border-neutral-200 p-2 dark:border-neutral-800"
+                >
+                  <span className="block text-sm font-medium">{g.typeLabel}</span>
+                  <ul className="mt-1 flex flex-col gap-2">
+                    {g.badges.map((b) => (
+                      <li key={b.id} className="flex items-start gap-3">
+                        <input
+                          id={`granted-${b.id}`}
+                          type="checkbox"
+                          className="mt-1 h-4 w-4"
+                          checked
+                          disabled
+                          readOnly
+                          data-already-granted="true"
+                        />
+                        <label htmlFor={`granted-${b.id}`} className="flex-1 text-sm">
+                          <span className="block font-medium">{b.label}</span>
+                          {b.summary ? (
+                            <span className="text-neutral-600 dark:text-neutral-400">
+                              {b.summary}
+                            </span>
+                          ) : null}
+                        </label>
+                      </li>
+                    ))}
+                  </ul>
+                </li>
+              ))}
+            </ul>
           </CardContent>
         </Card>
       ) : null}

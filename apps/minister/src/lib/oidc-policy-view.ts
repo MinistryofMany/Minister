@@ -62,6 +62,48 @@ export interface PolicyConsentView {
   gaps: string[];
 }
 
+// One row of the locked "you've already proven these to this platform"
+// transparency section: a badge TYPE the user has already disclosed to this
+// client AND that this room requests, with the user's holdings of that type.
+// Rendered auto-checked and disabled. Plain object across the RSC boundary.
+export interface AlreadyGrantedType {
+  type: string;
+  typeLabel: string;
+  description: string;
+  badges: PolicyBadgeOption[];
+}
+
+// Build the locked "already proven" section. Shows ONLY types that are BOTH
+// already-granted to this client AND requested by this room (F-2(a):
+// per-room minimal disclosure — a previously-granted type the room does not
+// request is not shown and not disclosed for this room), and of which the
+// user still holds at least one badge (nothing to lock otherwise). The
+// caller passes the already-granted ∩ requested type set; this resolves
+// each to the user's holdings for display.
+//
+// NOTE: this section is a TRANSPARENCY display. What is actually disclosed
+// is decided server-side by minimizeToPolicy over (submitted ∪ granted-
+// relevant), which may trim a shown type away if this room's minimal
+// satisfying set does not need it.
+export function buildAlreadyGrantedView(
+  alreadyGrantedTypes: readonly string[],
+  badges: DisplayBadge[],
+): AlreadyGrantedType[] {
+  const out: AlreadyGrantedType[] = [];
+  for (const type of alreadyGrantedTypes) {
+    const held = leafOptions({ type }, badges);
+    if (held.length === 0) continue; // nothing to lock if the user holds none
+    const meta = getBadgeType(type);
+    out.push({
+      type,
+      typeLabel: meta?.label ?? type,
+      description: meta?.description ?? `Badge of type ${type}.`,
+      badges: held,
+    });
+  }
+  return out;
+}
+
 function leafOptions(leaf: { type: string }, badges: DisplayBadge[]): PolicyBadgeOption[] {
   return badges
     .filter((b) => b.type === leaf.type)
@@ -135,6 +177,13 @@ export function buildPolicyConsentView(
   userBadges: UserBadge[],
   holderCounts: Map<string, number>,
   now: number,
+  // Phase-3: types already shown in the locked "already proven" section
+  // (group 2). Their leaves are excluded from this pickable group so each
+  // type appears in exactly one group. The server still folds the granted
+  // set into minimizeToPolicy authoritatively (oidc-actions), so excluding
+  // a granted leaf from the picker never under-discloses — it only avoids
+  // showing the same type twice.
+  excludeTypes: ReadonlySet<string> = new Set(),
 ): PolicyConsentView {
   const selection = selectMinimalAnonymitySet(policy, userBadges, holderCounts, now);
 
@@ -159,11 +208,27 @@ export function buildPolicyConsentView(
     branches = [policy];
   }
 
-  const leaves = branches.map((b) => buildLeafView(b, badges, userBadges, holderCounts, now));
+  const visibleBranches =
+    excludeTypes.size === 0
+      ? branches
+      : branches.filter((b) => {
+          const t = firstBadgeType(b);
+          return !(t !== null && excludeTypes.has(t));
+        });
+
+  const leaves = visibleBranches.map((b) =>
+    buildLeafView(b, badges, userBadges, holderCounts, now),
+  );
+
+  // Preselection covers the pickable (non-locked) leaves only — the locked
+  // section seeds its own ids in the consent screen. Drop any preselected id
+  // whose badge type is excluded (now shown locked instead).
+  const excludedBadgeIds = new Set(badges.filter((b) => excludeTypes.has(b.type)).map((b) => b.id));
+  const preselectedBadgeIds = selection.selectedBadgeIds.filter((id) => !excludedBadgeIds.has(id));
 
   return {
     group: { kind, required, leaves },
-    preselectedBadgeIds: selection.selectedBadgeIds,
+    preselectedBadgeIds,
     satisfiable: selection.satisfiable,
     gaps: selection.gaps,
   };

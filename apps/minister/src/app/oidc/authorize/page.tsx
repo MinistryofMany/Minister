@@ -8,7 +8,13 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { holderCountsByType } from "@/lib/anonymity-sets";
 import { loadUserBadges, summarizeAttributes, type DisplayBadge } from "@/lib/badges";
 import { buildErrorRedirect, validateAuthorizeRequest } from "@/lib/oidc-authorize";
-import { buildPolicyConsentView, type PolicyConsentView } from "@/lib/oidc-policy-view";
+import { grantedRelevantTypes, loadGrant } from "@/lib/oidc-grants";
+import {
+  buildAlreadyGrantedView,
+  buildPolicyConsentView,
+  type AlreadyGrantedType,
+  type PolicyConsentView,
+} from "@/lib/oidc-policy-view";
 import type { UserBadge } from "@/lib/oidc-policy";
 import { signOidcRequest } from "@/lib/oidc-request-token";
 import { prisma } from "@/lib/prisma";
@@ -58,7 +64,27 @@ export default async function OidcAuthorizePage({ searchParams }: PageProps) {
   const { request } = result;
   const requestToken = await signOidcRequest(request);
   const allBadges = await loadUserBadges(session.user.id);
-  const badgeChoices = buildBadgeChoices(request.scopes, allBadges);
+
+  // Phase-3 transparency: the badge TYPES this room requests, and the subset
+  // already durably granted to this client AND requested here. These move
+  // into the locked "you've already proven these" section (group 2) and are
+  // excluded from the new-selection groups (3) so each type appears once.
+  // A previously-granted type the room does NOT request is neither shown nor
+  // disclosed for this room (F-2(a) — per-room minimal disclosure).
+  const requestedBadgeTypes = new Set(
+    request.scopes.filter((s) => s.startsWith("badge:")).map((s) => s.slice("badge:".length)),
+  );
+  const grant = await loadGrant(session.user.id, request.clientId);
+  const alreadyGrantedTypes = grantedRelevantTypes(grant, requestedBadgeTypes);
+  const alreadyGranted: AlreadyGrantedType[] = buildAlreadyGrantedView(
+    alreadyGrantedTypes,
+    allBadges,
+  );
+  // Only types we actually surfaced in the locked section (the user holds a
+  // badge for them) are excluded from the new-selection groups.
+  const lockedTypes = new Set(alreadyGranted.map((g) => g.type));
+
+  const badgeChoices = buildBadgeChoices(request.scopes, allBadges, lockedTypes);
 
   // Phase-2: when the RP sent a structured policy, render the requirement
   // as a choice (satisfy one / n of several) with the most-anonymous
@@ -79,6 +105,7 @@ export default async function OidcAuthorizePage({ searchParams }: PageProps) {
       userBadges,
       await holderCountsByType(),
       nowSeconds,
+      lockedTypes,
     );
   }
 
@@ -110,6 +137,7 @@ export default async function OidcAuthorizePage({ searchParams }: PageProps) {
         wantsProfile={request.scopes.includes("profile")}
         profilePreview={profilePreview}
         badgeChoices={badgeChoices}
+        alreadyGranted={alreadyGranted}
         policyView={policyView}
         requestToken={requestToken}
       />
@@ -144,11 +172,18 @@ interface BadgeChoiceGroup {
   }>;
 }
 
-function buildBadgeChoices(scopes: string[], badges: DisplayBadge[]): BadgeChoiceGroup[] {
+function buildBadgeChoices(
+  scopes: string[],
+  badges: DisplayBadge[],
+  // Phase-3: badge types shown in the locked "already proven" section are
+  // excluded here so each type appears in exactly one group.
+  excludeTypes: ReadonlySet<string> = new Set(),
+): BadgeChoiceGroup[] {
   const groups: BadgeChoiceGroup[] = [];
   for (const scope of scopes) {
     if (!scope.startsWith("badge:")) continue;
     const badgeType = scope.slice("badge:".length);
+    if (excludeTypes.has(badgeType)) continue;
     // Pull name + description from the registry directly so they render
     // even when the user holds no badge of this type (the request is for
     // a *type*; the user may or may not have one).

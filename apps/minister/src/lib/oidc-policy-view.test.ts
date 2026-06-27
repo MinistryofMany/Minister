@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { buildPolicyConsentView } from "./oidc-policy-view";
+import { buildAlreadyGrantedView, buildPolicyConsentView } from "./oidc-policy-view";
 import type { DisplayBadge } from "./badges";
 import type { PolicyNode, UserBadge } from "./oidc-policy";
 
@@ -107,5 +107,47 @@ describe("buildPolicyConsentView", () => {
     const view = buildPolicyConsentView(policy, badges, userBadges, COUNTS, NOW);
     const leaf = view.group.leaves[0]!;
     expect(leaf.options.map((o) => o.id).sort()).toEqual(["ba1", "ba2"]);
+  });
+
+  it("excludeTypes drops the already-granted leaf from the pickable group", () => {
+    // anyOf{age-over-18, residency-country}; age-over-18 already granted →
+    // group 3 (pickable) shows only residency-country; the granted leaf's
+    // preselected id is removed (it is shown locked in group 2 instead).
+    const policy: PolicyNode = {
+      anyOf: [{ badge: { type: "age-over-18" } }, { badge: { type: "residency-country" } }],
+    };
+    const badges = [db("a18", "age-over-18"), db("rc", "residency-country")];
+    const userBadges = [ub("a18", "age-over-18"), ub("rc", "residency-country")];
+    const view = buildPolicyConsentView(
+      policy,
+      badges,
+      userBadges,
+      COUNTS,
+      NOW,
+      new Set(["age-over-18"]),
+    );
+    expect(view.group.leaves.map((l) => l.type)).toEqual(["residency-country"]);
+    // The locked badge id must not be pre-selected in the pickable group.
+    expect(view.preselectedBadgeIds).not.toContain("a18");
+  });
+});
+
+describe("buildAlreadyGrantedView", () => {
+  it("one row per already-granted type with the user's holdings", () => {
+    const badges = [db("a18", "age-over-18"), db("rc", "residency-country")];
+    const view = buildAlreadyGrantedView(["age-over-18"], badges);
+    expect(view).toHaveLength(1);
+    expect(view[0]!.type).toBe("age-over-18");
+    expect(view[0]!.badges.map((b) => b.id)).toEqual(["a18"]);
+  });
+
+  it("skips a granted type the user no longer holds (nothing to lock)", () => {
+    const badges = [db("rc", "residency-country")];
+    // age-over-18 granted but the user holds none → omitted.
+    expect(buildAlreadyGrantedView(["age-over-18"], badges)).toEqual([]);
+  });
+
+  it("empty granted set → empty section", () => {
+    expect(buildAlreadyGrantedView([], [db("a18", "age-over-18")])).toEqual([]);
   });
 });
