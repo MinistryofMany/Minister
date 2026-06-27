@@ -11,6 +11,7 @@ import { buildErrorRedirect, validateAuthorizeRequest } from "@/lib/oidc-authori
 import { buildPolicyConsentView, type PolicyConsentView } from "@/lib/oidc-policy-view";
 import type { UserBadge } from "@/lib/oidc-policy";
 import { signOidcRequest } from "@/lib/oidc-request-token";
+import { prisma } from "@/lib/prisma";
 import { clientIpFrom, oidcAuthorizeLimiter } from "@/lib/rate-limit";
 import { getCurrentSession } from "@/lib/session";
 
@@ -81,6 +82,19 @@ export default async function OidcAuthorizePage({ searchParams }: PageProps) {
     );
   }
 
+  // The curated profile values previewed beside the name/avatar toggles, so
+  // the user sees the real data they'd disclose. Only the user-curated
+  // fields — never the upstream auth identity. Plain object across the RSC
+  // boundary.
+  const profileUser = await prisma.user.findUnique({
+    where: { id: session.user.id },
+    select: { displayName: true, avatarUrl: true },
+  });
+  const profilePreview = {
+    displayName: profileUser?.displayName ?? null,
+    avatarUrl: profileUser?.avatarUrl ?? null,
+  };
+
   return (
     <div className="mx-auto flex max-w-lg flex-col gap-6 px-4 py-12">
       <header className="space-y-1">
@@ -94,6 +108,7 @@ export default async function OidcAuthorizePage({ searchParams }: PageProps) {
       <ConsentScreen
         clientName={request.clientName}
         wantsProfile={request.scopes.includes("profile")}
+        profilePreview={profilePreview}
         badgeChoices={badgeChoices}
         policyView={policyView}
         requestToken={requestToken}

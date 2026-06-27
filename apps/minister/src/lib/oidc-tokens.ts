@@ -48,9 +48,12 @@ export interface IdTokenClaims {
   sub: string;
   aud: string;
   nonce: string;
-  scopes: string[];
-  name?: string | null;
-  picture?: string | null;
+  // Each profile claim is emitted iff present. The caller (the resolver)
+  // already applied the per-claim consent gate and the curated-value
+  // requirement, so an undefined value here means "do not emit" — there is
+  // no separate `profile` scope gate to re-apply.
+  name?: string;
+  picture?: string;
   minister_badges?: string[];
 }
 
@@ -58,10 +61,8 @@ export async function mintIdToken(issuer: Issuer, claims: IdTokenClaims): Promis
   const payload: Record<string, unknown> = {
     nonce: claims.nonce,
   };
-  if (claims.scopes.includes("profile")) {
-    if (claims.name !== undefined) payload.name = claims.name;
-    if (claims.picture !== undefined) payload.picture = claims.picture;
-  }
+  if (claims.name !== undefined) payload.name = claims.name;
+  if (claims.picture !== undefined) payload.picture = claims.picture;
   if (claims.minister_badges && claims.minister_badges.length > 0) {
     payload.minister_badges = claims.minister_badges;
   }

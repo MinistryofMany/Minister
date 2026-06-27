@@ -18,7 +18,10 @@ import { effectiveScopes } from "@/server/wizard-helpers";
 const ApproveInput = z.object({
   requestToken: z.string().min(1),
   approvedBadgeIds: z.array(z.string().cuid()),
-  approveProfile: z.boolean(),
+  // The `profile` scope is consented at claim granularity: the user may
+  // approve their display name, their avatar, neither, or both.
+  approveName: z.boolean(),
+  approveAvatar: z.boolean(),
 });
 
 const DenyInput = z.object({
@@ -95,6 +98,11 @@ export async function approveConsent(
   );
   const approvedBadgeIds = userBadges.map((b) => b.id);
 
+  // The `profile` scope is retained in the RP-facing granted scopes if the
+  // user approved either profile sub-claim; the exact name/avatar split is
+  // persisted separately so the resolver can emit them independently.
+  const approveProfile = parsed.data.approveName || parsed.data.approveAvatar;
+
   const code = newAuthCode();
   await prisma.oidcAuthorizationCode.create({
     data: {
@@ -103,14 +111,18 @@ export async function approveConsent(
       userId: session.user.id,
       redirectUri: request.redirectUri,
       // Effective granted scopes: openid always; profile only if the
-      // user said yes; each badge:<type> scope kept only if at least
-      // one badge of that type was disclosed.
+      // user approved at least one profile sub-claim; each badge:<type>
+      // scope kept only if at least one badge of that type was disclosed.
       scopes: effectiveScopes(request.scopes, {
-        approveProfile: parsed.data.approveProfile,
+        approveProfile,
         approvedBadgeIds,
         userBadges,
       }),
       approvedBadgeIds,
+      // Granular profile grant. Only meaningful when `profile` was requested
+      // and survives effectiveScopes; harmless (false) otherwise.
+      profileName: parsed.data.approveName,
+      profileAvatar: parsed.data.approveAvatar,
       // Echoed back in id_token at /token time — see CLAUDE.md.
       nonce: request.nonce,
       codeChallenge: request.codeChallenge,
@@ -123,7 +135,8 @@ export async function approveConsent(
     clientId: request.clientId,
     requestedScopes: request.scopes,
     disclosedBadgeIds: approvedBadgeIds,
-    disclosedProfile: parsed.data.approveProfile,
+    disclosedProfileName: parsed.data.approveName,
+    disclosedProfileAvatar: parsed.data.approveAvatar,
   });
 
   redirect(buildSuccessRedirect(request.redirectUri, code, request.state));

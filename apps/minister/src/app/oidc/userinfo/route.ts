@@ -77,9 +77,7 @@ export async function GET(request: Request) {
       user: {
         select: {
           id: true,
-          name: true,
           displayName: true,
-          image: true,
           avatarUrl: true,
         },
       },
@@ -95,12 +93,15 @@ export async function GET(request: Request) {
     return unauthorized("invalid_token", "Token has expired");
   }
 
-  const scopeStr = typeof payload.scope === "string" ? payload.scope : "";
-  const scopes = scopeStr.split(/\s+/).filter(Boolean);
-
   const approvedBadgeJwts = await loadApprovedBadgeJwts(row.userId, row.approvedBadgeIds);
-  // Shared resolver so these claims provably match the ID token's.
-  const resolved = resolveUserClaims(row.user, scopes, approvedBadgeJwts);
+  // Shared resolver so these claims provably match the ID token's. The
+  // per-claim profile grant comes from the access-token row (denormalized
+  // from the auth code), not from the scope string.
+  const resolved = resolveUserClaims(
+    row.user,
+    { name: row.profileName, avatar: row.profileAvatar },
+    approvedBadgeJwts,
+  );
 
   const claims: Record<string, unknown> = {
     // OIDC requires `sub` in userinfo to match the ID token's `sub`.
@@ -108,10 +109,10 @@ export async function GET(request: Request) {
     sub: payload.sub,
   };
 
-  if (scopes.includes("profile")) {
-    claims.name = resolved.name;
-    claims.picture = resolved.picture;
-  }
+  // Emit each profile claim only when the resolver produced it — the same
+  // independent name/avatar gate the ID token applies.
+  if (resolved.name !== undefined) claims.name = resolved.name;
+  if (resolved.picture !== undefined) claims.picture = resolved.picture;
 
   if (resolved.ministerBadges.length > 0) {
     claims.minister_badges = resolved.ministerBadges;

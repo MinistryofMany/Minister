@@ -207,6 +207,13 @@ model OidcAuthorizationCode {
   redirectUri         String
   scopes              String[]
   approvedBadgeIds    String[]
+  // Granular profile disclosure. The `profile` scope is split into two
+  // independently consentable claims so a user can share their display
+  // name without their avatar (or vice versa). When `profile` is not in
+  // `scopes` both are false. The resolver emits `name`/`picture` strictly
+  // from these flags — never from the `profile` scope alone.
+  profileName         Boolean   @default(false)
+  profileAvatar       Boolean   @default(false)
   // Required by OIDC Core §3.1.2.1 — echoed back in id_token so RPs can
   // detect replay across user agents.
   nonce               String
@@ -234,6 +241,11 @@ model OidcAccessToken {
   // /oidc/authorize. Denormalized from the (now-consumed) auth code so
   // /userinfo can return them without that row still existing.
   approvedBadgeIds String[]
+  // Granular profile disclosure, denormalized from the auth code so
+  // /userinfo emits exactly the name/avatar the user consented to. See
+  // OidcAuthorizationCode for the rationale.
+  profileName      Boolean   @default(false)
+  profileAvatar    Boolean   @default(false)
   issuedAt         DateTime  @default(now())
   expiresAt        DateTime
   revokedAt        DateTime?

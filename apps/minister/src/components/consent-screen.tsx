@@ -23,6 +23,13 @@ interface BadgeChoiceGroup {
 interface Props {
   clientName: string;
   wantsProfile: boolean;
+  // The user's current curated profile values, shown as a live preview so
+  // the user sees the real data they'd disclose, not just a label. `null`
+  // means the user has not set that value — there is nothing to share.
+  profilePreview: {
+    displayName: string | null;
+    avatarUrl: string | null;
+  };
   badgeChoices: BadgeChoiceGroup[];
   // Present when the RP sent a structured minister_policy: render the
   // requirement as a choice instead of flat independent groups.
@@ -33,6 +40,7 @@ interface Props {
 export function ConsentScreen({
   clientName,
   wantsProfile,
+  profilePreview,
   badgeChoices,
   policyView,
   requestToken,
@@ -40,8 +48,10 @@ export function ConsentScreen({
   // Defaults: opt-in for everything. Each disclosure requires an explicit
   // toggle from off → on — EXCEPT the structured-policy path, which
   // pre-selects the most-anonymous minimal satisfying set (the user can
-  // override to another satisfying choice).
-  const [profileAllowed, setProfileAllowed] = useState(false);
+  // override to another satisfying choice). The `profile` scope is split
+  // into independent name/avatar grants, each default OFF.
+  const [nameAllowed, setNameAllowed] = useState(false);
+  const [avatarAllowed, setAvatarAllowed] = useState(false);
   const [selectedBadges, setSelectedBadges] = useState<Record<string, boolean>>(() =>
     policyView ? Object.fromEntries(policyView.preselectedBadgeIds.map((id) => [id, true])) : {},
   );
@@ -74,7 +84,8 @@ export function ConsentScreen({
       const result = await approveConsent({
         requestToken,
         approvedBadgeIds,
-        approveProfile: profileAllowed,
+        approveName: nameAllowed,
+        approveAvatar: avatarAllowed,
       });
       if (result?.error) setError(result.error);
     });
@@ -97,19 +108,65 @@ export function ConsentScreen({
 
       {wantsProfile ? (
         <Card>
-          <CardContent className="flex items-start gap-3 py-4">
-            <input
-              id="scope-profile"
-              type="checkbox"
-              className="mt-1 h-4 w-4"
-              checked={profileAllowed}
-              onChange={(e) => setProfileAllowed(e.target.checked)}
-            />
-            <label htmlFor="scope-profile" className="flex-1 text-sm">
-              <span className="block font-medium">Display name and avatar</span>
-              <span className="text-neutral-600 dark:text-neutral-400">
-                Share your Minister display name (or fall back to your email) and avatar with{" "}
-                {clientName}.
+          <CardContent className="space-y-3 py-4">
+            <div>
+              <h3 className="text-sm font-semibold">Profile</h3>
+              <p className="text-sm text-neutral-600 dark:text-neutral-400">
+                Choose what {clientName} receives. Each is shared only if you tick it.
+              </p>
+            </div>
+
+            <label
+              htmlFor="scope-profile-name"
+              className="flex items-start gap-3 rounded-md border border-neutral-200 p-2 dark:border-neutral-800"
+            >
+              <input
+                id="scope-profile-name"
+                type="checkbox"
+                className="mt-1 h-4 w-4"
+                checked={nameAllowed}
+                onChange={(e) => setNameAllowed(e.target.checked)}
+              />
+              <span className="flex-1 text-sm">
+                <span className="block font-medium">Display name</span>
+                <span className="text-neutral-600 dark:text-neutral-400">
+                  {profilePreview.displayName === null ? (
+                    <>Name: (none set) — nothing to share</>
+                  ) : (
+                    <>Name: {profilePreview.displayName}</>
+                  )}
+                </span>
+              </span>
+            </label>
+
+            <label
+              htmlFor="scope-profile-avatar"
+              className="flex items-start gap-3 rounded-md border border-neutral-200 p-2 dark:border-neutral-800"
+            >
+              <input
+                id="scope-profile-avatar"
+                type="checkbox"
+                className="mt-1 h-4 w-4"
+                checked={avatarAllowed}
+                onChange={(e) => setAvatarAllowed(e.target.checked)}
+              />
+              <span className="flex-1 text-sm">
+                <span className="block font-medium">Avatar</span>
+                <span className="flex items-center gap-2 text-neutral-600 dark:text-neutral-400">
+                  {profilePreview.avatarUrl === null ? (
+                    <>Avatar: (none set) — nothing to share</>
+                  ) : (
+                    <>
+                      {/* eslint-disable-next-line @next/next/no-img-element -- user-supplied avatar URL; next/image would need per-host remotePatterns config */}
+                      <img
+                        src={profilePreview.avatarUrl}
+                        alt="Your avatar"
+                        className="h-8 w-8 rounded-full object-cover"
+                      />
+                      <span>This avatar</span>
+                    </>
+                  )}
+                </span>
               </span>
             </label>
           </CardContent>

@@ -137,9 +137,7 @@ export async function POST(request: Request) {
     where: { id: stored.userId },
     select: {
       id: true,
-      name: true,
       displayName: true,
-      image: true,
       avatarUrl: true,
     },
   });
@@ -152,14 +150,19 @@ export async function POST(request: Request) {
 
   const minister_badges = await loadApprovedBadgeJwts(user.id, stored.approvedBadgeIds);
   // Shared resolver so the ID token's claims provably match /oidc/userinfo.
-  const userClaims = resolveUserClaims(user, stored.scopes, minister_badges);
+  // The per-claim profile grant is persisted on the auth code, not inferred
+  // from the scope string, so name and avatar disclose independently.
+  const userClaims = resolveUserClaims(
+    user,
+    { name: stored.profileName, avatar: stored.profileAvatar },
+    minister_badges,
+  );
 
   const idToken = await mintIdToken(issuer, {
     sub,
     aud: client.clientId,
     // Echoed verbatim from the /authorize nonce per OIDC Core §3.1.3.7.
     nonce: stored.nonce,
-    scopes: stored.scopes,
     name: userClaims.name,
     picture: userClaims.picture,
     minister_badges: userClaims.ministerBadges.length > 0 ? userClaims.ministerBadges : undefined,
@@ -178,6 +181,10 @@ export async function POST(request: Request) {
       clientId: client.clientId,
       scopes: stored.scopes,
       approvedBadgeIds: stored.approvedBadgeIds,
+      // Carry the granular profile grant forward so /userinfo emits the
+      // exact same name/avatar the ID token did.
+      profileName: stored.profileName,
+      profileAvatar: stored.profileAvatar,
       expiresAt: accessTokenExpiresAt,
     },
   });
