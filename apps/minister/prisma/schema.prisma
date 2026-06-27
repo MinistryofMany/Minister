@@ -27,7 +27,12 @@ generator client {
 model User {
   id            String    @id @default(cuid())
   name          String?
-  email         String?   @unique
+  // Denormalized cache of the user's PRIMARY email. NOT the identity key
+  // and intentionally NOT @unique — identity is `id` (opaque cuid). The
+  // source of truth for which emails a user holds is the UserEmail table
+  // (a user can verify many: work, school, personal). Kept here so the
+  // Auth.js adapter and existing code that reads `user.email` keep working.
+  email         String?
   emailVerified DateTime?
   image         String?
 
@@ -50,6 +55,14 @@ model User {
   // sessionGeneration mismatch.
   isBanned Boolean @default(false)
 
+  // Account-merge tombstone. When this user is merged INTO another account
+  // it is soft-deleted: `mergedIntoUserId` points at the survivor and the
+  // row is retained (with all sessions killed) through the reversal window
+  // before hard deletion. getCurrentSession treats a merged user as signed
+  // out, same as a ban. See slice 5 (account merge).
+  mergedIntoUserId String?
+  mergedAt         DateTime?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -64,6 +77,12 @@ model User {
   oidcAccessTokens  OidcAccessToken[]
   wizardSessions    WizardSession[]
   inviteRedemptions InviteRedemption[]
+
+  // Slice 1/3/4/5 — multi-credential identity, recovery, and merge.
+  userEmails       UserEmail[]
+  recoveryCodes    RecoveryCode[]
+  recoveryAttempts RecoveryAttempt[]
+  subjectOverrides SubjectOverride[]
 }
 
 model Account {
@@ -78,6 +97,14 @@ model Account {
   scope             String?
   id_token          String?
   session_state     String?
+
+  // Credential lifecycle (shared shape across credential kinds). A freshly
+  // linked account is `quarantined` until the cooldown passes: usable to
+  // sign in, but not to mutate other credentials or start recovery/merge.
+  label            String?
+  status           String    @default("active") // active | quarantined
+  quarantinedUntil DateTime?
+  lastUsedAt       DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -116,6 +143,15 @@ model Authenticator {
   credentialBackedUp   Boolean
   transports           String?
 
+  // Credential lifecycle (shared shape across credential kinds). A freshly
+  // enrolled passkey is `quarantined` until the cooldown passes: usable to
+  // sign in, but not to mutate other credentials or start recovery/merge.
+  label            String?
+  status           String    @default("active") // active | quarantined
+  quarantinedUntil DateTime?
+  addedAt          DateTime  @default(now())
+  lastUsedAt       DateTime?
+
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@id([userId, credentialID])
@@ -126,22 +162,30 @@ model Authenticator {
 // ---------------------------------------------------------------------------
 
 model Badge {
-  id        String @id @default(cuid())
-  userId    String
-  type      String
+  id           String    @id @default(cuid())
+  userId       String
+  type         String
   // Denormalized non-sensitive attributes for query/display. The signed
   // VC in `vcJwt` is the authoritative artifact.
-  attributes Json
-  vcJwt      String
-  issuer     String
-  issuedAt   DateTime  @default(now())
-  expiresAt  DateTime?
-  isPublic   Boolean   @default(false)
-  sortOrder  Int       @default(0)
+  attributes   Json
+  vcJwt        String
+  issuer       String
+  issuedAt     DateTime  @default(now())
+  expiresAt    DateTime?
+  isPublic     Boolean   @default(false)
+  sortOrder    Int       @default(0)
   // null = native (issued by Minister). non-null = identifier of the source
   // we imported this VC from.
   importedFrom String?
   pluginId     String?
+
+  // Identity-assurance level of this badge, used to weight it for
+  // threshold-based account recovery (slice 4). Higher levels are harder to
+  // forge and harder for an attacker to also possess (a passport-backed
+  // proof outweighs a Steam login). Set at issuance from the assurance
+  // registry; null = unset/lowest. The weight map lives in code so it can
+  // be tuned without a migration.
+  assuranceLevel String?
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -154,8 +198,8 @@ model Eligibility {
   badgeType  String
   eligibleAt DateTime
   // +/- days of fuzz applied at issuance time.
-  fuzzDays Int
-  source   String
+  fuzzDays   Int
+  source     String
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -326,4 +370,124 @@ model WizardSession {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, pluginId])
+}
+
+// ---------------------------------------------------------------------------
+// Multi-credential identity, recovery, and merge (slices 1–5)
+// ---------------------------------------------------------------------------
+
+// One verified (or pending) email address belonging to a user. Replaces
+// User.email as the identity-bearing email store: a user can hold many
+// (work, school, personal), any can receive a sign-in magic link, exactly
+// one is `isPrimary` (notifications). `email` is globally @unique — an
+// address belongs to at most one account. App logic enforces the
+// single-primary-per-user invariant inside the same transaction that flips
+// it (Postgres can't express a portable partial-unique here).
+model UserEmail {
+  id               String    @id @default(cuid())
+  userId           String
+  email            String    @unique
+  verifiedAt       DateTime?
+  isPrimary        Boolean   @default(false)
+  // Lifecycle. A freshly added email is `quarantined` until the cooldown
+  // passes: it can receive magic links but can't be used to mutate other
+  // credentials or start recovery/merge (blast-radius bound for a
+  // compromised inbox that adds itself).
+  status           String    @default("active") // active | quarantined
+  quarantinedUntil DateTime?
+  createdAt        DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+// Single-use account-recovery codes. The plaintext is shown once at
+// generation; only the Argon2id hash is stored (same hashing as
+// OidcClient.clientSecretHash). Regenerating deletes all unused rows for
+// the user. Redeeming one lands a reduced-assurance, quarantined session.
+model RecoveryCode {
+  id        String    @id @default(cuid())
+  userId    String
+  codeHash  String
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+// An in-flight threshold-recovery session (slice 4). The user re-proves a
+// set of badges live; each accepted proof adds its assurance weight until
+// `accumulatedScore >= requiredScore`. `nonce` is bound into every live
+// re-proof so a stored/leaked VC can't be replayed — recovery requires
+// FRESH proofs against this attempt. Satisfying it lands a quarantined,
+// reduced-assurance session, never a full takeover.
+model RecoveryAttempt {
+  id               String    @id @default(cuid())
+  userId           String
+  nonce            String    @unique
+  status           String    @default("pending") // pending | satisfied | consumed | expired | failed
+  requiredScore    Int
+  accumulatedScore Int       @default(0)
+  createdAt        DateTime  @default(now())
+  expiresAt        DateTime
+  satisfiedAt      DateTime?
+  consumedAt       DateTime?
+
+  user   User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  proofs RecoveryProof[]
+
+  @@index([userId, status])
+}
+
+// One accepted live re-proof contributing weight to a RecoveryAttempt. The
+// (attemptId, badgeType) pair is unique so the same badge type can't be
+// re-proven twice to double-count toward the threshold.
+model RecoveryProof {
+  id        String   @id @default(cuid())
+  attemptId String
+  badgeType String
+  weight    Int
+  provedAt  DateTime @default(now())
+
+  attempt RecoveryAttempt @relation(fields: [attemptId], references: [id], onDelete: Cascade)
+
+  @@unique([attemptId, badgeType])
+  @@index([attemptId])
+}
+
+// The merge seam (slice 5). `pairwiseSub(userId, clientId)` consults this
+// table BEFORE deriving: if a row exists, that sub is returned; otherwise
+// it falls back to the HMAC derivation. Empty by default (zero behaviour
+// change). Account merge populates it on the survivor so the survivor can
+// keep presenting a donor's historical pairwise identity to every RP the
+// donor used — lossless for RPs only one account touched.
+model SubjectOverride {
+  userId   String
+  clientId String
+  sub      String
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([userId, clientId])
+  @@index([userId])
+}
+
+// Audit + reversal record for an account merge. Standalone (stores ids, no
+// FK) so a hard-deleted donor doesn't cascade the record away. `snapshot`
+// holds enough (moved rows, collision resolutions, overrides created) to
+// reverse the merge until `reversibleUntil`.
+model MergeRecord {
+  id              String    @id @default(cuid())
+  survivorUserId  String
+  donorUserId     String
+  snapshot        Json
+  createdAt       DateTime  @default(now())
+  reversibleUntil DateTime
+  reversedAt      DateTime?
+
+  @@index([survivorUserId])
+  @@index([donorUserId])
 }

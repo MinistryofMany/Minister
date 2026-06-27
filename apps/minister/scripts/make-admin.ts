@@ -29,8 +29,17 @@ const prisma = new PrismaClient();
 
 async function main() {
   const isAdmin = !values.revoke;
-  const user = await prisma.user.update({
+  // email is no longer @unique on User; resolve to the id first, then update
+  // by primary key.
+  const match = await prisma.user.findFirst({
     where: { email: values.email },
+    select: { id: true },
+  });
+  if (!match) {
+    throw Object.assign(new Error(`No user with email ${values.email}`), { code: "P2025" });
+  }
+  const user = await prisma.user.update({
+    where: { id: match.id },
     data: { isAdmin },
     select: { id: true, email: true, isAdmin: true },
   });
