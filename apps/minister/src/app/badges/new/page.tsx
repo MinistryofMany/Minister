@@ -36,9 +36,10 @@ export default async function BadgePluginsList() {
                   Issues:{" "}
                   {plugin.manifest.badgeTypes
                     .map((t) => <code key={t}>{t}</code>)
-                    .reduce<
-                      React.ReactNode[]
-                    >((acc, el, i) => (i === 0 ? [el] : [...acc, ", ", el]), [])}
+                    .reduce<React.ReactNode[]>(
+                      (acc, el, i) => (i === 0 ? [el] : [...acc, ", ", el]),
+                      [],
+                    )}
                   {plugin.manifest.requiresExtension ? (
                     <span className="ml-2 rounded-full bg-amber-50 px-2 py-0.5 font-medium text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
                       Requires extension

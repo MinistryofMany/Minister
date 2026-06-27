@@ -58,8 +58,7 @@ export function evaluateInviteCode(
 }
 
 export type RedeemResult =
-  | { ok: true; inviteCodeId: string; label: string }
-  | { ok: false; message: string };
+  { ok: true; inviteCodeId: string; label: string } | { ok: false; message: string };
 
 // Sentinel for "the pre-check passed but the conditional decrement hit
 // zero" — i.e. we lost a race to the last remaining use.

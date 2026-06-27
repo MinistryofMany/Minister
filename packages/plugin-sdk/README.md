@@ -105,11 +105,11 @@ export const myPlugin: Plugin = {
 
 ### Core interface
 
-| Export             | Purpose                                                                                             |
+| Export | Purpose |
 | ------------------ | --------------------------------------------------------------------------------------------------- | -------- | ------- |
-| `Plugin`           | The interface every plugin must implement: `manifest`, `startWizard`, `handleStep`.                 |
-| `PluginManifest`   | Static plugin metadata: `id`, `name`, `description`, `badgeTypes`, `requiresExtension`, `iconKey?`. |
-| `PluginContext`    | Runtime context injected by the server: `userId`, `origin`, `audit`, `sendMail`.                    |
+| `Plugin` | The interface every plugin must implement: `manifest`, `startWizard`, `handleStep`. |
+| `PluginManifest` | Static plugin metadata: `id`, `name`, `description`, `badgeTypes`, `requiresExtension`, `iconKey?`. |
+| `PluginContext` | Runtime context injected by the server: `userId`, `origin`, `audit`, `sendMail`. |
 | `HandleStepResult` | Discriminated union returned by `handleStep`: `continue                                             | complete | error`. |
 
 ### Wizard step types

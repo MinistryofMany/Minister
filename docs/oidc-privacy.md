@@ -3,7 +3,7 @@
 ## What a relying-party client can see today (verified 2026-06-17, `main`)
 
 - **`sub`** - pairwise pseudonymous id, `base64url(HMAC-SHA256(OIDC_PAIRWISE_SECRET,
-  userId || clientId))`. Different per client; never email, never a stable global id.
+userId || clientId))`. Different per client; never email, never a stable global id.
 - **Default (`openid` only)** - sub + `iss/aud/iat/exp/nonce`. Nothing identifiable.
 - **`profile` scope** (opt-in; consent toggle defaults OFF) - `name` and `picture`.
 - **`badge:<type>` scopes** - only the specific badge VCs the user ticks on consent.

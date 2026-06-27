@@ -219,8 +219,7 @@ const CreateOidcClientInput = OidcClientFields.extend({
 });
 
 export type CreateOidcClientResult =
-  | { ok: true; clientId: string; clientSecret: string | null }
-  | { ok: false; error: string };
+  { ok: true; clientId: string; clientSecret: string | null } | { ok: false; error: string };
 
 export const createOidcClient = adminAction(
   CreateOidcClientInput,
@@ -321,8 +320,7 @@ export const updateOidcClient = adminAction(
 const ClientIdInput = z.object({ id: z.string().cuid() });
 
 export type RotateOidcSecretResult =
-  | { ok: true; clientSecret: string }
-  | { ok: false; error: string };
+  { ok: true; clientSecret: string } | { ok: false; error: string };
 
 export const rotateOidcClientSecret = adminAction(
   ClientIdInput,

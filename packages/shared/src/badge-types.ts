@@ -14,14 +14,7 @@ import { z } from "zod";
 // exhaustiveness: adding a badge type with an unmapped icon fails the
 // typecheck instead of silently degrading to a fallback glyph.
 export type BadgeIconKey =
-  | "at-sign"
-  | "cake"
-  | "globe"
-  | "link"
-  | "mail"
-  | "map-pin"
-  | "shield-check"
-  | "ticket";
+  "at-sign" | "cake" | "globe" | "link" | "mail" | "map-pin" | "shield-check" | "ticket";
 
 export interface BadgeTypeMeta<TClaims = unknown> {
   type: string;

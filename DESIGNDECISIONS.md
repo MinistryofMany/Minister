@@ -162,6 +162,7 @@ rank gmail below a custom domain, because the system can't see that a given gmai
 runs a company Workspace.
 
 **2. Two weights per badge - `protect` and `proof`.**
+
 - `protect` raises the account's value (how much losing it costs).
 - `proof` is how much re-proving it counts toward recovery (how hard for an
   attacker to also re-prove it live).
@@ -170,19 +171,20 @@ runs a company Workspace.
   phishable, and re-proving an email is ~equivalent to just logging in by magic
   link). So a phishable email can never be its own cheap way back in.
 
-| Badge | protect | proof |
-| --- | --- | --- |
-| passport / "US Citizen" (TLSNotary or OpenPassport) | 100 | 100 |
-| age-over-* / residency-* (gov-doc backed) | 60 | 60 |
-| oauth github / google | 20 | 20 |
-| oauth discord / steam / social | 10 | 10 |
-| email (any domain) | 20 | 5 |
-| invite-code | 0 | 0 |
+| Badge                                               | protect | proof |
+| --------------------------------------------------- | ------- | ----- |
+| passport / "US Citizen" (TLSNotary or OpenPassport) | 100     | 100   |
+| age-over-* / residency-* (gov-doc backed)           | 60      | 60    |
+| oauth github / google                               | 20      | 20    |
+| oauth discord / steam / social                      | 10      | 10    |
+| email (any domain)                                  | 20      | 5     |
+| invite-code                                         | 0       | 0     |
 
 **3. Value-scaled bar with a cap.** Account value `V` = sum of `protect` over the
 account's **re-provable** badges (with falloff). Recovery bar
 `T = min(0.50 * V, 100)`. Recovery succeeds once the accumulated `proof` of
 live-re-proven badges (with falloff) reaches `T`.
+
 - The 0.50 ratio means any single badge worth more than half the account's value
   becomes effectively mandatory to re-prove (e.g. a passport in a rich account).
 - The cap of 100 = a passport's proof weight, so holding one gov-doc-grade badge
@@ -192,6 +194,7 @@ live-re-proven badges (with falloff) reaches `T`.
   bar with no way to clear it (today only invite-code is un-re-provable, weight 0).
 
 Worked examples:
+
 - Thin (google 20 + gmail 8): V=28, T=14; re-prove google (proof 20) clears it.
 - Rich (passport 100 + github 20 + google 20 + email 20): V=160, T=80; everything
   except the passport = proof 45 < 80, so the **passport is mandatory**.
@@ -202,6 +205,7 @@ Worked examples:
   recovery is for when login factors are lost but other re-provable badges remain.
 
 **4. Engineering requirements for the implementation pass.**
+
 - All tunables (the two-weight table, the 0.50 ratio, the 100 cap, the 0.5 falloff
   factor, the recovery-eligible type set) live in ONE well-decomposed config block
   at the top of the scoring module or a dedicated config file, so the numbers are

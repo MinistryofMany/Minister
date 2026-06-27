@@ -23,8 +23,7 @@ const CreateInput = z.object({
 });
 
 export type CreateShareLinkResult =
-  | { ok: true; token: string; url: string }
-  | { ok: false; error: string };
+  { ok: true; token: string; url: string } | { ok: false; error: string };
 
 // Build the absolute /share/<token> URL. We can't reach Next.js's
 // `headers()` from a non-async-action call site, so callers pass the
