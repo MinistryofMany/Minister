@@ -83,6 +83,14 @@ function buildLeafView(
   // composite under a one-of/n-of branch is summarized by its first badge
   // type for display; the authoritative evaluation always uses the full
   // policy server-side.
+  //
+  // AUDIT L-1 (documented, deferred): for a composite OR-branch this shows
+  // only the branch's FIRST leaf type (`firstBadgeType`), so the consent UI
+  // under-describes a multi-leaf composite branch. This is a DISPLAY
+  // limitation only — server-side minimization (minimizeToPolicy /
+  // selectMinimalAnonymitySet) evaluates the full subtree and is
+  // authoritative for what is actually disclosed. A future improvement
+  // could render the full composite branch label; not implemented now.
   const type = firstBadgeType(node);
   const meta = type ? getBadgeType(type) : undefined;
   const count = type ? (holderCounts.get(type) ?? 0) : 0;

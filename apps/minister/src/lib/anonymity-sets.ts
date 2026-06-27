@@ -52,18 +52,21 @@ async function queryHolderCounts(): Promise<Map<string, number>> {
 
 /**
  * Distinct-holder count per badge type, cached in-process for ~60s.
- * The returned map is the live cached instance — callers must treat it
- * as read-only.
+ * Returns a fresh defensive COPY of the cached snapshot on every call: the
+ * anonymity-ranking callers downstream treat the map as their own and a
+ * stray mutation must never leak back into the shared 60s-cached value
+ * (audit W-1). The copy is a flat Map<string,number>, so a shallow clone
+ * is sufficient.
  *
  * @param now injectable clock (unix ms) for deterministic tests.
  */
 export async function holderCountsByType(now: number = Date.now()): Promise<Map<string, number>> {
   if (cache && now < cache.expiresAt) {
-    return cache.value;
+    return new Map(cache.value);
   }
   const value = await queryHolderCounts();
   cache = { value, expiresAt: now + CACHE_TTL_MS };
-  return value;
+  return new Map(value);
 }
 
 /** Drop the cached snapshot. Test-only; production relies on TTL expiry. */

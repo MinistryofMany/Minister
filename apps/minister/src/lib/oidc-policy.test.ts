@@ -2,8 +2,12 @@ import { describe, expect, it } from "vitest";
 
 import {
   evaluate,
+  MAX_ATLEAST_N,
+  MAX_NODE_CHILDREN,
+  MAX_POLICY_NODES,
   parsePolicy,
   policyBadgeTypes,
+  policyBoundsViolation,
   policyDepth,
   selectMinimalAnonymitySet,
   type PolicyNode,
@@ -265,5 +269,96 @@ describe("selectMinimalAnonymitySet", () => {
     );
     expect(res.satisfiable).toBe(true);
     expect(res.selectedBadgeIds).toEqual(["fresh"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Breadth DoS bounds (audit C-1)
+// ---------------------------------------------------------------------------
+
+describe("policyBoundsViolation (breadth DoS guard)", () => {
+  it("accepts a realistic small policy", () => {
+    const policy: PolicyNode = {
+      allOf: [
+        { anyOf: [{ badge: { type: "a" } }, { badge: { type: "b" } }] },
+        { atLeast: { n: 2, of: [{ badge: { type: "a" } }, { badge: { type: "b" } }] } },
+      ],
+    };
+    expect(policyBoundsViolation(policy)).toBeNull();
+  });
+
+  it("rejects the proven attack: atLeast n=156 over 160 duplicate leaves", () => {
+    const leaves = Array.from({ length: 160 }, () => ({ badge: { type: "a" } }));
+    const policy: PolicyNode = { atLeast: { n: 156, of: leaves } };
+    // Trips on a breadth bound (n cap and/or child/node count) — not null.
+    expect(policyBoundsViolation(policy)).not.toBeNull();
+  });
+
+  it("rejects atLeast.n over the cap even with tiny breadth", () => {
+    const policy: PolicyNode = {
+      atLeast: { n: MAX_ATLEAST_N + 1, of: [{ badge: { type: "a" } }] },
+    };
+    expect(policyBoundsViolation(policy)).toMatch(/atLeast\.n/);
+  });
+
+  it("rejects a node with too many children", () => {
+    const of = Array.from({ length: MAX_NODE_CHILDREN + 1 }, () => ({ badge: { type: "a" } }));
+    expect(policyBoundsViolation({ anyOf: of })).toMatch(/children/);
+  });
+
+  it("rejects too many total nodes (breadth, depth stays shallow)", () => {
+    // A wide-but-shallow tree: nested anyOf each within the per-node child
+    // cap, but the TOTAL node count exceeds MAX_POLICY_NODES. Depth alone
+    // would not catch this — the total-node cap must.
+    const childPerNode = MAX_NODE_CHILDREN;
+    let node: PolicyNode = { badge: { type: "a" } };
+    // Build a tree that surely exceeds MAX_POLICY_NODES nodes total while
+    // keeping each node within the child cap.
+    const leaves = Array.from({ length: childPerNode }, () => ({ badge: { type: "a" } }));
+    const level1: PolicyNode[] = Array.from(
+      { length: Math.ceil(MAX_POLICY_NODES / childPerNode) + 1 },
+      () => ({ anyOf: leaves }) as PolicyNode,
+    );
+    node = { allOf: level1.slice(0, MAX_NODE_CHILDREN) };
+    expect(policyBoundsViolation(node)).toMatch(/too many nodes/);
+  });
+});
+
+describe("selectMinimalAnonymitySet — bounded atLeast stays fast + correct", () => {
+  it("a bounded-but-nontrivial atLeast picks a correct minimal set within a time bound", () => {
+    // At the breadth ceiling: n = MAX_ATLEAST_N, of = MAX_NODE_CHILDREN
+    // distinct in-scope leaves, user holds all of them. This is the largest
+    // legitimate atLeast and must resolve quickly (the combinatorial
+    // alternative path is short-circuited by MAX_ATLEAST_COMBINATIONS).
+    const n = MAX_ATLEAST_N;
+    const breadth = MAX_NODE_CHILDREN;
+    const types = Array.from({ length: breadth }, (_, i) => `t${i}`);
+    // Distinct, descending holder counts so the minimal set is well-defined.
+    const counts = new Map<string, number>(types.map((t, i) => [t, 100000 - i * 100]));
+    const policy: PolicyNode = {
+      atLeast: { n, of: types.map((t) => ({ badge: { type: t } })) },
+    };
+    const badges = types.map((t, i) => ub(`b${i}`, t));
+
+    const start = performance.now();
+    const res = selectMinimalAnonymitySet(policy, badges, counts, NOW);
+    const elapsedMs = performance.now() - start;
+
+    // Bounded: well under a generous wall-clock ceiling (the unbounded bug
+    // froze for seconds on far smaller n; this must be near-instant).
+    expect(elapsedMs).toBeLessThan(250);
+    expect(res.satisfiable).toBe(true);
+    // The chosen minimal set is the n MOST-ANONYMOUS branches: the n
+    // highest holder counts ⇒ types t0..t(n-1) ⇒ badges b0..b(n-1).
+    const expected = Array.from({ length: n }, (_, i) => `b${i}`).sort();
+    expect([...res.selectedBadgeIds].sort()).toEqual(expected);
+    // And it genuinely satisfies the policy.
+    expect(
+      evaluate(
+        policy,
+        badges.filter((b) => res.selectedBadgeIds.includes(b.id)),
+        NOW,
+      ),
+    ).toBe(true);
   });
 });

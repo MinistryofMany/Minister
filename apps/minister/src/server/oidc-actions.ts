@@ -79,6 +79,15 @@ export async function approveConsent(
   // is convenience; this is the enforcement. If the submission doesn't
   // satisfy the policy, the minimal set is empty (disclose nothing extra) —
   // Discreetly's gate is the admission authority and will deny.
+  //
+  // AUDIT L-2 (documented, deferred): when no policy is present (the param
+  // was absent or stripped on the front channel) minimizeToPolicy is the
+  // identity and consent falls back to the flat per-scope flow. That flow
+  // is already bounded (it discloses only owned ∩ requested badges) and the
+  // structured policy path is opt-in / default-off, so a stripped policy
+  // cannot widen disclosure beyond the flat menu. Optional future
+  // hardening: bind a signed "policy expected" signal so a stripped policy
+  // is detectable rather than silently downgraded. Not implemented now.
   const userBadges = minimizeToPolicy(
     request.policy,
     requestedBadges,

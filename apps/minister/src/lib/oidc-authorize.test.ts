@@ -235,6 +235,61 @@ describe("validateAuthorizeRequest — minister_policy (Phase 2)", () => {
     expect(res.error).toBe("invalid_request");
     expect(res.description).toMatch(/large/);
   });
+
+  // Audit C-1: a wide `atLeast` (large n, many duplicate-type leaves) is a
+  // BREADTH DoS — it stays shallow, under 4 KB, and passes the type-set
+  // scope check (one distinct type), yet drives quartic+ combination
+  // enumeration. The breadth guard must reject it at validate time.
+  it("wide atLeast (large n + many duplicate leaves) → invalid_request (DoS guard)", async () => {
+    // The proven payload class: atLeast{ n:156, of:[160 in-scope leaves] }.
+    // Fits under 4 KB and references a single in-scope type, so only the
+    // node-count / atLeast.n / child-count caps can stop it.
+    const leaves = Array.from({ length: 160 }, () => ({ badge: { type: "age-over-18" } }));
+    const policy = { atLeast: { n: 156, of: leaves } };
+    const res = await validateAuthorizeRequest(
+      build({ scope: POLICY_SCOPE, minister_policy: encodePolicy(policy) }),
+    );
+    if (res.kind !== "redirect-error") throw new Error("expected redirect-error");
+    expect(res.error).toBe("invalid_request");
+    expect(res.description).toMatch(/too large/);
+  });
+
+  it("atLeast.n past the cap (small breadth) → invalid_request", async () => {
+    const policy = {
+      atLeast: { n: 32, of: [{ badge: { type: "age-over-18" } }] },
+    };
+    const res = await validateAuthorizeRequest(
+      build({ scope: POLICY_SCOPE, minister_policy: encodePolicy(policy) }),
+    );
+    if (res.kind !== "redirect-error") throw new Error("expected redirect-error");
+    expect(res.error).toBe("invalid_request");
+    expect(res.description).toMatch(/too large/);
+  });
+
+  it("a single node with too many children → invalid_request", async () => {
+    const of = Array.from({ length: 40 }, () => ({ badge: { type: "age-over-18" } }));
+    const policy = { anyOf: of };
+    const res = await validateAuthorizeRequest(
+      build({ scope: POLICY_SCOPE, minister_policy: encodePolicy(policy) }),
+    );
+    if (res.kind !== "redirect-error") throw new Error("expected redirect-error");
+    expect(res.error).toBe("invalid_request");
+    expect(res.description).toMatch(/too large/);
+  });
+
+  it("a realistic small atLeast (n=2, 3 distinct branches) is still ACCEPTED", async () => {
+    const policy = {
+      atLeast: {
+        n: 2,
+        of: [{ badge: { type: "age-over-18" } }, { badge: { type: "residency-country" } }],
+      },
+    };
+    const res = await validateAuthorizeRequest(
+      build({ scope: POLICY_SCOPE, minister_policy: encodePolicy(policy) }),
+    );
+    if (res.kind !== "ok") throw new Error(`expected ok, got ${res.kind}`);
+    expect(res.request.policy).toEqual(policy);
+  });
 });
 
 describe("buildErrorRedirect / buildSuccessRedirect", () => {

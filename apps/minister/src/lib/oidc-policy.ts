@@ -118,6 +118,72 @@ export function parsePolicy(input: unknown): PolicyNode {
 /** Max recursion depth accepted by `policyDepth`-gated callers. */
 export const MAX_POLICY_DEPTH = 8;
 
+// Breadth bounds (audit C-1). Depth + byte caps alone do NOT bound a
+// policy: a single flat `atLeast{ n, of: [...] }` with a large `n` and
+// hundreds of duplicate-type leaves stays shallow, small, and passes a
+// type-set width check, yet drives O(n^k) combination enumeration in
+// selection and freezes the event loop. These caps make breadth explicit.
+// Real room policies have a tiny `n` and a handful of branches, so the
+// limits are generous headroom while still hard.
+
+/** Max `atLeast.n` threshold accepted. */
+export const MAX_ATLEAST_N = 16;
+/** Max children on any single `anyOf` / `allOf` / `atLeast.of` node. */
+export const MAX_NODE_CHILDREN = 16;
+/** Max total nodes (leaves + composites) across the whole policy tree. */
+export const MAX_POLICY_NODES = 64;
+
+/**
+ * Enforce the breadth bounds above on a parsed policy tree. Returns the
+ * first violation as a short reason string, or `null` if the tree is
+ * within all bounds. Counts every node (leaf and composite) toward the
+ * total-node cap; this is the breadth defense depth alone cannot provide.
+ * Fail-closed: callers reject (redirect-error) on any non-null reason.
+ */
+export function policyBoundsViolation(node: PolicyNode): string | null {
+  let total = 0;
+  const overflow = { hit: false as boolean, reason: "" as string };
+
+  const walk = (n: PolicyNode): void => {
+    if (overflow.hit) return;
+    total += 1;
+    if (total > MAX_POLICY_NODES) {
+      overflow.hit = true;
+      overflow.reason = "policy has too many nodes";
+      return;
+    }
+    if (isBadgeLeaf(n)) return;
+    let children: PolicyNode[];
+    if (isAllOf(n)) {
+      children = n.allOf;
+    } else if (isAnyOf(n)) {
+      children = n.anyOf;
+    } else if (isAtLeast(n)) {
+      if (n.atLeast.n > MAX_ATLEAST_N) {
+        overflow.hit = true;
+        overflow.reason = "atLeast.n exceeds the maximum";
+        return;
+      }
+      children = n.atLeast.of;
+    } else {
+      const _exhaustive: never = n;
+      throw new Error(`unknown policy node shape: ${JSON.stringify(_exhaustive)}`);
+    }
+    if (children.length > MAX_NODE_CHILDREN) {
+      overflow.hit = true;
+      overflow.reason = "policy node has too many children";
+      return;
+    }
+    for (const child of children) {
+      walk(child);
+      if (overflow.hit) return;
+    }
+  };
+
+  walk(node);
+  return overflow.hit ? overflow.reason : null;
+}
+
 /**
  * Structural depth of a policy tree (a single leaf has depth 1). Used by
  * the authorize validator to reject pathologically nested payloads before
@@ -249,6 +315,12 @@ export interface SelectionResult {
 // anyOf/atLeast node, to bound consent-render cost on a crafted policy.
 const MAX_ALTERNATIVES = 16;
 
+// Cap on C(prefix.length, n) before we enumerate atLeast alternatives.
+// Above this we skip enumeration and return only the chosen minimal set
+// (audit C-1 — bounds the quartic+ combinatorial path regardless of the
+// upstream breadth caps). A few hundred is ample for real n+4 prefixes.
+const MAX_ATLEAST_COMBINATIONS = 500;
+
 /**
  * Anonymity of a selection, as the multiset of its per-type holder counts
  * sorted ASCENDING. Comparison is lexicographic on this vector: the
@@ -378,11 +450,22 @@ function selectionsFor(
     }
     if (n <= 0) return [{ badgeIds: [], types: new Set() }];
     if (childBests.length < n) return []; // cannot reach the threshold
-    // Sort children best-first, then enumerate n-combinations from a
-    // bounded prefix so we surface "swap the n-th for the (n+1)-th"
-    // alternatives without exploding on a large `of`.
+    // Sort children best-first. The CHOSEN minimal set is just the top-n
+    // (O(k log k) sort, already done) — combination enumeration only exists
+    // to OFFER alternatives ("swap the n-th for the (n+1)-th"). Enumeration
+    // is C(prefix.length, n), which is attacker-amplifiable, so it is
+    // guarded (audit C-1): when the count would exceed a small constant we
+    // drop alternative enumeration and return only the chosen top-n set.
+    // This never changes which minimal set is chosen.
     childBests.sort((a, b) => compareSelections(a, b, holderCounts));
     const prefix = childBests.slice(0, Math.min(childBests.length, n + 4));
+    const topN = mergeSelections(childBests.slice(0, n));
+    if (chooseCount(prefix.length, n) > MAX_ATLEAST_COMBINATIONS) {
+      // Too many alternatives to enumerate safely — return just the chosen
+      // minimal set (the override UI loses swap suggestions for this node,
+      // but the disclosed set is identical and selection stays bounded).
+      return [topN];
+    }
     const combos = nCombinations(prefix, n).map((parts) => mergeSelections(parts));
     return rankAndCap(combos, holderCounts);
   }
@@ -406,6 +489,23 @@ function dedupeSelections(selections: Selection[]): Selection[] {
     out.push(sel);
   }
   return out;
+}
+
+/**
+ * C(k, n) = number of n-combinations from k items, computed iteratively
+ * and SATURATED at MAX_ATLEAST_COMBINATIONS + 1 so a large input can never
+ * overflow or do unbounded work just to size the enumeration (audit C-1).
+ */
+function chooseCount(k: number, n: number): number {
+  if (n < 0 || n > k) return 0;
+  if (n === 0 || n === k) return 1;
+  const r = Math.min(n, k - n);
+  let result = 1;
+  for (let i = 0; i < r; i++) {
+    result = (result * (k - i)) / (i + 1);
+    if (result > MAX_ATLEAST_COMBINATIONS) return MAX_ATLEAST_COMBINATIONS + 1;
+  }
+  return result;
 }
 
 function nCombinations<T>(items: T[], n: number): T[][] {

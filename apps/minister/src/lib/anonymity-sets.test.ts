@@ -53,8 +53,26 @@ describe("holderCountsByType", () => {
 
     const first = await holderCountsByType(0);
     const second = await holderCountsByType(59_000); // < 60s later
-    expect(first).toBe(second); // same cached Map instance
+    // Same cached DATA (no re-query), but a fresh defensive copy each call
+    // (audit W-1) — distinct instances, equal contents.
     expect(queryRaw).toHaveBeenCalledTimes(1);
+    expect(second).toEqual(first);
+    expect(second).not.toBe(first);
+  });
+
+  it("returns a defensive copy: a caller mutation cannot poison the cache (W-1)", async () => {
+    queryRaw.mockResolvedValueOnce([{ type: "a", holders: 1n }]);
+
+    const first = await holderCountsByType(0);
+    // A downstream consumer mutates its map (e.g. fills in a 0 for a type
+    // it didn't see). This must NOT leak into the 60s-cached snapshot.
+    first.set("a", 999);
+    first.set("poison", -1);
+
+    const second = await holderCountsByType(59_000); // still within TTL
+    expect(queryRaw).toHaveBeenCalledTimes(1); // served from cache
+    expect(second.get("a")).toBe(1);
+    expect(second.has("poison")).toBe(false);
   });
 
   it("recomputes after the TTL elapses", async () => {

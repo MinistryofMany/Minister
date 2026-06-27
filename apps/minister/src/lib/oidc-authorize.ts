@@ -5,6 +5,7 @@ import {
   MAX_POLICY_DEPTH,
   parsePolicy,
   policyBadgeTypes,
+  policyBoundsViolation,
   policyDepth,
   type PolicyNode,
 } from "@/lib/oidc-policy";
@@ -297,6 +298,21 @@ function parseMinisterPolicy(rawParam: string | null, scopes: string[]): PolicyP
       kind: "error",
       error: "invalid_scope",
       description: "minister_policy is not a valid policy",
+    };
+  }
+
+  // Breadth DoS guard (audit C-1), applied RIGHT AFTER parse and BEFORE any
+  // depth/selection work: caps atLeast.n, per-node child count, and the
+  // total node count across the tree. Depth + bytes alone do not bound a
+  // policy — a flat, shallow, sub-4KB `atLeast{ n, of: [many leaves] }`
+  // otherwise drives quartic+ combination enumeration in selection and
+  // freezes the event loop. Fail-closed: any violation rejects.
+  const boundsViolation = policyBoundsViolation(policy);
+  if (boundsViolation) {
+    return {
+      kind: "error",
+      error: "invalid_request",
+      description: `minister_policy is too large: ${boundsViolation}`,
     };
   }
 
