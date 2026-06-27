@@ -1,3 +1,4 @@
+import type { MockInstance } from "vitest";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { TlsnVerifierError, validateTlsnVerifierConfig, verifyPresentation } from "./tlsn-verifier";
@@ -11,9 +12,18 @@ afterAll(() => {
   else process.env.TLSN_VERIFIER_URL = ORIGINAL;
 });
 
-const fetchSpy = vi.spyOn(globalThis, "fetch");
-beforeEach(() => fetchSpy.mockReset());
-afterEach(() => fetchSpy.mockReset());
+// Install the fetch spy per-test and fully restore it afterwards. Under
+// Vitest 3, a module-level `spyOn(globalThis, "fetch")` that is only reset
+// (not restored) stays installed across the file/worker teardown and leaks
+// a stray `fetch(undefined)` into real undici ("Failed to parse URL from
+// undefined"). Restoring each time keeps `globalThis.fetch` clean.
+let fetchSpy: MockInstance<typeof globalThis.fetch>;
+beforeEach(() => {
+  fetchSpy = vi.spyOn(globalThis, "fetch");
+});
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 function jsonResponse(json: unknown, status = 200): Response {
   return new Response(JSON.stringify(json), {
