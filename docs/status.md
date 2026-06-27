@@ -68,7 +68,9 @@ operational counterpart.
   (response_type=code, scope, state, nonce, PKCE S256), renders consent
   screen with per-badge toggles. Validated request is HS256-signed via
   `lib/oidc-request-token.ts` so the consent form POST doesn't trust
-  hidden fields.
+  hidden fields. The disclosure model (per-room minimal disclosure,
+  anonymity-aware OR/threshold selection, profile grant split) is below
+  under "Disclosure model."
 - `/oidc/token`: client auth via Basic or form body, Argon2id verifies
   `client_secret`. Race-safe code consumption via `updateMany`. Mints
   Ed25519 ID + access tokens.
@@ -76,6 +78,53 @@ operational counterpart.
   `jti`, returns claims (sub, name/picture, minister_badges).
 - Admin seed-client script (`scripts/seed-client.ts`) with idempotent
   upsert; auto-run in compose for the demo client.
+
+### Disclosure model ✅
+
+Minister discloses the minimum an RP needs and lets the user pick the
+most-anonymous way to satisfy a requirement.
+
+- **Per-room minimal disclosure.** The RP requests only the badge types a
+  room (or gated action) requires, as `badge:<type>` scopes. Consent shows
+  nothing beyond those; the user discloses only the specific badge VCs they
+  tick. Declining a badge doesn't abort the flow.
+- **Anonymity-aware OR/threshold selection.** A room can send its
+  requirement as a structured boolean policy on the authorize request via
+  the **`minister_policy`** param (base64url JSON: `allOf` / `anyOf` /
+  `atLeast{n,of}` / badge leaves with optional `where` / `maxAgeDays`).
+  The policy model mirrors Discreetly's policy package
+  (`lib/oidc-policy.ts`), kept honest by `oidc-policy.drift.test.ts`.
+  `parseMinisterPolicy` (`lib/oidc-authorize.ts`) validates it fail-closed:
+  base64url + JSON decode, strict Zod schema, 4 KB byte cap, breadth bounds
+  (`MAX_ATLEAST_N` 16, `MAX_NODE_CHILDREN` 16, `MAX_POLICY_NODES` 64),
+  depth cap (`MAX_POLICY_DEPTH` 8), and every type in the policy must be in
+  the requested scope — so a policy can only structure the permitted scope
+  menu, never widen it. The validated policy rides into consent inside the
+  signed request token.
+- For a satisfiable policy, Minister computes per-type holder counts
+  (`anonymity-sets.ts`: `COUNT(DISTINCT userId)` per type, in-process cache
+  ~60s, server-side only) and preselects the minimal satisfying set with
+  the largest anonymity (`selectMinimalAnonymitySet`), tie-broken by fewest
+  badges. Consent renders the requirement as a choice (radio for one-of,
+  pick-n for n-of, checkboxes for all-of) with a coarse per-type anonymity
+  bucket (`anonymity-hint.ts`) so the user can make an informed override.
+  Neither the user nor the RP sees the raw count.
+- The preselection/override is advisory. The authoritative over-disclosure
+  guard is server-side minimization on consent submit
+  (`oidc-consent-minimize.ts:minimizeToPolicy`, from
+  `oidc-actions.ts:approveConsent`): the submitted owned ∩ requested badges
+  are trimmed to one minimal satisfying set before persistence, so a
+  tampered POST that ticks two branches (or extra badges past `atLeast n`)
+  can never reach `minister_badges` as more than one minimal set. No policy
+  ⇒ identity, falling back to the flat per-scope menu.
+- **Profile grant split.** The `profile` scope is consented per claim —
+  `approveName` and `approveAvatar` are independent toggles, default OFF,
+  persisted as `profileName` / `profileAvatar` on `OidcAuthorizationCode`
+  (denormalized onto `OidcAccessToken`). `resolveUserClaims`
+  (`oidc-claims.ts`) emits `name` and `picture` independently, only from
+  the user-curated `displayName` / `avatarUrl`, only when granted and set —
+  never from the upstream auth identity (`User.name` / `User.image` isn't a
+  parameter), so a Google/GitHub login's real name and avatar can't leak.
 
 ### Stage 4 — demo client ✅
 
@@ -306,6 +355,25 @@ Documented so we don't relitigate.
 - **Pages use `redirect()` to external `redirect_uri`s.** This required
   turning `typedRoutes` off in `next.config.ts` (it only accepts
   literal internal routes).
+- **`minister_policy` is validated, never trusted.** The param arrives on
+  the front-channel authorize URL, so it's bounded (bytes, breadth, depth)
+  and constrained to types already in the requested scope before it's
+  signed into the request token. The bounds aren't cosmetic: a flat,
+  shallow `atLeast{n, of: [many leaves]}` stays small and shallow yet drives
+  quartic+ combination enumeration in selection — the breadth caps are the
+  defense depth alone can't give.
+- **Anonymity preselection is advisory; minimization is authoritative.**
+  The consent radio/pick-n is UX. `minimizeToPolicy` on submit is the real
+  over-disclosure guard, so the disclosed set is one minimal satisfying set
+  regardless of what a tampered POST ticks. Holder counts are server-side
+  only and bucketed for the user — a live integer per type would be a
+  per-type side channel.
+- **`profile` split into independent name/avatar grants.** A user may want
+  to share a handle but not a face (or vice versa); one `profile` toggle
+  can't express that. The grant is two booleans end-to-end, and the resolver
+  emits each claim only from the curated value — never the upstream auth
+  identity, which closes the silent-real-name-leak the earlier `displayName
+?? name` fallback had.
 
 ### Plugins
 

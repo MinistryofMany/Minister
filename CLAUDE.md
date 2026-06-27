@@ -443,18 +443,24 @@ Relying parties are managed in the admin UI at `/admin/oidc-clients`: register (
 ### Scopes
 
 - `openid` — required
-- `profile` — basic display name + avatar
+- `profile` — display name + avatar, each consented independently (see "Profile grant split")
 - `badge:<type>` — request a specific badge type, e.g. `badge:age-over-21`, `badge:oauth-account`
 
-### Consent screen
+### Disclosure model
 
-For each `badge:<type>` scope the RP requests, the screen shows:
+Minister discloses the minimum a relying party needs, and lets the user pick the most-anonymous way to meet a requirement. Three pieces:
 
-- The badge type and its human description
-- The badges of that type the user holds (could be multiple — let them pick which to disclose, or decline)
-- A toggle per badge
+**Per-room minimal badge disclosure.** An RP requests only the badge types a given room (or gated action) requires, as `badge:<type>` scopes. The consent screen shows nothing beyond those, and the user discloses only the specific badge VCs they tick. Declining a badge does not abort the flow — the RP receives whatever was approved, no more.
 
-Declining a badge does not abort the flow; the RP receives whatever the user did approve.
+**Anonymity-aware OR/threshold selection.** When a room's requirement is a structured boolean policy (e.g. "satisfy any one of these", "satisfy any 2 of these"), the RP sends it on the authorize request as the **`minister_policy`** param: base64url JSON of a requirement subtree (`allOf` / `anyOf` / `atLeast{n,of}` / badge leaves with optional `where` / `maxAgeDays`). The policy model is a deliberate mirror of Discreetly's policy package (`apps/minister/src/lib/oidc-policy.ts`), kept honest by `oidc-policy.drift.test.ts`.
+
+`/oidc/authorize` validates the param fail-closed before trusting it (`oidc-authorize.ts:parseMinisterPolicy`): base64url + JSON decode, strict Zod schema, a 4 KB byte cap, breadth bounds (`MAX_ATLEAST_N` 16, `MAX_NODE_CHILDREN` 16, `MAX_POLICY_NODES` 64) and a depth cap (`MAX_POLICY_DEPTH` 8) to bound consent-render cost, and — critically — every badge type named in the policy must be in the requested scope (which is already ⊆ the client's allowed scopes). A policy can therefore only _structure_ the already-permitted scope menu, never widen it. The validated policy rides into consent inside the signed request token.
+
+For a satisfiable policy, Minister computes **per-type holder counts** (`anonymity-sets.ts`: `COUNT(DISTINCT userId)` per badge type, cached in-process ~60s, server-side only) and preselects the **minimal satisfying set with the largest anonymity** (`selectMinimalAnonymitySet`): the disclosure whose weakest-link anonymity set is largest, tie-broken by fewest badges. The consent screen renders the requirement as a choice (radio for "one of", pick-n for "n of", checkboxes for "all of"), pre-selects that minimal set, and shows a coarse per-type anonymity bucket (`anonymity-hint.ts`: very-small / small / medium / large) so the user can make an informed override to another satisfying choice. The user never sees the raw integer and neither does the RP.
+
+The preselection and override UI are advisory. The authoritative over-disclosure guard is **server-side minimization** on consent submit (`oidc-consent-minimize.ts:minimizeToPolicy`, called from `oidc-actions.ts:approveConsent`): the submitted, owned ∩ requested badges are trimmed down to one minimal satisfying set before anything is persisted, so a tampered POST that ticks two satisfying branches — or extra badges past `atLeast n` — can never reach `minister_badges` as more than one minimal set. With no policy this is the identity, and consent falls back to the flat per-scope menu (which is already bounded to owned ∩ requested badges).
+
+**Profile grant split.** The `profile` scope is consented at claim granularity: `approveName` and `approveAvatar` are independent toggles, each default OFF. The grant is persisted as separate `profileName` / `profileAvatar` booleans on `OidcAuthorizationCode` (and denormalized onto `OidcAccessToken`), so the claims resolver (`oidc-claims.ts:resolveUserClaims`) emits `name` and `picture` independently. A user can share their display name without their avatar, or vice versa. The resolver emits a claim **only** from the user-curated `displayName` / `avatarUrl`, and only when that field is both granted and set — it never falls back to the upstream auth identity (`User.name` / `User.image` is not even a parameter), so a Google/GitHub login's real name and avatar cannot leak. `profile` stays in the RP-facing granted scopes if either sub-claim was approved.
 
 ### ID token
 
