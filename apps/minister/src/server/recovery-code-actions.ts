@@ -26,6 +26,10 @@ import { getCurrentSession, requireAal } from "@/lib/session";
 // create the codes that can later bypass it. Returns the PLAINTEXT codes; the
 // caller renders them once and never persists them. Regenerating invalidates
 // the previous unused batch (handled in generateRecoveryCodes).
+//
+// KNOWN GAP H-1: the AAL2 gate below does NOT also check the acting credential
+// is past its quarantine cooldown (see credential-actions.ts header + TODO.md).
+// Accepted for alpha.
 export async function generateMyRecoveryCodes(): Promise<{ codes: string[] }> {
   const session = await getCurrentSession();
   if (!session?.user?.id) {

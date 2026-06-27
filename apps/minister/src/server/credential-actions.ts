@@ -33,16 +33,30 @@ import type { Session } from "next-auth";
 // bootstrap first passkey on a passkey-less account is the one exception
 // (DESIGNDECISIONS #4) — it is active immediately so the user can reach AAL2.
 //
-// Acting-credential note: the session JWT carries the AAL the session was
-// obtained at but NOT which specific credential row authenticated it. We
-// therefore cannot, from the session alone, reject "the CURRENT session's
-// credential is itself quarantined" with certainty. We enforce what the JWT
-// lets us prove: the AAL floor (a quarantined-but-AAL2 passkey still cleared
-// step-up, which is acceptable — quarantine bounds a NEW credential's blast
-// radius, and these actions additionally fail closed on `recovered`). A
-// per-credential "acting row is quarantined" check would need the credential
-// id threaded onto the JWT; that is out of scope for this slice and noted as a
-// follow-on.
+// KNOWN GAP H-1 (security audit, 2026-06-27) - accepted for the alpha.
+// The quarantine fields above are WRITTEN on credential-add and DISPLAYED in
+// the UI, but no production code READS them to gate a sensitive operation, so
+// the cooldown is currently DECORATIVE: the blast-radius bound DESIGNDECISIONS
+// #5 advertises is not actually enforced. A session that has just reached AAL2
+// via a freshly-grafted (still-quarantined) passkey can immediately start an
+// account merge (merge-actions.ts startMerge/confirmMerge), generate recovery
+// codes (recovery-code-actions.ts generateMyRecoveryCodes), and change the
+// primary email (setPrimaryEmail below) - none of those check quarantine. It
+// is NOT a new unauthenticated takeover path (it requires already reaching
+// AAL2 on the account), which is why it was accepted as a known limitation for
+// the alpha rather than blocking. Fix tracked in TODO.md ("Account assurance /
+// recovery - security follow-ups"): thread the acting credential id onto the
+// session JWT and reject when that row is quarantined; minimum viable gate is
+// to require one NON-quarantined AAL2 credential before startMerge /
+// generateMyRecoveryCodes / setPrimaryEmail. Fix before the alpha exposes
+// merge or recovery-code generation to real users.
+//
+// Acting-credential note (root cause of H-1): the session JWT carries the AAL
+// the session was obtained at but NOT which specific credential row
+// authenticated it, so we cannot, from the session alone, reject "the CURRENT
+// session's credential is itself quarantined". Today we enforce only what the
+// JWT proves: the AAL floor, plus a hard `recovered`-session refusal on every
+// destructive action below.
 // ---------------------------------------------------------------------------
 
 export type CredentialKind = "email" | "passkey" | "oauth";
@@ -448,6 +462,9 @@ export async function setPrimaryEmail(emailId: string): Promise<void> {
   const session = await requirePrincipal();
   rejectRecovered(session);
   requireAal(session, 2);
+  // KNOWN GAP H-1: this AAL2 gate does not also verify the acting credential is
+  // past its quarantine cooldown (see this file's header + TODO.md). Accepted
+  // for alpha.
   const userId = session.user.id;
 
   const target = await prisma.userEmail.findUnique({

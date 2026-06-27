@@ -129,6 +129,66 @@ re-implementing against this codebase, not restoring old code.
 
 ---
 
+## Account assurance / recovery - security follow-ups
+
+From the 2026-06-27 security audit of the account-assurance + recovery + merge
+work (landed together with OIDC Phase 3 grant disclosure). None are blocking for
+the alpha; all are accepted, known gaps.
+
+### H-1 (High) - credential quarantine cooldown is not enforced
+
+**Where:** `apps/minister/src/server/credential-actions.ts` (quarantine fields
+written at credential-add but never read), and the privileged actions that
+should honor the cooldown: `merge-actions.ts` `startMerge` / `confirmMerge`,
+`recovery-code-actions.ts` `generateMyRecoveryCodes`, and
+`credential-actions.ts` `setPrimaryEmail`.
+
+**What:** A freshly added email/passkey lands `status="quarantined"` with a
+`quarantinedUntil` cooldown (DESIGNDECISIONS #5), and the UI shows it, but no
+production code reads those fields to gate an operation. The cooldown is
+therefore decorative: the blast-radius bound it advertises does not exist. A
+session that has just reached AAL2 via a freshly-grafted (still-quarantined)
+passkey can immediately start an account merge, generate recovery codes, or
+change the primary email.
+
+**Why it matters:** The intended containment for a briefly-compromised account
+(an attacker who reaches AAL2 grafts a persistent credential and pivots to merge
+/ recovery-code generation before the owner reacts to the "a credential was
+added" notification) is inert. It is NOT a new unauthenticated takeover path -
+it requires already reaching AAL2 - which is why it was accepted for the alpha
+rather than blocking the merge.
+
+**Fix:** Thread the acting credential id onto the session JWT at sign-in, then in
+each privileged action reject when that credential row is
+`status==="quarantined" && quarantinedUntil > now`. Minimum viable gate: require
+the user to hold at least one non-quarantined AAL2 credential before
+`startMerge` / `generateMyRecoveryCodes` / `setPrimaryEmail`. Fix this before the
+alpha exposes merge or recovery-code generation to real users.
+
+### OidcGrant rows are not migrated on account merge
+
+**Where:** `apps/minister/src/lib/merge.ts` / `src/server/merge-actions.ts` vs
+the Phase 3 `OidcGrant` model.
+
+**What:** `merge.ts` re-points 15 donor->survivor models but does not know about
+`OidcGrant` (new in Phase 3; the merge code predates it). After a merge, a
+donor's `OidcGrant` rows (the durable "already proven these badge types to this
+RP" record) stay on the tombstoned donor and cascade-delete when the donor is
+hard-deleted. The survivor does not inherit the donor's already-proven history
+for RPs only the donor used.
+
+**Why it matters:** Minor - only the consent screen's "you've already proven
+these to this platform" transparency display is affected; no data leak, no auth
+break. After a merge the survivor may be re-shown a donor-only RP's badges as
+not-yet-proven.
+
+**Fix:** Add `tx.oidcGrant` handling to the merge transaction - union-OR the
+donor's `badgeTypes` / `profileName` / `profileAvatar` into the survivor's
+`(userId, clientId)` row, with collision handling on the
+`@@unique([userId, clientId])`, mirroring how `subjectOverride` is merged.
+
+---
+
 ## Misc small things
 
 - `services/ws-proxy/`: alpine stub; see Stage 6 item above.

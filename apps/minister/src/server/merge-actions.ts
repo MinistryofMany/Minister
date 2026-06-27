@@ -88,6 +88,11 @@ export interface StartMergeResult {
 // to ALSO control; we mail it a single-use prove-it link. We do NOT disclose
 // whether that email maps to an account (anti-enumeration): a hit and a miss
 // both return ok:true.
+//
+// KNOWN GAP H-1: the AAL2 + non-recovered gate below does NOT also check that
+// the acting credential is past its quarantine cooldown, so a just-grafted
+// quarantined passkey can start a merge. Accepted for alpha; see
+// credential-actions.ts header + TODO.md.
 export async function startMerge(donorEmail: string): Promise<StartMergeResult> {
   const session = await getCurrentSession();
   if (!session?.user?.id) {
