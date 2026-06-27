@@ -5,8 +5,11 @@ import { getBadgeType } from "@minister/shared";
 
 import { ConsentScreen } from "@/components/consent-screen";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { holderCountsByType } from "@/lib/anonymity-sets";
 import { loadUserBadges, summarizeAttributes, type DisplayBadge } from "@/lib/badges";
 import { buildErrorRedirect, validateAuthorizeRequest } from "@/lib/oidc-authorize";
+import { buildPolicyConsentView, type PolicyConsentView } from "@/lib/oidc-policy-view";
+import type { UserBadge } from "@/lib/oidc-policy";
 import { signOidcRequest } from "@/lib/oidc-request-token";
 import { clientIpFrom, oidcAuthorizeLimiter } from "@/lib/rate-limit";
 import { getCurrentSession } from "@/lib/session";
@@ -56,6 +59,28 @@ export default async function OidcAuthorizePage({ searchParams }: PageProps) {
   const allBadges = await loadUserBadges(session.user.id);
   const badgeChoices = buildBadgeChoices(request.scopes, allBadges);
 
+  // Phase-2: when the RP sent a structured policy, render the requirement
+  // as a choice (satisfy one / n of several) with the most-anonymous
+  // minimal set pre-selected and a coarse anonymity hint for informed
+  // override. Absent ⇒ today's flat per-scope groups.
+  let policyView: PolicyConsentView | null = null;
+  if (request.policy) {
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    const userBadges: UserBadge[] = allBadges.map((b) => ({
+      id: b.id,
+      type: b.type,
+      attributes: toScalarAttrs(b.attributes),
+      issuedAt: Math.floor(b.issuedAt.getTime() / 1000),
+    }));
+    policyView = buildPolicyConsentView(
+      request.policy,
+      allBadges,
+      userBadges,
+      await holderCountsByType(),
+      nowSeconds,
+    );
+  }
+
   return (
     <div className="mx-auto flex max-w-lg flex-col gap-6 px-4 py-12">
       <header className="space-y-1">
@@ -70,10 +95,24 @@ export default async function OidcAuthorizePage({ searchParams }: PageProps) {
         clientName={request.clientName}
         wantsProfile={request.scopes.includes("profile")}
         badgeChoices={badgeChoices}
+        policyView={policyView}
         requestToken={requestToken}
       />
     </div>
   );
+}
+
+// Narrow display-badge attributes to policy scalars for selection. Mirrors
+// oidc-consent-minimize.coerceAttrs (kept local to avoid importing a
+// "use server"-adjacent module into the page).
+function toScalarAttrs(
+  attributes: Record<string, unknown>,
+): Record<string, string | number | boolean> {
+  const out: Record<string, string | number | boolean> = {};
+  for (const [k, v] of Object.entries(attributes)) {
+    if (typeof v === "string" || typeof v === "number" || typeof v === "boolean") out[k] = v;
+  }
+  return out;
 }
 
 interface BadgeChoiceGroup {

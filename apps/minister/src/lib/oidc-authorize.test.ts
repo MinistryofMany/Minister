@@ -138,7 +138,102 @@ describe("validateAuthorizeRequest — success", () => {
       nonce: "NONCE_1",
       codeChallenge: "CHAL_1",
       codeChallengeMethod: "S256",
+      policy: null,
     });
+  });
+});
+
+function encodePolicy(policy: unknown): string {
+  return Buffer.from(JSON.stringify(policy), "utf8").toString("base64url");
+}
+
+describe("validateAuthorizeRequest — minister_policy (Phase 2)", () => {
+  // A client that allows the badge types used by the policy cases.
+  const POLICY_CLIENT = {
+    clientId: "mc_demo",
+    name: "Demo",
+    allowedScopes: ["openid", "profile", "badge:age-over-18", "badge:residency-country"],
+    redirectUris: ["http://localhost:3100/cb"],
+  };
+  const POLICY_SCOPE = "openid profile badge:age-over-18 badge:residency-country";
+
+  beforeEach(() => {
+    vi.mocked(findClient).mockResolvedValue(POLICY_CLIENT as never);
+    vi.mocked(isRegisteredRedirectUri).mockReturnValue(true);
+  });
+
+  it("absent param → policy: null (today's behavior)", async () => {
+    const res = await validateAuthorizeRequest(build({ scope: POLICY_SCOPE }));
+    if (res.kind !== "ok") throw new Error(`expected ok, got ${res.kind}`);
+    expect(res.request.policy).toBeNull();
+  });
+
+  it("valid policy whose types are all in scope → policy populated", async () => {
+    const policy = {
+      anyOf: [{ badge: { type: "age-over-18" } }, { badge: { type: "residency-country" } }],
+    };
+    const res = await validateAuthorizeRequest(
+      build({ scope: POLICY_SCOPE, minister_policy: encodePolicy(policy) }),
+    );
+    if (res.kind !== "ok") throw new Error(`expected ok, got ${res.kind}`);
+    expect(res.request.policy).toEqual(policy);
+  });
+
+  it("malformed base64/JSON → invalid_request", async () => {
+    const res = await validateAuthorizeRequest(
+      build({ scope: POLICY_SCOPE, minister_policy: "!!!not-base64-json!!!" }),
+    );
+    if (res.kind !== "redirect-error") throw new Error("expected redirect-error");
+    expect(res.error).toBe("invalid_request");
+    expect(res.description).toMatch(/minister_policy/);
+  });
+
+  it("valid JSON that is not a policy → invalid_scope", async () => {
+    const res = await validateAuthorizeRequest(
+      build({ scope: POLICY_SCOPE, minister_policy: encodePolicy({ not: "a policy" }) }),
+    );
+    if (res.kind !== "redirect-error") throw new Error("expected redirect-error");
+    expect(res.error).toBe("invalid_scope");
+  });
+
+  it("policy referencing a type not in scope → invalid_scope (can't widen the menu)", async () => {
+    const policy = {
+      anyOf: [
+        { badge: { type: "age-over-18" } },
+        { badge: { type: "oauth-account" } }, // not requested in scope
+      ],
+    };
+    const res = await validateAuthorizeRequest(
+      build({ scope: POLICY_SCOPE, minister_policy: encodePolicy(policy) }),
+    );
+    if (res.kind !== "redirect-error") throw new Error("expected redirect-error");
+    expect(res.error).toBe("invalid_scope");
+    expect(res.description).toMatch(/oauth-account/);
+  });
+
+  it("over-deep policy → invalid_request", async () => {
+    // Nest allOf well past MAX_POLICY_DEPTH (8). The deepest leaf is the
+    // in-scope type, so this trips the depth guard, not the scope guard.
+    let policy: unknown = { badge: { type: "age-over-18" } };
+    for (let i = 0; i < 10; i++) policy = { allOf: [policy] };
+    const res = await validateAuthorizeRequest(
+      build({ scope: POLICY_SCOPE, minister_policy: encodePolicy(policy) }),
+    );
+    if (res.kind !== "redirect-error") throw new Error("expected redirect-error");
+    expect(res.error).toBe("invalid_request");
+    expect(res.description).toMatch(/deep/);
+  });
+
+  it("oversized policy payload → invalid_request", async () => {
+    // A leaf with a giant `where` value pushes the decoded JSON past 4 KB.
+    const big = "x".repeat(5000);
+    const policy = { badge: { type: "age-over-18", where: { pad: big } } };
+    const res = await validateAuthorizeRequest(
+      build({ scope: POLICY_SCOPE, minister_policy: encodePolicy(policy) }),
+    );
+    if (res.kind !== "redirect-error") throw new Error("expected redirect-error");
+    expect(res.error).toBe("invalid_request");
+    expect(res.description).toMatch(/large/);
   });
 });
 

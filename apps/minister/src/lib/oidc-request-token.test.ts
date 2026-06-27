@@ -28,6 +28,7 @@ describe("OIDC request token round trip", () => {
     nonce: "NONCE_abc",
     codeChallenge: "challenge_xyz",
     codeChallengeMethod: "S256",
+    policy: null,
   };
 
   it("round-trips a validated request unchanged", async () => {

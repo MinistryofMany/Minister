@@ -1,6 +1,13 @@
 import { z } from "zod";
 
 import { findClient, isRegisteredRedirectUri } from "@/lib/oidc-clients";
+import {
+  MAX_POLICY_DEPTH,
+  parsePolicy,
+  policyBadgeTypes,
+  policyDepth,
+  type PolicyNode,
+} from "@/lib/oidc-policy";
 
 // Parsed, validated /oidc/authorize parameters. Once a value of this
 // type exists, every requirement from RFC 6749 + OIDC Core 1.0 +
@@ -17,7 +24,19 @@ export interface ValidAuthorizeRequest {
   nonce: string;
   codeChallenge: string;
   codeChallengeMethod: "S256";
+  // Phase-2 OR/threshold selection. Present when the RP sent a
+  // `minister_policy` authorize param carrying the room's requirement
+  // subtree; null for today's flat per-scope flow. Validated here
+  // (parsed, strict-schema'd, types ⊆ scope, size/depth-bounded) so the
+  // signed request token carries a trusted policy into consent.
+  policy: PolicyNode | null;
 }
+
+// Caps on the inbound minister_policy payload, to keep a crafted policy
+// from blowing up the consent path. The param travels on the
+// front-channel authorize URL; a few hundred bytes is the realistic
+// size, so 4 KB is generous headroom while still bounded.
+const MAX_POLICY_BYTES = 4096;
 
 // Validation produces either a valid request, a "redirect to RP with
 // error" outcome (we have a trusted redirect_uri, so error reporting
@@ -194,6 +213,20 @@ export async function validateAuthorizeRequest(
     };
   }
 
+  // Step 7: optional minister_policy (Phase-2 OR/threshold selection).
+  // Fail-closed at every sub-step — never proceed with an
+  // unparseable/invalid/over-broad policy.
+  const policyResult = parseMinisterPolicy(raw.get("minister_policy"), scopes);
+  if (policyResult.kind === "error") {
+    return {
+      kind: "redirect-error",
+      redirectUri,
+      state,
+      error: policyResult.error,
+      description: policyResult.description,
+    };
+  }
+
   // All clear.
   // Refinements above narrowed everything to strings; we know they're
   // non-null from the safeParse checks. Help TS along.
@@ -209,6 +242,84 @@ export async function validateAuthorizeRequest(
       nonce: nonce as string,
       codeChallenge: codeChallenge as string,
       codeChallengeMethod: "S256",
+      policy: policyResult.policy,
     },
   };
+}
+
+type PolicyParseResult =
+  | { kind: "ok"; policy: PolicyNode | null }
+  | { kind: "error"; error: OidcError; description: string };
+
+// Parse + validate the optional minister_policy authorize param.
+//   absent           → { policy: null }            (today's flat flow)
+//   bad base64/JSON  → invalid_request             (malformed)
+//   too big          → invalid_request             (DoS guard)
+//   not a policy     → invalid_scope               (schema reject)
+//   too deeply nested→ invalid_request             (DoS guard)
+//   type ∉ scope     → invalid_scope               (can't widen the menu)
+//
+// Enforcing policy types ⊆ requested scope (which is already ⊆
+// client.allowedScopes, checked above) means the policy can only
+// STRUCTURE the already-permitted scope menu, never smuggle in a type the
+// RP isn't authorized to ask about.
+function parseMinisterPolicy(rawParam: string | null, scopes: string[]): PolicyParseResult {
+  if (rawParam === null || rawParam.length === 0) {
+    return { kind: "ok", policy: null };
+  }
+
+  let json: string;
+  try {
+    json = Buffer.from(rawParam, "base64url").toString("utf8");
+  } catch {
+    return { kind: "error", error: "invalid_request", description: "minister_policy is malformed" };
+  }
+  if (json.length > MAX_POLICY_BYTES) {
+    return {
+      kind: "error",
+      error: "invalid_request",
+      description: "minister_policy is too large",
+    };
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(json);
+  } catch {
+    return { kind: "error", error: "invalid_request", description: "minister_policy is malformed" };
+  }
+
+  let policy: PolicyNode;
+  try {
+    policy = parsePolicy(parsed);
+  } catch {
+    return {
+      kind: "error",
+      error: "invalid_scope",
+      description: "minister_policy is not a valid policy",
+    };
+  }
+
+  if (policyDepth(policy) > MAX_POLICY_DEPTH) {
+    return {
+      kind: "error",
+      error: "invalid_request",
+      description: "minister_policy is nested too deeply",
+    };
+  }
+
+  const requestedBadgeTypes = new Set(
+    scopes.filter((s) => s.startsWith("badge:")).map((s) => s.slice("badge:".length)),
+  );
+  for (const type of policyBadgeTypes(policy)) {
+    if (!requestedBadgeTypes.has(type)) {
+      return {
+        kind: "error",
+        error: "invalid_scope",
+        description: `minister_policy references badge type not in scope: ${type}`,
+      };
+    }
+  }
+
+  return { kind: "ok", policy };
 }
