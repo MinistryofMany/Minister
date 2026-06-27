@@ -1,7 +1,10 @@
 import { randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { expect, type Page } from "@playwright/test";
+import { buildUserDid, issueVc, loadIssuer, type Issuer } from "@minister/vc";
 
 import { hashClientSecret } from "../src/lib/oidc-clients";
 import { PrismaClient } from "../src/generated/prisma/index.js";
@@ -166,29 +169,46 @@ export async function createConfidentialOidcClient(
   return { clientId, clientSecret };
 }
 
-// Seed a Badge row with a recognizable, self-describing VC JWT. The
-// OIDC token/userinfo paths emit `vcJwt` verbatim, so the payload only
-// needs to be a decodable JWT-VC whose `credentialSubject.kind` lets a
-// spec assert exactly which credential was disclosed. `tag` makes the
-// embedded value unique per badge so duplicate types stay
-// distinguishable.
+// Load the same issuer key the e2e dev server uses (the persisted dev key
+// under apps/minister/dev-keys). Seeded badge VCs must be REAL signed,
+// expiring VCs because the OIDC disclosure path now re-mints each stored VC
+// under a pairwise subject (it decodes the stored VC, swaps the subject, and
+// re-signs, preserving exp/jti/claims). A fake unsigned VC with no exp would
+// be rejected at re-mint.
+const HELPERS_DIR = path.dirname(fileURLToPath(import.meta.url));
+const DEV_KEY_PATH = path.join(HELPERS_DIR, "..", "dev-keys", "issuer.jwk");
+let issuerPromise: Promise<Issuer> | undefined;
+function e2eIssuer(): Promise<Issuer> {
+  if (!issuerPromise) {
+    issuerPromise = loadIssuer({ domain: "minister.local", devKeyPath: DEV_KEY_PATH });
+  }
+  return issuerPromise;
+}
+
+// Seed a Badge row with a real, signed JWT-VC. The stored VC carries the
+// global holder DID (as real issuance does); a `kind`/`tag` claim lets a
+// spec assert exactly which credential was disclosed (the re-mint preserves
+// all claims). `tag` makes the embedded value unique per badge so duplicate
+// types stay distinguishable.
 export async function seedBadge(userId: string, type: string, tag = type): Promise<string> {
-  const header = Buffer.from(JSON.stringify({ alg: "EdDSA", typ: "JWT" })).toString("base64url");
-  const payload = Buffer.from(
-    JSON.stringify({
-      sub: `did:web:minister.local:users:${userId}`,
-      vc: { type: ["VerifiableCredential"], credentialSubject: { kind: type, tag } },
-    }),
-  ).toString("base64url");
+  const issuer = await e2eIssuer();
   const badge = await prisma.badge.create({
     data: {
       userId,
       type,
       attributes: { tag },
-      vcJwt: `${header}.${payload}.sig`,
-      issuer: "did:web:minister.local",
+      vcJwt: "",
+      issuer: issuer.did,
     },
   });
+  const vcJwt = await issueVc(
+    issuer,
+    type,
+    buildUserDid(issuer.domain, userId),
+    { kind: type, tag },
+    { jti: badge.id, expiresIn: "1y" },
+  );
+  await prisma.badge.update({ where: { id: badge.id }, data: { vcJwt } });
   return badge.id;
 }
 

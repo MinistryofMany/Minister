@@ -12,8 +12,23 @@ export function buildKid(did: string, fragment = "key-1"): string {
 
 // Subject DID used in `sub` of issued VCs. Path components after the
 // domain encode a user namespace.
+//
+// This is the GLOBAL holder DID, embedding the raw internal userId. It is
+// used only for Minister's internal stored record (`Badge.vcJwt`) and MUST
+// NOT be disclosed to a relying party (it correlates across RPs and leaks
+// the internal id). At disclosure the VC is re-minted under a pairwise
+// subject - see buildPairwiseUserDid.
 export function buildUserDid(domain: string, userId: string): string {
   return `did:web:${domain}:users:${userId}`;
+}
+
+// Pairwise (per-relying-party) subject DID used in disclosed VCs. The `sub`
+// component is an opaque, per-RP pseudonym (Minister's OIDC pairwise `sub`,
+// or a non-correlating opaque token for share links). It carries no raw
+// userId and is distinct from the `:users:` namespace above, so the two are
+// never confused. Different RPs see different DIDs for the same user.
+export function buildPairwiseUserDid(domain: string, sub: string): string {
+  return `did:web:${domain}:u:${sub}`;
 }
 
 export function getDidDocument(issuer: Issuer): DidDocument {

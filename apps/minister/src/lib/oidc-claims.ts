@@ -1,3 +1,5 @@
+import { buildPairwiseUserDid, reissueVcWithSubject, type Issuer } from "@minister/vc";
+
 import { prisma } from "@/lib/prisma";
 
 // The user fields both OIDC claim paths need. Deliberately only the
@@ -69,15 +71,43 @@ export function resolveUserClaims(
   return resolved;
 }
 
-// Loads the VC JWTs for the badges the user approved for this grant. Scoped
-// to the owning user so a stale approvedBadgeIds list can never surface
-// another user's badge. Shared by both OIDC paths so the badge set is
-// loaded identically.
-export async function loadApprovedBadgeJwts(userId: string, badgeIds: string[]): Promise<string[]> {
+// Identifies the relying party a badge is being disclosed to. The pairwise
+// `sub` MUST be the merge-aware value from resolveSub (NOT raw pairwiseSub),
+// so a merged account keeps a consistent per-RP badge subject. The issuer
+// re-signs the re-minted VC with the same key used at issuance.
+export interface DisclosureContext {
+  // Per-RP pairwise pseudonym from resolveSub (oidc-subject.ts).
+  sub: string;
+  issuer: Issuer;
+}
+
+// Loads the badges the user approved for this grant and re-mints each one
+// under a per-RP PAIRWISE subject before disclosure. Scoped to the owning
+// user so a stale approvedBadgeIds list can never surface another user's
+// badge.
+//
+// Privacy: the VC stored in `Badge.vcJwt` carries the global holder DID
+// (did:web:<domain>:users:<rawUserId>), which would correlate the user
+// across relying parties and leak the internal id. We never disclose it.
+// Instead each disclosed VC is re-signed with credentialSubject.id == JWT
+// sub == did:web:<domain>:u:<sub>, where `sub` is the per-RP pairwise
+// pseudonym. Every other claim (type, jti, exp, nbf, iat, the credential
+// claims) is preserved verbatim, so re-minting cannot extend validity and
+// the credential keeps its identity. The stored global-DID VC stays as
+// Minister's internal record.
+export async function loadApprovedBadgeJwts(
+  userId: string,
+  badgeIds: string[],
+  ctx: DisclosureContext,
+): Promise<string[]> {
   if (badgeIds.length === 0) return [];
   const rows = await prisma.badge.findMany({
     where: { userId, id: { in: badgeIds } },
     select: { vcJwt: true },
   });
-  return rows.map((r) => r.vcJwt);
+
+  const pairwiseSubjectDid = buildPairwiseUserDid(ctx.issuer.domain, ctx.sub);
+  return Promise.all(
+    rows.map((r) => reissueVcWithSubject(ctx.issuer, r.vcJwt, pairwiseSubjectDid)),
+  );
 }

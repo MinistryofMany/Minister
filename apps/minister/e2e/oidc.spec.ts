@@ -116,14 +116,22 @@ test("authorization-code + PKCE dance end-to-end", async ({ browser, request }) 
   expect(idClaims.nonce).toBe(nonce);
   expect(typeof idClaims.sub).toBe("string");
   // The user may hold several email-domain badges by this point in the
-  // suite (earlier specs mint their own) — what matters is that every
-  // approved badge arrives as a VC bound to the user's DID.
+  // suite (earlier specs mint their own). Every approved badge must arrive
+  // re-minted under the PER-RP PAIRWISE subject: the disclosed VC carries no
+  // raw userId and no global `:users:` DID, its subject is bound to the
+  // id_token's pairwise `sub`, and `sub` === `credentialSubject.id`.
+  const expectedBadgeSubject = `did:web:minister.local:u:${idClaims.sub}`;
   const badges = idClaims.minister_badges as string[];
   expect(Array.isArray(badges)).toBe(true);
   expect(badges.length).toBeGreaterThanOrEqual(1);
   for (const vc of badges) {
-    const vcClaims = decodeJwtPayload(vc);
-    expect(String(vcClaims.sub)).toContain("did:web:minister.local:users:");
+    const vcClaims = decodeJwtPayload(vc) as {
+      sub?: unknown;
+      vc?: { credentialSubject?: { id?: unknown } };
+    };
+    expect(vcClaims.sub).toBe(expectedBadgeSubject);
+    expect(vcClaims.vc?.credentialSubject?.id).toBe(expectedBadgeSubject);
+    expect(String(vcClaims.sub)).not.toContain(":users:");
   }
 
   // The access token carries no raw user id — userinfo resolves it.

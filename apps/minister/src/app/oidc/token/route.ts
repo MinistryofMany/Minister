@@ -147,7 +147,15 @@ export async function POST(request: Request) {
   const sub = await resolveSub(user.id, client.clientId);
   const issuer = await getIssuer();
 
-  const minister_badges = await loadApprovedBadgeJwts(user.id, stored.approvedBadgeIds);
+  // Re-mint each disclosed badge under the per-RP pairwise subject so no
+  // relying party ever receives the global holder DID (which embeds the raw
+  // userId and correlates across RPs). `sub` here is the merge-aware
+  // resolveSub value, so the badge subject matches the id_token sub's
+  // namespace and merged accounts stay consistent.
+  const minister_badges = await loadApprovedBadgeJwts(user.id, stored.approvedBadgeIds, {
+    sub,
+    issuer,
+  });
   // Shared resolver so the ID token's claims provably match /oidc/userinfo.
   // The per-claim profile grant is persisted on the auth code, not inferred
   // from the scope string, so name and avatar disclose independently.

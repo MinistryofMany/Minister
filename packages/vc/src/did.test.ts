@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { buildDid, buildKid, buildUserDid, getDidDocument } from "./did";
+import { buildDid, buildKid, buildPairwiseUserDid, buildUserDid, getDidDocument } from "./did";
 import type { Issuer } from "./types";
 
 describe("buildDid", () => {
@@ -26,6 +26,22 @@ describe("buildKid", () => {
 describe("buildUserDid", () => {
   it("namespaces user IDs under a did:web", () => {
     expect(buildUserDid("minister.local", "u_123")).toBe("did:web:minister.local:users:u_123");
+  });
+});
+
+describe("buildPairwiseUserDid", () => {
+  it("namespaces an opaque pairwise sub under the :u: namespace", () => {
+    expect(buildPairwiseUserDid("minister.local", "ABC_sub")).toBe(
+      "did:web:minister.local:u:ABC_sub",
+    );
+  });
+
+  it("uses a different namespace from the global user DID so they never collide", () => {
+    const pairwise = buildPairwiseUserDid("minister.local", "x");
+    const global = buildUserDid("minister.local", "x");
+    expect(pairwise).not.toBe(global);
+    expect(pairwise).toContain(":u:");
+    expect(pairwise).not.toContain(":users:");
   });
 });
 
