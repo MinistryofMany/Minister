@@ -30,7 +30,7 @@ import { evaluate, parsePolicy, type PolicyNode, type UserBadge } from "./oidc-p
 const PINNED_DISCREETLY_SOURCE_SHA: Record<string, string> = {
   "types.ts": "96c776e5b00dad5cec1ada402c94a8b318040fc3e2395ff8d9d868cb2e7e614d",
   "schema.ts": "8907ec89a38dddc75cfbc1bfc2594227d9038b57d6d2769664d45c9ff4265a6f",
-  "evaluate.ts": "dd2837a2f8b11c946f0e3ccef50bf366573b18eb03df703d8c96d45a9d234e81",
+  "evaluate.ts": "d2fadecbd5de094fb470dc051a9c0942a88e952447a2dacb35a4bdaa7ea8e920",
 };
 
 // Discreetly lives as a sibling repo of Minister in the workspace folder:
