@@ -128,7 +128,7 @@ test.describe("OIDC grant disclosure + locked already-proven section (Phase 3)",
     const page = await ctx.newPage();
     await signInViaMagicLink(page, email);
     const userId = await prisma.user
-      .findUniqueOrThrow({ where: { email }, select: { id: true } })
+      .findFirstOrThrow({ where: { email }, select: { id: true } })
       .then((u) => u.id);
     // The user holds all three badge kinds.
     await seedBadge(userId, "age-over-18");

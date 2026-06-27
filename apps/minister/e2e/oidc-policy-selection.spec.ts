@@ -127,7 +127,7 @@ test.describe("OIDC policy selection (Phase 2)", () => {
     const page = await ctx.newPage();
     await signInViaMagicLink(page, email);
     const userId = await prisma.user
-      .findUniqueOrThrow({ where: { email }, select: { id: true } })
+      .findFirstOrThrow({ where: { email }, select: { id: true } })
       .then((u) => u.id);
     await seedBadge(userId, "age-over-18");
     await seedBadge(userId, "residency-country");
@@ -167,7 +167,7 @@ test.describe("OIDC policy selection (Phase 2)", () => {
     const page = await ctx.newPage();
     await signInViaMagicLink(page, email);
     const userId = await prisma.user
-      .findUniqueOrThrow({ where: { email }, select: { id: true } })
+      .findFirstOrThrow({ where: { email }, select: { id: true } })
       .then((u) => u.id);
     await seedBadge(userId, "age-over-18");
     await seedBadge(userId, "residency-country");

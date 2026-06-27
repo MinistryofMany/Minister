@@ -654,32 +654,32 @@ async function run<T>(fn: () => Promise<T>): Promise<ActionResult<T>> {
   }
 }
 
-export function addEmailAction(
+export async function addEmailAction(
   email: string,
 ): Promise<ActionResult<{ id: string; email: string }>> {
   return run(() => addEmail(email));
 }
 
-export function removeEmailAction(emailId: string): Promise<ActionResult<void>> {
+export async function removeEmailAction(emailId: string): Promise<ActionResult<void>> {
   return run(() => removeEmail(emailId));
 }
 
-export function setPrimaryEmailAction(emailId: string): Promise<ActionResult<void>> {
+export async function setPrimaryEmailAction(emailId: string): Promise<ActionResult<void>> {
   return run(() => setPrimaryEmail(emailId));
 }
 
-export function removePasskeyAction(credentialID: string): Promise<ActionResult<void>> {
+export async function removePasskeyAction(credentialID: string): Promise<ActionResult<void>> {
   return run(() => removePasskey(credentialID));
 }
 
-export function markPasskeyEnrolledAction(): Promise<ActionResult<{ quarantined: boolean }>> {
+export async function markPasskeyEnrolledAction(): Promise<ActionResult<{ quarantined: boolean }>> {
   return run(() => markPasskeyEnrolled());
 }
 
-export function canAddPasskeyAction(): Promise<ActionResult<CanAddPasskeyResult>> {
+export async function canAddPasskeyAction(): Promise<ActionResult<CanAddPasskeyResult>> {
   return run(() => canAddPasskey());
 }
 
-export function listCredentialsAction(): Promise<ActionResult<CredentialListing>> {
+export async function listCredentialsAction(): Promise<ActionResult<CredentialListing>> {
   return run(() => listCredentials());
 }
