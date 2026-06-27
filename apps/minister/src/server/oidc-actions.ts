@@ -8,6 +8,7 @@ import { z } from "zod";
 import { audit } from "@/lib/audit";
 import { holderCountsByType } from "@/lib/anonymity-sets";
 import { buildErrorRedirect, buildSuccessRedirect } from "@/lib/oidc-authorize";
+import { grantedRelevantTypes, loadGrant, upsertGrant } from "@/lib/oidc-grants";
 import { type PolicyNode, type UserBadge } from "@/lib/oidc-policy";
 import { verifyOidcRequest } from "@/lib/oidc-request-token";
 import { prisma } from "@/lib/prisma";
@@ -73,6 +74,29 @@ export async function approveConsent(
   const ownedBadges = await loadBadgesForUser(session.user.id, parsed.data.approvedBadgeIds);
   const requestedBadges = ownedBadges.filter((b) => requestedBadgeTypes.has(b.type));
 
+  // Phase-3 transparency: fold the already-granted-AND-room-relevant types
+  // into the candidate set BEFORE minimization, so the user need not
+  // re-select what they have already proven to this client. The locked
+  // checkboxes in the consent UI are an affordance only — the server
+  // independently forces these in so a tampered POST that *unticks* a
+  // locked box still includes it. The locked set is scoped to types the
+  // room actually requested (grantedRelevantTypes) AND of which the user
+  // still holds a badge — a granted type the room does NOT request is
+  // neither loaded nor disclosed (per-room minimal disclosure, F-2(a)).
+  //
+  // This does NOT widen disclosure: minimizeToPolicy below STILL trims the
+  // union (submitted ∪ granted-relevant) to one minimal satisfying set, so
+  // a granted type the room's minimal set does not need is trimmed away
+  // (shown in the locked section for transparency, but not sent on the
+  // wire unless this room needs it).
+  const grant = await loadGrant(session.user.id, request.clientId);
+  const grantedRelevant = new Set(grantedRelevantTypes(grant, requestedBadgeTypes));
+  const grantedBadges =
+    grantedRelevant.size > 0
+      ? await loadBadgesOfTypesForUser(session.user.id, grantedRelevant)
+      : [];
+  const candidateBadges = unionBadgesById(requestedBadges, grantedBadges);
+
   // When the RP sent a structured policy, STRICTLY minimize the disclosure
   // server-side: trim the submitted set down to ONE minimal satisfying set
   // (the most-anonymous one). This is the authoritative over-disclosure
@@ -93,7 +117,7 @@ export async function approveConsent(
   // is detectable rather than silently downgraded. Not implemented now.
   const userBadges = minimizeToPolicy(
     request.policy,
-    requestedBadges,
+    candidateBadges,
     await holderCountsForPolicy(request.policy),
   );
   const approvedBadgeIds = userBadges.map((b) => b.id);
@@ -104,31 +128,48 @@ export async function approveConsent(
   const approveProfile = parsed.data.approveName || parsed.data.approveAvatar;
 
   const code = newAuthCode();
-  await prisma.oidcAuthorizationCode.create({
-    data: {
-      code,
-      clientId: request.clientId,
-      userId: session.user.id,
-      redirectUri: request.redirectUri,
-      // Effective granted scopes: openid always; profile only if the
-      // user approved at least one profile sub-claim; each badge:<type>
-      // scope kept only if at least one badge of that type was disclosed.
-      scopes: effectiveScopes(request.scopes, {
-        approveProfile,
+  // The types actually disclosed this round (the minimized set). These — not
+  // the whole locked set — are what we record into the grant, so the grant
+  // reflects what was truly sent on the wire. badgeTypes accumulate by union
+  // inside upsertGrant ("ever proven to this platform").
+  const disclosedTypes = [...new Set(userBadges.map((b) => b.type))];
+  // Create the auth code and accumulate the grant atomically: a failed
+  // consent leaves no orphan grant, and the grant is never recorded for a
+  // disclosure that did not mint a code.
+  await prisma.$transaction(async (tx) => {
+    await tx.oidcAuthorizationCode.create({
+      data: {
+        code,
+        clientId: request.clientId,
+        userId: session.user.id,
+        redirectUri: request.redirectUri,
+        // Effective granted scopes: openid always; profile only if the
+        // user approved at least one profile sub-claim; each badge:<type>
+        // scope kept only if at least one badge of that type was disclosed.
+        scopes: effectiveScopes(request.scopes, {
+          approveProfile,
+          approvedBadgeIds,
+          userBadges,
+        }),
         approvedBadgeIds,
-        userBadges,
-      }),
-      approvedBadgeIds,
-      // Granular profile grant. Only meaningful when `profile` was requested
-      // and survives effectiveScopes; harmless (false) otherwise.
+        // Granular profile grant. Only meaningful when `profile` was requested
+        // and survives effectiveScopes; harmless (false) otherwise.
+        profileName: parsed.data.approveName,
+        profileAvatar: parsed.data.approveAvatar,
+        // Echoed back in id_token at /token time — see CLAUDE.md.
+        nonce: request.nonce,
+        codeChallenge: request.codeChallenge,
+        codeChallengeMethod: request.codeChallengeMethod,
+        expiresAt: new Date(Date.now() + CODE_TTL_SECONDS * 1000),
+      },
+    });
+    await upsertGrant(tx, {
+      userId: session.user.id,
+      clientId: request.clientId,
+      badgeTypes: disclosedTypes,
       profileName: parsed.data.approveName,
       profileAvatar: parsed.data.approveAvatar,
-      // Echoed back in id_token at /token time — see CLAUDE.md.
-      nonce: request.nonce,
-      codeChallenge: request.codeChallenge,
-      codeChallengeMethod: request.codeChallengeMethod,
-      expiresAt: new Date(Date.now() + CODE_TTL_SECONDS * 1000),
-    },
+    });
   });
 
   await audit(session.user.id, "oidc.consent_approved", {
@@ -190,6 +231,37 @@ async function loadBadgesForUser(userId: string, badgeIds: string[]): Promise<Us
     attributes: coerceAttrs(r.attributes),
     issuedAt: Math.floor(r.issuedAt.getTime() / 1000),
   }));
+}
+
+// Load the user's owned badges whose TYPE is in `types`, regardless of
+// whether the consent POST submitted them. Used to force the already-
+// granted, room-relevant set into the candidate disclosure independently of
+// the (untrusted) submitted ids — so a tampered POST that unticks a locked
+// box still includes it. Same UserBadge shape as loadBadgesForUser so the
+// two sets union cleanly before minimization.
+async function loadBadgesOfTypesForUser(
+  userId: string,
+  types: ReadonlySet<string>,
+): Promise<UserBadge[]> {
+  if (types.size === 0) return [];
+  const rows = await prisma.badge.findMany({
+    where: { userId, type: { in: [...types] } },
+    select: { id: true, type: true, attributes: true, issuedAt: true },
+  });
+  return rows.map((r) => ({
+    id: r.id,
+    type: r.type,
+    attributes: coerceAttrs(r.attributes),
+    issuedAt: Math.floor(r.issuedAt.getTime() / 1000),
+  }));
+}
+
+// Union two badge lists by id, preserving the first occurrence. Order is
+// stable (a then b) so minimizeToPolicy's order-sensitive tie-breaks stay
+// deterministic.
+function unionBadgesById(a: UserBadge[], b: UserBadge[]): UserBadge[] {
+  const seen = new Set(a.map((x) => x.id));
+  return [...a, ...b.filter((x) => !seen.has(x.id))];
 }
 
 // Only fetch anonymity counts when a policy is present (they drive WHICH

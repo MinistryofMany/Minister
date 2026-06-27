@@ -62,6 +62,7 @@ model User {
   shareLinks        ShareLink[]
   oidcClients       OidcClient[]
   oidcAccessTokens  OidcAccessToken[]
+  oidcGrants        OidcGrant[]
   wizardSessions    WizardSession[]
   inviteRedemptions InviteRedemption[]
 }
@@ -252,6 +253,41 @@ model OidcAccessToken {
 
   @@index([userId, clientId])
   @@index([expiresAt])
+}
+
+// Durable record of which badge-TYPES and profile sub-claims a user has
+// disclosed to a given RP, per (userId, clientId). Survives access-token
+// expiry (unlike OidcAccessToken) and is the source of truth for the
+// consent screen's "you've already proven these to this platform"
+// transparency section.
+//
+// Carries TYPES only — no VC, no attribute values, no issued-at — so it
+// can never be replayed AS a disclosure (the live authorize re-mints fresh
+// VC JWTs) and can never satisfy a constrained (`where`/`maxAgeDays`) leaf
+// on its own. The grant is a RECORD of disclosure, never an authorization
+// to skip consent: every room-join still renders consent, re-discloses a
+// live VC, and runs minimizeToPolicy.
+//
+// `badgeTypes` is monotone-accumulating (union on each consent) — "ever
+// proven to this platform". Cleared only when the User is deleted, via the
+// cascade (F-4(a): ban / sign-out-all leave the record intact, since it
+// reflects true history and revoking tokens already stops access).
+model OidcGrant {
+  id            String   @id @default(cuid())
+  userId        String
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  clientId      String
+  // Minister badge slugs (TYPES) ever disclosed to this client.
+  badgeTypes    String[]
+  // Whether the curated display name / avatar were ever disclosed to this
+  // client. Union-OR accumulated. Drives the transparency display only.
+  profileName   Boolean  @default(false)
+  profileAvatar Boolean  @default(false)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([userId, clientId])
+  @@index([userId])
 }
 
 // Admin-created invite codes, redeemed through the invite-code plugin.
