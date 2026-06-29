@@ -7,7 +7,8 @@ export type {
   DidDocument,
 } from "./types";
 
-export { buildDid, buildKid, buildUserDid, getDidDocument } from "./did";
+export { buildDid, buildKid, buildUserDid, buildPairwiseUserDid, getDidDocument } from "./did";
 export { loadIssuer, _resetIssuerCache } from "./key";
 export { issueVc, ministerCredentialType } from "./issue";
 export { verifyVc, VcVerificationError } from "./verify";
+export { reissueVcWithSubject, VcReissueError } from "./reissue";

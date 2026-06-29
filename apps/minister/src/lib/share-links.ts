@@ -1,7 +1,9 @@
-import { randomBytes } from "node:crypto";
+import { createHmac, randomBytes } from "node:crypto";
 
 import { BADGE_TYPES } from "@minister/shared";
+import { buildPairwiseUserDid, reissueVcWithSubject } from "@minister/vc";
 
+import { getIssuer } from "@/lib/issuer";
 import { prisma } from "@/lib/prisma";
 
 // Bytes of entropy for share-link tokens. CLAUDE.md asks for ≥128
@@ -13,6 +15,22 @@ export const MAX_SHARE_TTL_DAYS = 90;
 
 export function generateShareToken(): string {
   return randomBytes(SHARE_TOKEN_BYTES).toString("base64url");
+}
+
+// Stable, opaque subject pseudonym for share-link disclosures. A share link
+// has no relying-party clientId, so it cannot use the OIDC pairwise sub.
+// Instead we derive a salted HMAC over the userId under a dedicated
+// "sharelink" namespace: stable (so re-fetching a link is consistent and a
+// verifier sees one holder), verifiable, and revealing nothing - it carries
+// no raw userId and cannot be correlated to an OIDC pairwise sub without the
+// server secret. The namespace prefix domain-separates it from the OIDC
+// `userId:clientId` HMAC so the two pseudonym spaces can never collide.
+export function shareLinkSubjectSub(userId: string): string {
+  const secret = process.env.OIDC_PAIRWISE_SECRET ?? process.env.AUTH_SECRET;
+  if (!secret) {
+    throw new Error("OIDC_PAIRWISE_SECRET (or AUTH_SECRET fallback) must be set");
+  }
+  return createHmac("sha256", secret).update(`sharelink:${userId}`).digest("base64url");
 }
 
 // Resolve a share token to the rendered shape: the share link's
@@ -67,27 +85,36 @@ export async function loadShareLinkByToken(token: string): Promise<{
   const badgeOrder = new Map(row.badgeIds.map((id, i) => [id, i]));
   badges.sort((a, b) => (badgeOrder.get(a.id) ?? 0) - (badgeOrder.get(b.id) ?? 0));
 
+  // Re-mint every disclosed VC under the share-link pseudonym so the served
+  // credential never carries the global holder DID (which embeds the raw
+  // userId). Same re-sign path as the OIDC disclosure: only the subject
+  // changes; exp/jti/claims are preserved.
+  const issuer = await getIssuer();
+  const shareSubjectDid = buildPairwiseUserDid(issuer.domain, shareLinkSubjectSub(row.userId));
+
+  const renderedBadges = await Promise.all(
+    badges.map(async (b) => {
+      const meta = BADGE_TYPES[b.type];
+      if (!meta) return null;
+      return {
+        id: b.id,
+        type: b.type,
+        label: meta.label,
+        description: meta.description,
+        iconKey: meta.iconKey,
+        attributes: b.attributes as Record<string, unknown>,
+        vcJwt: await reissueVcWithSubject(issuer, b.vcJwt, shareSubjectDid),
+      };
+    }),
+  );
+
   return {
     id: row.id,
     ownerUserId: row.userId,
     requiresAccount: row.requiresAccount,
     expiresAt: row.expiresAt,
     createdAt: row.createdAt,
-    badges: badges
-      .map((b) => {
-        const meta = BADGE_TYPES[b.type];
-        if (!meta) return null;
-        return {
-          id: b.id,
-          type: b.type,
-          label: meta.label,
-          description: meta.description,
-          iconKey: meta.iconKey,
-          attributes: b.attributes as Record<string, unknown>,
-          vcJwt: b.vcJwt,
-        };
-      })
-      .filter((b): b is NonNullable<typeof b> => b !== null),
+    badges: renderedBadges.filter((b): b is NonNullable<typeof b> => b !== null),
   };
 }
 
