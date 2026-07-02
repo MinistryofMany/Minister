@@ -1,7 +1,9 @@
-import { randomBytes } from "node:crypto";
+import { createHmac, randomBytes } from "node:crypto";
 
 import { BADGE_TYPES } from "@minister/shared";
+import { buildPairwiseUserDid, reMintVc } from "@minister/vc";
 
+import { getIssuer } from "@/lib/issuer";
 import { prisma } from "@/lib/prisma";
 
 // Bytes of entropy for share-link tokens. CLAUDE.md asks for ≥128
@@ -13,6 +15,44 @@ export const MAX_SHARE_TTL_DAYS = 90;
 
 export function generateShareToken(): string {
   return randomBytes(SHARE_TOKEN_BYTES).toString("base64url");
+}
+
+function pairwiseSecret(): string {
+  const secret = process.env.OIDC_PAIRWISE_SECRET ?? process.env.AUTH_SECRET;
+  if (!secret) {
+    throw new Error("OIDC_PAIRWISE_SECRET (or AUTH_SECRET fallback) must be set");
+  }
+  return secret;
+}
+
+// PER-SHARE-LINK pairwise subject pseudonym for VCs disclosed via a share
+// link. A share link has no relying-party clientId, so the OIDC pairwise sub
+// doesn't apply; the link itself is the disclosure context, so the LINK plays
+// the audience role: every viewer (and re-fetch) of one link sees the same
+// holder subject, while two different links from the same user — and any OIDC
+// disclosure to any RP — carry unrelated subjects. Keying per-link (not
+// per-user) is what makes viewers of two links unable to tell they came from
+// the same holder.
+//
+// Domain separation: the OIDC spaces hash `${userId}:${clientId}` (sub) and
+// `jti:${badgeId}:${clientId}` (jti) under the same secret. The `sharelink:`
+// prefix keeps this input disjoint from both — userIds/badgeIds are cuids and
+// clientIds are `mc_`-prefixed base64url (no colons), so no OIDC input can
+// ever alias a share-link input or vice versa.
+export function shareLinkPairwiseSub(userId: string, shareLinkId: string): string {
+  return createHmac("sha256", pairwiseSecret())
+    .update(`sharelink:${userId}:${shareLinkId}`)
+    .digest("base64url");
+}
+
+// Per-(badge, share-link) `jti` for a disclosed VC — never the raw badge id
+// (a stable cross-context correlator), and unlinkable from the same badge's
+// `pairwiseJti` at any OIDC relying party. Deterministic, so it can still
+// serve as a revocation handle for everything served through one link.
+export function shareLinkPairwiseJti(badgeId: string, shareLinkId: string): string {
+  return createHmac("sha256", pairwiseSecret())
+    .update(`jti:sharelink:${badgeId}:${shareLinkId}`)
+    .digest("base64url");
 }
 
 // Resolve a share token to the rendered shape: the share link's
@@ -53,13 +93,19 @@ export async function loadShareLinkByToken(token: string): Promise<{
   if (row.revokedAt) return null;
   if (row.expiresAt < new Date()) return null;
 
+  const issuer = await getIssuer();
   const badges = await prisma.badge.findMany({
-    where: { userId: row.userId, id: { in: row.badgeIds } },
+    // `issuer` scoping, same posture as the OIDC disclosure path: only
+    // Minister's own badges are disclosable via re-mint. A foreign-issuer row
+    // (badge import is a future feature) is silently not disclosed rather
+    // than 500ing the page — reMintVc would refuse to re-sign it anyway.
+    where: { userId: row.userId, id: { in: row.badgeIds }, issuer: issuer.did },
     select: {
       id: true,
       type: true,
       attributes: true,
       vcJwt: true,
+      expiresAt: true,
     },
   });
 
@@ -67,27 +113,49 @@ export async function loadShareLinkByToken(token: string): Promise<{
   const badgeOrder = new Map(row.badgeIds.map((id, i) => [id, i]));
   badges.sort((a, b) => (badgeOrder.get(a.id) ?? 0) - (badgeOrder.get(b.id) ?? 0));
 
+  // Re-mint every disclosed VC at view time, exactly like the OIDC token /
+  // userinfo paths: the stored VC carries the STABLE `:users:<userId>` subject
+  // and `jti = badge.id` — cross-context correlators that would link this
+  // link's viewers to each other's OIDC disclosures and to every other share
+  // link. The disclosed copy instead gets the per-LINK pairwise subject and
+  // jti, disclosure-time iat/nbf, a presentation-shaped exp (never past the
+  // badge's real lifetime NOR the link's own expiry — an artifact served by a
+  // link should die with the link), and the coarse issuanceMonth bucket.
+  const subjectId = buildPairwiseUserDid(issuer.domain, shareLinkPairwiseSub(row.userId, row.id));
+
+  const disclosed = await Promise.all(
+    badges.map(async (b) => {
+      const meta = BADGE_TYPES[b.type];
+      // Unknown badge type: nothing to render — skip BEFORE signing; we
+      // never re-sign an artifact we won't serve.
+      if (!meta) return null;
+      return {
+        // The per-link jti, not the raw badge id: this shape is a disclosure
+        // payload ("any future API"), and the stored id is the correlator the
+        // re-mint just removed. The page only needs a per-link-unique key.
+        id: shareLinkPairwiseJti(b.id, row.id),
+        type: b.type,
+        label: meta.label,
+        description: meta.description,
+        iconKey: meta.iconKey,
+        attributes: b.attributes as Record<string, unknown>,
+        vcJwt: await reMintVc(issuer, b.vcJwt, {
+          subjectId,
+          jti: shareLinkPairwiseJti(b.id, row.id),
+          maxExpiresAt:
+            b.expiresAt !== null && b.expiresAt < row.expiresAt ? b.expiresAt : row.expiresAt,
+        }),
+      };
+    }),
+  );
+
   return {
     id: row.id,
     ownerUserId: row.userId,
     requiresAccount: row.requiresAccount,
     expiresAt: row.expiresAt,
     createdAt: row.createdAt,
-    badges: badges
-      .map((b) => {
-        const meta = BADGE_TYPES[b.type];
-        if (!meta) return null;
-        return {
-          id: b.id,
-          type: b.type,
-          label: meta.label,
-          description: meta.description,
-          iconKey: meta.iconKey,
-          attributes: b.attributes as Record<string, unknown>,
-          vcJwt: b.vcJwt,
-        };
-      })
-      .filter((b): b is NonNullable<typeof b> => b !== null),
+    badges: disclosed.filter((b): b is NonNullable<typeof b> => b !== null),
   };
 }
 
