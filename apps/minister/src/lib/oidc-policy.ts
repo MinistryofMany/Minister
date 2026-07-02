@@ -269,11 +269,76 @@ export function evaluate(policy: PolicyNode, badges: UserBadge[], now: number): 
   if (isAllOf(policy)) return policy.allOf.every((node) => evaluate(node, badges, now));
   if (isAnyOf(policy)) return policy.anyOf.some((node) => evaluate(node, badges, now));
   if (isAtLeast(policy)) {
-    const satisfied = policy.atLeast.of.filter((node) => evaluate(node, badges, now)).length;
-    return satisfied >= policy.atLeast.n;
+    const { n, of } = policy.atLeast;
+    if (n <= 0) return true;
+    // DISTINCT-badge threshold (audit finding #6). The old code counted
+    // satisfied BRANCHES, each evaluated against the full badge set, so one
+    // badge that satisfied several overlapping branches double-counted and
+    // cleared the threshold (e.g. a single oauth badge cleared
+    // atLeast{2,[{oauth},{oauth}]}). Instead, require n DISTINCT badges
+    // assigned to n distinct satisfied branches: a maximum bipartite matching
+    // between branches and badges, one badge per branch.
+    return maxDistinctBranchMatch(of, badges, now) >= n;
   }
   const _exhaustive: never = policy;
   throw new Error(`unknown policy node shape: ${JSON.stringify(_exhaustive)}`);
+}
+
+/**
+ * Maximum number of `atLeast` branches that can be satisfied SIMULTANEOUSLY by
+ * pairwise-DISTINCT badges — a maximum bipartite matching between branches
+ * (left) and disclosed badges (right), with an edge iff a single badge is a
+ * witness for that branch (`evaluate(branch, [badge], now)`).
+ *
+ * Why this shape: the finding-#6 double-count came from crediting a branch per
+ * satisfaction against the whole badge set, letting one badge satisfy several
+ * overlapping branches. A matching credits each counted branch a distinct
+ * badge, so no badge is reused across siblings.
+ *
+ * Nesting is sound: a branch that is itself a subtree is credited only when a
+ * SINGLE badge is its witness (leaf; anyOf/atLeast{1} reducible to one badge).
+ * A composite branch that genuinely needs ≥2 distinct badges (e.g. an `allOf`
+ * of two leaves) has no single-badge witness, so it is never matched and never
+ * counted — fail-closed (no false positive; it may under-count such a branch,
+ * the safe direction for a gate).
+ *
+ * Complexity: Kuhn's augmenting-path matching. With branches ≤ MAX_NODE_CHILDREN
+ * (16), the threshold n ≤ MAX_ATLEAST_N (16), and B disclosed badges, edge
+ * construction is O(branches · B · |branch subtree|) and matching is
+ * O(branches · edges) = O(branches² · B). Bounded and fast.
+ */
+function maxDistinctBranchMatch(branches: PolicyNode[], badges: UserBadge[], now: number): number {
+  // For each branch, the indices of badges that alone satisfy it.
+  const adjacency: number[][] = branches.map((branch) => {
+    const witnesses: number[] = [];
+    for (let bi = 0; bi < badges.length; bi++) {
+      if (evaluate(branch, [badges[bi]!], now)) witnesses.push(bi);
+    }
+    return witnesses;
+  });
+
+  // badgeMatch[bi] = branch index currently assigned badge bi, or -1.
+  const badgeMatch = new Array<number>(badges.length).fill(-1);
+
+  const tryAssign = (branch: number, visited: boolean[]): boolean => {
+    for (const bi of adjacency[branch]!) {
+      if (visited[bi]) continue;
+      visited[bi] = true;
+      // Take badge bi if it is free, or if its current branch can move to
+      // another badge (augmenting path).
+      if (badgeMatch[bi] === -1 || tryAssign(badgeMatch[bi]!, visited)) {
+        badgeMatch[bi] = branch;
+        return true;
+      }
+    }
+    return false;
+  };
+
+  let matched = 0;
+  for (let branch = 0; branch < branches.length; branch++) {
+    if (tryAssign(branch, new Array<boolean>(badges.length).fill(false))) matched++;
+  }
+  return matched;
 }
 
 // ---------------------------------------------------------------------------

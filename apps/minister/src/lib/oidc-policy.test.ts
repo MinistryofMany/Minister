@@ -160,6 +160,110 @@ describe("evaluate (ported)", () => {
 });
 
 // ---------------------------------------------------------------------------
+// atLeast: DISTINCT-badge threshold (audit finding #6)
+// ---------------------------------------------------------------------------
+// `atLeast{n}` must be satisfied by n DISTINCT badges, not by n distinct
+// satisfied branches. The old code evaluated each branch against the FULL
+// badge set independently, so one badge that satisfied several overlapping
+// branches double-counted and cleared the threshold. These are the proven
+// adversary cases plus the distinct-matching / nesting contract.
+describe("evaluate atLeast — distinct-badge matching", () => {
+  const oauth = (id: string, provider: string): UserBadge => ub(id, "oauth-account", { provider });
+
+  it("one badge cannot clear n=2 across two identical overlapping branches (PROVEN)", () => {
+    const policy: PolicyNode = {
+      atLeast: {
+        n: 2,
+        of: [{ badge: { type: "oauth-account" } }, { badge: { type: "oauth-account" } }],
+      },
+    };
+    // A single oauth badge previously cleared n=2 by satisfying both branches.
+    expect(evaluate(policy, [oauth("g", "github")], NOW)).toBe(false);
+  });
+
+  it("one badge cannot clear n=2 across a broad + narrow overlapping pair (PROVEN)", () => {
+    const policy: PolicyNode = {
+      atLeast: {
+        n: 2,
+        of: [
+          { badge: { type: "oauth-account" } },
+          { badge: { type: "oauth-account", where: { provider: "github" } } },
+        ],
+      },
+    };
+    // One github-oauth badge satisfies BOTH branches, but it is a single
+    // distinct badge → must not clear n=2.
+    expect(evaluate(policy, [oauth("g", "github")], NOW)).toBe(false);
+  });
+
+  it("two DISTINCT badges genuinely clear n=2 over overlapping branches", () => {
+    const policy: PolicyNode = {
+      atLeast: {
+        n: 2,
+        of: [{ badge: { type: "oauth-account" } }, { badge: { type: "oauth-account" } }],
+      },
+    };
+    expect(evaluate(policy, [oauth("g", "github"), oauth("x", "google")], NOW)).toBe(true);
+  });
+
+  it("broad + narrow pair: needs the narrow-satisfying badge PLUS another distinct one", () => {
+    const policy: PolicyNode = {
+      atLeast: {
+        n: 2,
+        of: [
+          { badge: { type: "oauth-account" } },
+          { badge: { type: "oauth-account", where: { provider: "github" } } },
+        ],
+      },
+    };
+    // github → narrow branch, google → broad branch. Distinct → true.
+    expect(evaluate(policy, [oauth("g", "github"), oauth("x", "google")], NOW)).toBe(true);
+    // Two google badges: the narrow (github-only) branch is unsatisfiable, so
+    // only the broad branch can be matched → max matching 1 < 2 → false.
+    expect(evaluate(policy, [oauth("x", "google"), oauth("y", "google")], NOW)).toBe(false);
+  });
+
+  it("disjoint-type branches are unchanged (matching == satisfied-branch count)", () => {
+    const policy: PolicyNode = {
+      atLeast: {
+        n: 2,
+        of: [{ badge: { type: "a" } }, { badge: { type: "b" } }, { badge: { type: "c" } }],
+      },
+    };
+    expect(evaluate(policy, [ub("1", "a"), ub("2", "b")], NOW)).toBe(true);
+    expect(evaluate(policy, [ub("1", "a")], NOW)).toBe(false);
+  });
+
+  it("fail-closed under nesting: a multi-badge composite branch is never counted", () => {
+    // The allOf branch needs TWO distinct badges (oauth AND email); no single
+    // badge is its witness, so it can never be matched → the branch does not
+    // count toward the threshold (sound: no false positive; fail-closed).
+    const policy: PolicyNode = {
+      atLeast: {
+        n: 2,
+        of: [
+          { badge: { type: "oauth-account" } },
+          { allOf: [{ badge: { type: "oauth-account" } }, { badge: { type: "email-domain" } }] },
+        ],
+      },
+    };
+    expect(evaluate(policy, [ub("o", "oauth-account"), ub("e", "email-domain")], NOW)).toBe(false);
+  });
+
+  it("nested anyOf branch counts when a single badge satisfies it, disjointly", () => {
+    const branch: PolicyNode = {
+      anyOf: [{ badge: { type: "oauth-account" } }, { badge: { type: "email-domain" } }],
+    };
+    const policy: PolicyNode = { atLeast: { n: 2, of: [branch, branch] } };
+    // Two distinct badges → both anyOf branches satisfiable with distinct
+    // badges → true.
+    expect(evaluate(policy, [ub("o", "oauth-account"), ub("e", "email-domain")], NOW)).toBe(true);
+    // One badge → only one branch can be matched → false.
+    expect(evaluate(policy, [ub("o", "oauth-account")], NOW)).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // selectMinimalAnonymitySet
 // ---------------------------------------------------------------------------
 
