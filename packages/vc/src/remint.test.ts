@@ -6,7 +6,7 @@ import { decodeJwt, decodeProtectedHeader, SignJWT } from "jose";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { buildPairwiseUserDid, buildUserDid } from "./did";
-import { issueVc, reMintVc } from "./issue";
+import { DEFAULT_DISCLOSURE_TTL_SECONDS, reMintVc } from "./issue";
 import { _resetIssuerCache, loadIssuer } from "./key";
 import { verifyVc } from "./verify";
 import type { Issuer } from "./types";
@@ -120,8 +120,49 @@ describe("reMintVc", () => {
     expect(v.nbf).toBeGreaterThanOrEqual(before - 1);
   });
 
-  it("clamps exp to the original VC exp — re-minting never extends lifetime (no cap)", async () => {
+  // The issuance-derived exp (issuance + fixed duration, second granularity)
+  // was a stable ~25-bit cross-RP correlator that survived the pairwise
+  // sub/jti sweep. The disclosed exp must be PRESENTATION-shaped: a pure
+  // function of disclosure time (exp = iat + TTL), carrying zero issuance
+  // information.
+  it("stamps a presentation-shaped exp (iat + TTL), never the issuance-derived original exp", async () => {
     const originalExp = Math.floor(Date.now() / 1000) + 10 * 86_400; // 10 days out
+    const original = await signOriginal(issuer, { expSec: originalExp });
+    const pairwise = buildPairwiseUserDid(issuer.domain, "S");
+
+    const jwt = await reMintVc(issuer, original, { subjectId: pairwise, jti: "j" });
+    const v = await verifyVc(issuer, jwt);
+
+    // exp is exactly iat + the disclosure TTL — determined by disclosure time
+    // plus a constant, so it can never leak the issuance instant.
+    expect(v.exp).toBe(v.iat + DEFAULT_DISCLOSURE_TTL_SECONDS);
+    expect(v.exp).not.toBe(originalExp);
+    expect(v.exp!).toBeLessThan(originalExp);
+  });
+
+  it("honors a custom disclosureTtlSeconds and rejects a non-positive one", async () => {
+    const original = await signOriginal(issuer);
+    const pairwise = buildPairwiseUserDid(issuer.domain, "S");
+
+    const jwt = await reMintVc(issuer, original, {
+      subjectId: pairwise,
+      jti: "j",
+      disclosureTtlSeconds: 300,
+    });
+    const v = await verifyVc(issuer, jwt);
+    expect(v.exp).toBe(v.iat + 300);
+
+    for (const bad of [0, -60, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+      await expect(
+        reMintVc(issuer, original, { subjectId: pairwise, jti: "j", disclosureTtlSeconds: bad }),
+      ).rejects.toThrow(/disclosureTtlSeconds/);
+    }
+  });
+
+  it("clamps exp to the original VC exp when the badge is inside its final TTL window", async () => {
+    // A badge 30 minutes from real expiry: now + TTL (1h) would EXTEND its
+    // lifetime, so the clamp to the original exp must win.
+    const originalExp = Math.floor(Date.now() / 1000) + 30 * 60;
     const original = await signOriginal(issuer, { expSec: originalExp });
     const pairwise = buildPairwiseUserDid(issuer.domain, "S");
 
@@ -131,11 +172,12 @@ describe("reMintVc", () => {
     expect(v.exp).toBe(originalExp);
   });
 
-  it("clamps exp to Badge.expiresAt when that is earlier than the original VC exp", async () => {
+  it("clamps exp to Badge.expiresAt when that is earlier than now + TTL", async () => {
     const originalExp = Math.floor(Date.now() / 1000) + 365 * 86_400;
     const original = await signOriginal(issuer, { expSec: originalExp });
     const pairwise = buildPairwiseUserDid(issuer.domain, "S");
-    const badgeExpiresAt = new Date((Math.floor(Date.now() / 1000) + 5 * 86_400) * 1000);
+    // 10 minutes out — earlier than both the original exp and now + TTL (1h).
+    const badgeExpiresAt = new Date((Math.floor(Date.now() / 1000) + 10 * 60) * 1000);
 
     const jwt = await reMintVc(issuer, original, {
       subjectId: pairwise,
@@ -149,7 +191,9 @@ describe("reMintVc", () => {
   });
 
   it("never extends past the original exp even when Badge.expiresAt is later", async () => {
-    const originalExp = Math.floor(Date.now() / 1000) + 5 * 86_400;
+    // Original exp 20 minutes out (inside the TTL window, so it is the min);
+    // Badge.expiresAt far later must not widen it.
+    const originalExp = Math.floor(Date.now() / 1000) + 20 * 60;
     const original = await signOriginal(issuer, { expSec: originalExp });
     const pairwise = buildPairwiseUserDid(issuer.domain, "S");
     const laterExpiresAt = new Date((Math.floor(Date.now() / 1000) + 999 * 86_400) * 1000);
@@ -164,6 +208,35 @@ describe("reMintVc", () => {
     expect(v.exp).toBe(originalExp);
   });
 
+  it("never emits an exp past min(now + TTL, original exp, Badge.expiresAt) for any ordering", async () => {
+    const nowSec = Math.floor(Date.now() / 1000);
+    const pairwise = buildPairwiseUserDid(issuer.domain, "S");
+    // (originalExp offset, badge expiresAt offset or null) — every ordering of
+    // the three bounds relative to the 1h TTL.
+    const cases: Array<[number, number | null]> = [
+      [365 * 86_400, null], // TTL wins
+      [365 * 86_400, 10 * 60], // cap wins
+      [20 * 60, 999 * 86_400], // original wins
+      [10 * 60, 5 * 60], // cap wins below original
+      [5 * 60, 10 * 60], // original wins below cap
+    ];
+    for (const [expOffset, capOffset] of cases) {
+      const original = await signOriginal(issuer, { expSec: nowSec + expOffset });
+      const jwt = await reMintVc(issuer, original, {
+        subjectId: pairwise,
+        jti: "j",
+        maxExpiresAt: capOffset === null ? null : new Date((nowSec + capOffset) * 1000),
+      });
+      const v = await verifyVc(issuer, jwt);
+      const bound = Math.min(
+        v.iat + DEFAULT_DISCLOSURE_TTL_SECONDS,
+        nowSec + expOffset,
+        capOffset === null ? Number.POSITIVE_INFINITY : nowSec + capOffset,
+      );
+      expect(v.exp).toBe(bound);
+    }
+  });
+
   it("produces a VC that verifies against the issuer's live key (signature integrity)", async () => {
     const original = await signOriginal(issuer);
     const pairwise = buildPairwiseUserDid(issuer.domain, "S");
@@ -172,7 +245,13 @@ describe("reMintVc", () => {
     await expect(verifyVc(issuer, jwt)).resolves.toMatchObject({ iss: issuer.did, sub: pairwise });
   });
 
-  it("re-issued VC produced by a DIFFERENT issuer key does not verify (forgery resistance)", async () => {
+  // Signing-oracle defense: reMintVc re-signs database contents under the
+  // issuer key, so it must refuse any original that the issuer's own key did
+  // not sign. Otherwise a DB-write attacker (or a future badge-import row)
+  // gets arbitrary claims laundered into a fresh Minister-signed credential.
+  it("refuses to re-sign a VC that was not signed by the issuer's own key (no signing oracle)", async () => {
+    // `original` is signed by `issuer`; `other` shares the domain/DID but has
+    // a different key — exactly a row smuggled in from outside the trust root.
     const original = await signOriginal(issuer);
     _resetIssuerCache();
     const other = await loadIssuer({
@@ -180,8 +259,63 @@ describe("reMintVc", () => {
       devKeyPath: join(tmpDir, "other.jwk"),
     });
     const pairwise = buildPairwiseUserDid(issuer.domain, "S");
-    const jwt = await reMintVc(other, original, { subjectId: pairwise, jti: "j" });
-    // Signed by `other`, verified against the original `issuer` key → reject.
+    await expect(reMintVc(other, original, { subjectId: pairwise, jti: "j" })).rejects.toThrow(
+      /refusing to re-sign/,
+    );
+  });
+
+  it("refuses to re-sign a stored VC whose payload was tampered after signing", async () => {
+    const original = await signOriginal(issuer, { claims: { domain: "example.com" } });
+    // Splice a modified payload (claims upgraded to a different domain) onto
+    // the authentic header + signature — the classic stored-row tamper.
+    const [header, payloadSeg, sig] = original.split(".");
+    const payload = JSON.parse(Buffer.from(payloadSeg!, "base64url").toString("utf8")) as {
+      vc: { credentialSubject: Record<string, unknown> };
+    };
+    payload.vc.credentialSubject.domain = "evil.example";
+    const tampered = [header, Buffer.from(JSON.stringify(payload)).toString("base64url"), sig].join(
+      ".",
+    );
+    const pairwise = buildPairwiseUserDid(issuer.domain, "S");
+    await expect(reMintVc(issuer, tampered, { subjectId: pairwise, jti: "j" })).rejects.toThrow(
+      /refusing to re-sign/,
+    );
+  });
+
+  it("refuses to re-sign a VC stamped with a foreign iss even when the signature verifies", async () => {
+    // Signed with the issuer's key (signature passes) but carrying a foreign
+    // `iss` — an imported credential must never be re-issued as Minister's own.
+    const foreign = await new SignJWT({
+      vc: {
+        "@context": ["https://www.w3.org/ns/credentials/v2"],
+        type: ["VerifiableCredential", "MinisterEmailDomainCredential"],
+        credentialSubject: { id: "did:web:elsewhere.example:u:x", domain: "example.com" },
+      },
+    })
+      .setProtectedHeader({ alg: "EdDSA", kid: issuer.kid, typ: "vc+jwt" })
+      .setIssuer("did:web:elsewhere.example")
+      .setSubject("did:web:elsewhere.example:u:x")
+      .setIssuedAt()
+      .setExpirationTime("1y")
+      .sign(issuer.privateKey);
+    const pairwise = buildPairwiseUserDid(issuer.domain, "S");
+    await expect(reMintVc(issuer, foreign, { subjectId: pairwise, jti: "j" })).rejects.toThrow(
+      /refusing to re-sign/,
+    );
+  });
+
+  it("re-mints an authentic but already-EXPIRED stored VC (temporal claims are re-derived, not gated)", async () => {
+    // The integrity gate checks the signature, not exp: an expired-but-real
+    // badge still re-mints to an already-expired disclosure (clamped to the
+    // original exp), which the RP then rejects — same fail-closed behavior as
+    // before, with no 500 in the disclosure path.
+    const pastExp = Math.floor(Date.now() / 1000) - 86_400;
+    const original = await signOriginal(issuer, { expSec: pastExp });
+    const pairwise = buildPairwiseUserDid(issuer.domain, "S");
+    const jwt = await reMintVc(issuer, original, { subjectId: pairwise, jti: "j" });
+    const decoded = decodeJwt(jwt);
+    expect(decoded.exp).toBe(pastExp);
+    // And the RP-side/own verify rejects it as expired — fails closed.
     await expect(verifyVc(issuer, jwt)).rejects.toBeTruthy();
   });
 
@@ -239,6 +373,13 @@ describe("reMintVc", () => {
     expect(a.sub).not.toBe(b.sub);
     expect(a.vc.credentialSubject.id).not.toBe(b.vc.credentialSubject.id);
     expect(a.jti).not.toBe(b.jti);
+    // exp is presentation-shaped on both: iat + TTL, never the stored VC's
+    // issuance-derived exp — so (type, claims, exp) is not a cross-RP join key.
+    const storedExp = decodeJwt(original).exp!;
+    expect(a.exp).toBe(a.iat + DEFAULT_DISCLOSURE_TTL_SECONDS);
+    expect(b.exp).toBe(b.iat + DEFAULT_DISCLOSURE_TTL_SECONDS);
+    expect(a.exp).not.toBe(storedExp);
+    expect(b.exp).not.toBe(storedExp);
     // Shared by design (Minister's own identity + the disclosed fact):
     expect(a.iss).toBe(b.iss);
     expect(hA.kid).toBe(hB.kid);

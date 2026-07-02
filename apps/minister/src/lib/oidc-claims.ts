@@ -1,8 +1,20 @@
 import { buildPairwiseUserDid, reMintVc } from "@minister/vc";
 
 import { getIssuer } from "@/lib/issuer";
-import { pairwiseJti } from "@/lib/oidc-tokens";
+import { ACCESS_TOKEN_TTL, pairwiseJti } from "@/lib/oidc-tokens";
 import { prisma } from "@/lib/prisma";
+
+// Presentation lifetime of a disclosed badge VC = the access-token TTL (1h),
+// the longest-lived artifact of the same OIDC grant. Evidence for the bound:
+// the id_token lives 10 min (ID_TOKEN_TTL_SECONDS) and the SDK verifies it
+// with a 30s clock tolerance, so a badge disclosed alongside it must stay
+// valid ≥ ~10.5 min or it would expire before the token that carried it;
+// /oidc/userinfo (reachable for the access token's 1h) re-mints badges at
+// call time, so its consumers also get a full TTL from the moment they fetch.
+// No RP holds a disclosed badge past its carrying token: Discreetly re-verifies
+// the raw id_token on every gated call (dead at 10 min by its own model) and
+// gates rooms once, at join, against a freshly minted per-room token.
+const BADGE_DISCLOSURE_TTL_SECONDS = ACCESS_TOKEN_TTL;
 
 // The user fields both OIDC claim paths need. Deliberately only the
 // user-curated profile values — the upstream auth identity (`User.name`,
@@ -85,8 +97,18 @@ export function resolveUserClaims(
 // (userId, clientId):
 //   - `sub` / `credentialSubject.id` → the PAIRWISE subject DID for this RP.
 //   - `jti` → a per-RP value (never the raw badge id).
-//   - `iat`/`nbf` → re-stamped to now; `exp` clamped so lifetime never extends.
+//   - `iat`/`nbf` → re-stamped to now; `exp` → PRESENTATION-SHAPED:
+//     min(now + BADGE_DISCLOSURE_TTL_SECONDS, original exp, Badge.expiresAt).
+//     The issuance-derived exp (issuance + fixed 1y, second granularity) was a
+//     stable ~25-bit cross-RP correlator; the disclosed exp now reflects only
+//     disclosure time and never extends the badge's real lifetime.
 //   - `iss`, `kid`, and every claim value → unchanged.
+//
+// Rows are additionally scoped to `issuer = <Minister's own DID>`, and reMintVc
+// itself verifies the stored VC's signature against Minister's key before
+// re-signing — so neither a foreign-issuer row (the future badge-import
+// feature) nor a tampered/forged vcJwt can ever be laundered through the
+// disclosure path into a fresh Minister-signed credential.
 //
 // `sub` is threaded in from the caller (the exact value stamped as the id_token
 // `sub`) rather than recomputed here, so the disclosed badge subject's trailing
@@ -100,13 +122,18 @@ export async function loadApprovedBadgeJwts(
   badgeIds: string[],
 ): Promise<string[]> {
   if (badgeIds.length === 0) return [];
+  const issuer = await getIssuer();
   const rows = await prisma.badge.findMany({
-    where: { userId, id: { in: badgeIds } },
+    // `issuer` scoping: only Minister's own badges are disclosable via re-mint.
+    // A foreign-issuer row (badge import is a future feature) is silently not
+    // disclosed rather than 500ing the login — reMintVc would refuse to re-sign
+    // it anyway (signature check), this just keeps that refusal out of the
+    // grant's happy path.
+    where: { userId, id: { in: badgeIds }, issuer: issuer.did },
     select: { id: true, vcJwt: true, expiresAt: true },
   });
   if (rows.length === 0) return [];
 
-  const issuer = await getIssuer();
   const subjectId = buildPairwiseUserDid(issuer.domain, sub);
 
   return Promise.all(
@@ -115,6 +142,7 @@ export async function loadApprovedBadgeJwts(
         subjectId,
         jti: pairwiseJti(row.id, clientId),
         maxExpiresAt: row.expiresAt,
+        disclosureTtlSeconds: BADGE_DISCLOSURE_TTL_SECONDS,
       }),
     ),
   );

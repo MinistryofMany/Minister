@@ -9,6 +9,6 @@ export type {
 
 export { buildDid, buildKid, buildUserDid, buildPairwiseUserDid, getDidDocument } from "./did";
 export { loadIssuer, _resetIssuerCache } from "./key";
-export { issueVc, reMintVc, ministerCredentialType } from "./issue";
+export { issueVc, reMintVc, ministerCredentialType, DEFAULT_DISCLOSURE_TTL_SECONDS } from "./issue";
 export type { ReMintOptions } from "./issue";
 export { verifyVc, VcVerificationError } from "./verify";
