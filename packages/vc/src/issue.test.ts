@@ -5,7 +5,12 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { _resetIssuerCache, loadIssuer } from "./key";
-import { issueVc, ministerCredentialType } from "./issue";
+import {
+  issuanceMonthOf,
+  issuanceMonthStartSeconds,
+  issueVc,
+  ministerCredentialType,
+} from "./issue";
 import { verifyVc, VcVerificationError } from "./verify";
 import { buildUserDid } from "./did";
 
@@ -18,6 +23,52 @@ describe("ministerCredentialType", () => {
 
   it("handles single-word slugs", () => {
     expect(ministerCredentialType("residency")).toBe("MinisterResidencyCredential");
+  });
+});
+
+// The coarse-issuance bucket helpers are the wire contract for RP-side
+// freshness (mirrored in @ministryofmany/client) — boundary behavior in UTC
+// is load-bearing on BOTH sides, so pin it exactly.
+describe("issuanceMonthOf / issuanceMonthStartSeconds", () => {
+  it("buckets by UTC calendar month, format YYYY-MM", () => {
+    expect(issuanceMonthOf(Date.UTC(2026, 6, 15, 12, 0, 0) / 1000)).toBe("2026-07");
+    expect(issuanceMonthOf(new Date(Date.UTC(2026, 0, 1)))).toBe("2026-01");
+    expect(issuanceMonthOf(Date.UTC(2026, 11, 31, 23, 59, 59) / 1000)).toBe("2026-12");
+  });
+
+  it("uses UTC, not local time, at month boundaries", () => {
+    // One second before / at the UTC boundary must split regardless of the
+    // host timezone the test runs in.
+    expect(issuanceMonthOf(Date.UTC(2026, 3, 30, 23, 59, 59) / 1000)).toBe("2026-04");
+    expect(issuanceMonthOf(Date.UTC(2026, 4, 1, 0, 0, 0) / 1000)).toBe("2026-05");
+  });
+
+  it("start-seconds is the first UTC instant of the containing month", () => {
+    const anyInstant = Date.UTC(2026, 6, 19, 7, 3, 9) / 1000;
+    expect(issuanceMonthStartSeconds(anyInstant)).toBe(Date.UTC(2026, 6, 1) / 1000);
+    // Idempotent on its own output (a bucket start maps to itself).
+    const start = issuanceMonthStartSeconds(anyInstant);
+    expect(issuanceMonthStartSeconds(start)).toBe(start);
+    // Consistent with the string bucket: same month ⇒ same start.
+    expect(issuanceMonthOf(start)).toBe(issuanceMonthOf(anyInstant));
+  });
+
+  it("start-seconds never exceeds the instant (RP-computed age is always ≥ true age)", () => {
+    // Fail-closed direction of the coarsening: bucketStart ≤ instant, so
+    // `now - bucketStart` over-estimates age and a stale badge can never
+    // sneak under a maxAgeDays gate via bucketing.
+    for (const sec of [
+      Date.UTC(2026, 0, 1) / 1000,
+      Date.UTC(2026, 5, 30, 23, 59, 59) / 1000,
+      Date.UTC(2031, 10, 11, 11, 11, 11) / 1000,
+    ]) {
+      expect(issuanceMonthStartSeconds(sec)).toBeLessThanOrEqual(sec);
+    }
+  });
+
+  it("rejects an invalid instant instead of emitting a garbage bucket", () => {
+    expect(() => issuanceMonthOf(Number.NaN)).toThrow(/invalid/);
+    expect(() => issuanceMonthStartSeconds(new Date(Number.NaN))).toThrow(/invalid/);
   });
 });
 

@@ -1,3 +1,5 @@
+import { issuanceMonthStartSeconds } from "@minister/vc";
+
 import {
   selectMinimalAnonymitySet,
   type PolicyAttrValue,
@@ -24,6 +26,36 @@ export function coerceAttrs(attributes: unknown): Record<string, PolicyAttrValue
     }
   }
   return out;
+}
+
+/** The Badge-row fields the policy engine's feed needs. */
+export interface PolicyBadgeRow {
+  id: string;
+  type: string;
+  attributes: unknown;
+  issuedAt: Date;
+}
+
+/**
+ * The single Badge-row → policy-badge seam for BOTH consent feed points
+ * (approveConsent's loadBadgesForUser and the authorize page's picker view).
+ *
+ * `issuedAt` is deliberately COARSENED to the badge's UTC issuance-month
+ * start. The disclosed VC carries only the coarse `issuanceMonth` claim
+ * (every fine-grained issuance timestamp is a cross-RP correlator — MIN-1),
+ * and relying parties evaluate `maxAgeDays` against that bucket's start.
+ * Feeding the exact Badge.issuedAt here would let selection/minimization
+ * pass a gray-zone badge (true age within the window, coarse age outside)
+ * that the RP's gate then rejects — after minimization already trimmed away
+ * an alternative that would have passed both. Same clock ⇒ same decision.
+ */
+export function toPolicyUserBadge(row: PolicyBadgeRow): UserBadge {
+  return {
+    id: row.id,
+    type: row.type,
+    attributes: coerceAttrs(row.attributes),
+    issuedAt: issuanceMonthStartSeconds(row.issuedAt),
+  };
 }
 
 /**

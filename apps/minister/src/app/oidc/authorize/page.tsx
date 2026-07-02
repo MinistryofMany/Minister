@@ -2,6 +2,7 @@ import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 
 import { getBadgeType } from "@minister/shared";
+import { issuanceMonthStartSeconds } from "@minister/vc";
 
 import { ConsentScreen } from "@/components/consent-screen";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -101,7 +102,13 @@ export default async function OidcAuthorizePage({ searchParams }: PageProps) {
       id: b.id,
       type: b.type,
       attributes: toScalarAttrs(b.attributes),
-      issuedAt: Math.floor(b.issuedAt.getTime() / 1000),
+      // COARSE issuance clock (issuance-month start), mirroring
+      // oidc-consent-minimize.toPolicyUserBadge: the picker preview must
+      // evaluate maxAgeDays exactly as the authoritative minimize step and
+      // the relying party do (the RP only ever sees the coarse
+      // `issuanceMonth` claim), or the preselection could offer a set the
+      // RP's gate then rejects.
+      issuedAt: issuanceMonthStartSeconds(b.issuedAt),
     }));
     policyView = buildPolicyConsentView(
       request.policy,

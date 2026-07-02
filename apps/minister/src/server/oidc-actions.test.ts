@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { grantedRelevantBadgeIds, type GrantState } from "@/lib/oidc-grants";
 import { evaluate, type PolicyNode, type UserBadge } from "@/lib/oidc-policy";
-import { minimizeToPolicy } from "@/server/oidc-consent-minimize";
+import { minimizeToPolicy, toPolicyUserBadge } from "@/server/oidc-consent-minimize";
 
 // Unit coverage for the server-side over-disclosure guard (Phase-2 F-5 /
 // §8.3): given the submitted (already owned ∩ requested) badges, a present
@@ -93,6 +93,61 @@ describe("minimizeToPolicy (over-disclosure guard)", () => {
     const submitted = [ub("stale", "a", {}, 10), ub("fresh", "a", {}, 1)];
     const kept = minimizeToPolicy(policy, submitted, COUNTS, NOW);
     expect(ids(kept)).toEqual(["fresh"]);
+  });
+});
+
+// Consent-side freshness must be evaluated on the SAME coarse clock the RP
+// sees. The disclosed VC carries only the issuance MONTH (the coarse
+// `issuanceMonth` claim — MIN-1 removed every fine-grained issuance
+// timestamp), and RPs map it to the bucket start; if Minister evaluated
+// `maxAgeDays` against the exact Badge.issuedAt instead, minimization could
+// pick a badge that passes here but fails the RP's coarse gate — while
+// trimming away an alternative that would have passed both. toPolicyUserBadge
+// is the single Badge-row → policy-badge seam both feed points
+// (approveConsent's loadBadgesForUser and the authorize consent page) use.
+describe("toPolicyUserBadge (coarse consent-side freshness feed)", () => {
+  it("feeds issuedAt as the UTC issuance-month START, not the exact instant", () => {
+    const issuedAt = new Date(Date.UTC(2026, 4, 27, 15, 30, 45)); // 2026-05-27
+    const badge = toPolicyUserBadge({
+      id: "b1",
+      type: "a",
+      attributes: { k: "v" },
+      issuedAt,
+    });
+    expect(badge.issuedAt).toBe(Date.UTC(2026, 4, 1) / 1000); // 2026-05-01T00:00:00Z
+    expect(badge.issuedAt).not.toBe(Math.floor(issuedAt.getTime() / 1000));
+    expect(badge).toMatchObject({ id: "b1", type: "a", attributes: { k: "v" } });
+  });
+
+  it("matches the RP decision: a gray-zone badge fails maxAgeDays HERE too (fail-closed agreement)", () => {
+    // Badge issued 20 days ago, but early enough in its month that the bucket
+    // start is > 30 days ago. Its true age passes maxAgeDays=30; its coarse
+    // age does not. Minister must agree with the RP (reject) rather than
+    // disclose a badge the RP will drop.
+    const now = Date.UTC(2026, 5, 20) / 1000; // 2026-06-20
+    const issuedAt = new Date(Date.UTC(2026, 4, 31, 12)); // 2026-05-31, ~20d old
+    const policy: PolicyNode = { badge: { type: "a", maxAgeDays: 30 } };
+    const badge = toPolicyUserBadge({ id: "gray", type: "a", attributes: {}, issuedAt });
+    // bucket start = 2026-05-01 → coarse age 50 days > 30.
+    expect(evaluate(policy, [badge], now)).toBe(false);
+  });
+
+  it("keeps a genuinely fresh badge satisfiable (same-month issuance always passes any maxAgeDays ≥ 31)", () => {
+    const now = Date.UTC(2026, 5, 20) / 1000;
+    const issuedAt = new Date(Date.UTC(2026, 5, 3)); // same month as `now`
+    const policy: PolicyNode = { badge: { type: "a", maxAgeDays: 31 } };
+    const badge = toPolicyUserBadge({ id: "fresh", type: "a", attributes: {}, issuedAt });
+    expect(evaluate(policy, [badge], now)).toBe(true);
+  });
+
+  it("drops non-scalar attributes like the existing coerceAttrs seam", () => {
+    const badge = toPolicyUserBadge({
+      id: "b",
+      type: "a",
+      attributes: { ok: 1, nested: { no: true } },
+      issuedAt: new Date(Date.UTC(2026, 0, 1)),
+    });
+    expect(badge.attributes).toEqual({ ok: 1 });
   });
 });
 

@@ -6,7 +6,7 @@ import { decodeJwt, decodeProtectedHeader, SignJWT } from "jose";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { buildPairwiseUserDid, buildUserDid } from "./did";
-import { DEFAULT_DISCLOSURE_TTL_SECONDS, reMintVc } from "./issue";
+import { DEFAULT_DISCLOSURE_TTL_SECONDS, issuanceMonthOf, reMintVc } from "./issue";
 import { _resetIssuerCache, loadIssuer } from "./key";
 import { verifyVc } from "./verify";
 import type { Issuer } from "./types";
@@ -88,9 +88,11 @@ describe("reMintVc", () => {
     expect(header.kid).toBe(issuer.kid);
     expect(v.vc.type).toEqual(["VerifiableCredential", "MinisterOauthAccountCredential"]);
     expect(v.vc["@context"]).toEqual(["https://www.w3.org/ns/credentials/v2"]);
-    // Claim values (the disclosed facts) are unchanged; only `id` is swapped.
-    const { id, ...claims } = v.vc.credentialSubject;
+    // Claim values (the disclosed facts) are unchanged; `id` is swapped and
+    // the reserved coarse-issuance bucket is the ONLY added key.
+    const { id, issuanceMonth, ...claims } = v.vc.credentialSubject;
     expect(id).toBe(pairwise);
+    expect(issuanceMonth).toMatch(/^\d{4}-\d{2}$/);
     expect(claims).toEqual({ provider: "github", accountId: "gh_123", handle: "octocat" });
   });
 
@@ -235,6 +237,146 @@ describe("reMintVc", () => {
       );
       expect(v.exp).toBe(bound);
     }
+  });
+
+  // ---------------------------------------------------------------------------
+  // Coarse issuance claim (`credentialSubject.issuanceMonth`) — the RP-side
+  // freshness signal MIN-1 removed, restored at MONTH granularity so it cannot
+  // serve as a cross-RP re-identifier. Properties, adversary-first:
+  //   1. it is bucketed from the REAL issuance instant (the signed original
+  //      `iat`), never from disclosure time;
+  //   2. it is COARSE: any two issuance instants in the same UTC month yield
+  //      the same value (nothing sub-month survives);
+  //   3. it is IDENTICAL across RPs for the same badge (a coarse shared-by-many
+  //      bucket, not a per-user fingerprint) while sub/jti still differ;
+  //   4. it cannot be spoofed via the stored VC's claims (reserved key: the
+  //      re-mint's own derivation wins over a same-named stored claim).
+  // ---------------------------------------------------------------------------
+
+  it("stamps issuanceMonth from the SIGNED original iat, not disclosure time", async () => {
+    // Issued ~100 days ago — guaranteed a different UTC month than today.
+    const issuanceSec = Math.floor(Date.now() / 1000) - 100 * 86_400;
+    const original = await signOriginal(issuer, { iatSec: issuanceSec });
+    const pairwise = buildPairwiseUserDid(issuer.domain, "S");
+
+    const jwt = await reMintVc(issuer, original, { subjectId: pairwise, jti: "j" });
+    const v = await verifyVc(issuer, jwt);
+
+    const claimed = v.vc.credentialSubject.issuanceMonth;
+    expect(claimed).toBe(issuanceMonthOf(issuanceSec));
+    // NOT the disclosure month (iat is disclosure-stamped; the claim is not).
+    expect(claimed).not.toBe(issuanceMonthOf(v.iat));
+  });
+
+  it("is coarse: two instants in the same UTC month are indistinguishable on the claim", async () => {
+    // First and last second of one UTC month, plus a mid-month instant —
+    // maximally-separated issuance times inside a bucket.
+    const monthStart = Date.UTC(2026, 2, 1) / 1000; // 2026-03-01T00:00:00Z
+    const monthEnd = Date.UTC(2026, 3, 1) / 1000 - 1; // 2026-03-31T23:59:59Z
+    const midMonth = Date.UTC(2026, 2, 17, 13, 37, 42) / 1000;
+    const pairwise = buildPairwiseUserDid(issuer.domain, "S");
+
+    const months = new Set<string>();
+    for (const iatSec of [monthStart, midMonth, monthEnd]) {
+      const original = await signOriginal(issuer, { iatSec });
+      const jwt = await reMintVc(issuer, original, { subjectId: pairwise, jti: "j" });
+      const v = await verifyVc(issuer, jwt);
+      months.add(String(v.vc.credentialSubject.issuanceMonth));
+    }
+    expect(months).toEqual(new Set(["2026-03"]));
+    // And the bucket format carries NO sub-month component.
+    expect("2026-03").toMatch(/^\d{4}-\d{2}$/);
+  });
+
+  it("adjacent months bucket apart (the claim is a real bucket, not a constant)", async () => {
+    const pairwise = buildPairwiseUserDid(issuer.domain, "S");
+    const feb = await signOriginal(issuer, { iatSec: Date.UTC(2026, 1, 28, 23, 59, 59) / 1000 });
+    const mar = await signOriginal(issuer, { iatSec: Date.UTC(2026, 2, 1, 0, 0, 0) / 1000 });
+    const vFeb = await verifyVc(
+      issuer,
+      await reMintVc(issuer, feb, { subjectId: pairwise, jti: "j" }),
+    );
+    const vMar = await verifyVc(
+      issuer,
+      await reMintVc(issuer, mar, { subjectId: pairwise, jti: "j" }),
+    );
+    expect(vFeb.vc.credentialSubject.issuanceMonth).toBe("2026-02");
+    expect(vMar.vc.credentialSubject.issuanceMonth).toBe("2026-03");
+  });
+
+  it("keeps issuanceMonth IDENTICAL across two RPs while sub/jti still differ (no MIN-1 regression)", async () => {
+    const issuanceSec = Math.floor(Date.now() / 1000) - 45 * 86_400;
+    const original = await signOriginal(issuer, { iatSec: issuanceSec });
+    const subA = buildPairwiseUserDid(issuer.domain, "PAIRWISE_A");
+    const subB = buildPairwiseUserDid(issuer.domain, "PAIRWISE_B");
+
+    const a = await verifyVc(
+      issuer,
+      await reMintVc(issuer, original, { subjectId: subA, jti: "jti-A" }),
+    );
+    const b = await verifyVc(
+      issuer,
+      await reMintVc(issuer, original, { subjectId: subB, jti: "jti-B" }),
+    );
+
+    // The coarse bucket is shared (that is its design — many holders share it):
+    expect(a.vc.credentialSubject.issuanceMonth).toBe(b.vc.credentialSubject.issuanceMonth);
+    // ... and it is the ONLY new shared field; the pairwise sweep still holds:
+    expect(a.sub).not.toBe(b.sub);
+    expect(a.jti).not.toBe(b.jti);
+    expect(a.vc.credentialSubject.id).not.toBe(b.vc.credentialSubject.id);
+  });
+
+  it("correlation bound: badges of DIFFERENT users issued in the same month are indistinguishable on the claim", async () => {
+    // The colluding-RP adversary tries to use issuanceMonth as a join key.
+    // Within a bucket it has zero resolving power: distinct users, distinct
+    // instants — same claim value.
+    const inMonth = (d: number, h: number) => Date.UTC(2026, 4, d, h) / 1000;
+    const u1 = await signOriginal(issuer, { userId: "user_one", iatSec: inMonth(2, 8) });
+    const u2 = await signOriginal(issuer, { userId: "user_two", iatSec: inMonth(29, 21) });
+    const s1 = buildPairwiseUserDid(issuer.domain, "S1");
+    const s2 = buildPairwiseUserDid(issuer.domain, "S2");
+    const v1 = await verifyVc(issuer, await reMintVc(issuer, u1, { subjectId: s1, jti: "j1" }));
+    const v2 = await verifyVc(issuer, await reMintVc(issuer, u2, { subjectId: s2, jti: "j2" }));
+    expect(v1.vc.credentialSubject.issuanceMonth).toBe("2026-05");
+    expect(v2.vc.credentialSubject.issuanceMonth).toBe("2026-05");
+  });
+
+  it("overrides a same-named claim smuggled into the stored credentialSubject (reserved key)", async () => {
+    // Adversarial stored row: an authentic-signed VC whose claims happen to
+    // carry `issuanceMonth` (e.g. a future badge-type collision). The
+    // disclosure derivation must win — the claim is issuer metadata, never a
+    // pass-through claim value.
+    const issuanceSec = Math.floor(Date.now() / 1000) - 200 * 86_400;
+    const original = await signOriginal(issuer, {
+      iatSec: issuanceSec,
+      claims: { domain: "example.com", issuanceMonth: "1999-01" },
+    });
+    const pairwise = buildPairwiseUserDid(issuer.domain, "S");
+    const v = await verifyVc(
+      issuer,
+      await reMintVc(issuer, original, { subjectId: pairwise, jti: "j" }),
+    );
+    expect(v.vc.credentialSubject.issuanceMonth).toBe(issuanceMonthOf(issuanceSec));
+    expect(v.vc.credentialSubject.issuanceMonth).not.toBe("1999-01");
+  });
+
+  it("fails loud when the original VC has no iat (cannot derive an honest issuance bucket)", async () => {
+    const subjectDid = buildUserDid(issuer.domain, "u");
+    const noIat = await new SignJWT({
+      vc: {
+        "@context": ["https://www.w3.org/ns/credentials/v2"],
+        type: ["VerifiableCredential", "MinisterEmailDomainCredential"],
+        credentialSubject: { id: subjectDid, domain: "example.com" },
+      },
+    })
+      .setProtectedHeader({ alg: "EdDSA", kid: issuer.kid, typ: "vc+jwt" })
+      .setIssuer(issuer.did)
+      .setSubject(subjectDid)
+      .setExpirationTime("1y")
+      .sign(issuer.privateKey);
+    const pairwise = buildPairwiseUserDid(issuer.domain, "S");
+    await expect(reMintVc(issuer, noIat, { subjectId: pairwise, jti: "j" })).rejects.toThrow(/iat/);
   });
 
   it("produces a VC that verifies against the issuer's live key (signature integrity)", async () => {

@@ -13,7 +13,7 @@ import { type PolicyNode, type UserBadge } from "@/lib/oidc-policy";
 import { verifyOidcRequest } from "@/lib/oidc-request-token";
 import { prisma } from "@/lib/prisma";
 import { getCurrentSession } from "@/lib/session";
-import { coerceAttrs, minimizeToPolicy } from "@/server/oidc-consent-minimize";
+import { minimizeToPolicy, toPolicyUserBadge } from "@/server/oidc-consent-minimize";
 import { effectiveScopes } from "@/server/wizard-helpers";
 
 const ApproveInput = z.object({
@@ -230,18 +230,15 @@ export async function denyConsent(
 // Load id/type/attributes/issuedAt for the submitted ids, scoped to the
 // owning user. attributes + issuedAt are needed to evaluate a structured
 // policy's `where`/`maxAgeDays` leaves during server-side minimization.
+// issuedAt is COARSENED to the issuance-month start inside toPolicyUserBadge
+// so consent-side maxAgeDays agrees with the RP's coarse gate.
 async function loadBadgesForUser(userId: string, badgeIds: string[]): Promise<UserBadge[]> {
   if (badgeIds.length === 0) return [];
   const rows = await prisma.badge.findMany({
     where: { userId, id: { in: badgeIds } },
     select: { id: true, type: true, attributes: true, issuedAt: true },
   });
-  return rows.map((r) => ({
-    id: r.id,
-    type: r.type,
-    attributes: coerceAttrs(r.attributes),
-    issuedAt: Math.floor(r.issuedAt.getTime() / 1000),
-  }));
+  return rows.map(toPolicyUserBadge);
 }
 
 // Union two badge lists by id, preserving the first occurrence. Order is

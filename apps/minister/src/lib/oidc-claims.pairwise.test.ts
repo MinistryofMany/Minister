@@ -5,13 +5,14 @@ import { join } from "node:path";
 import {
   buildPairwiseUserDid,
   buildUserDid,
+  issuanceMonthOf,
   issueVc,
   loadIssuer,
   verifyVc,
   _resetIssuerCache,
   type Issuer,
 } from "@minister/vc";
-import { decodeJwt, decodeProtectedHeader } from "jose";
+import { decodeJwt, decodeProtectedHeader, SignJWT } from "jose";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 // Mock the two IO seams loadApprovedBadgeJwts touches. Everything else
@@ -185,6 +186,52 @@ describe("loadApprovedBadgeJwts — pairwise disclosure (MIN-1)", () => {
     // The stable internal user id is present in neither raw VC.
     expect(a.jwt.includes(USER)).toBe(false);
     expect(b.jwt.includes(USER)).toBe(false);
+  });
+
+  // Coarse freshness claim through the REAL disclosure path. The disclosed VC
+  // must give the RP a month-granular issuance signal (so maxAgeDays works
+  // again) while staying shared-by-many: identical at every RP, identical for
+  // any badge issued the same UTC month, and carrying nothing finer.
+  it("disclosed badges carry the SAME coarse issuanceMonth at every RP — and nothing finer", async () => {
+    // Stored badge with a backdated issuance (~70 days) so the issuance month
+    // provably differs from the disclosure month.
+    const issuanceSec = Math.floor(Date.now() / 1000) - 70 * 86_400;
+    const subjectDid = buildUserDid(issuer.domain, USER);
+    const vcJwt = await new SignJWT({
+      vc: {
+        "@context": ["https://www.w3.org/ns/credentials/v2"],
+        type: ["VerifiableCredential", "MinisterEmailDomainCredential"],
+        credentialSubject: { id: subjectDid, domain: "example.com" },
+      },
+    })
+      .setProtectedHeader({ alg: "EdDSA", kid: issuer.kid, typ: "vc+jwt" })
+      .setIssuer(issuer.did)
+      .setSubject(subjectDid)
+      .setIssuedAt(issuanceSec)
+      .setJti(BADGE_ID)
+      .setExpirationTime(issuanceSec + 31_536_000)
+      .sign(issuer.privateKey);
+    const row = { id: BADGE_ID, vcJwt, expiresAt: null };
+
+    const a = await discloseTo(CLIENT_A, row);
+    const b = await discloseTo(CLIENT_B, row);
+
+    const monthA = a.verified.vc.credentialSubject.issuanceMonth;
+    const monthB = b.verified.vc.credentialSubject.issuanceMonth;
+    // Same value at both RPs (a coarse shared bucket, not a pairwise field)...
+    expect(monthA).toBe(issuanceMonthOf(issuanceSec));
+    expect(monthB).toBe(monthA);
+    // ...month-granular ("YYYY-MM"), NOT the disclosure month and NOT a
+    // fine-grained timestamp.
+    expect(monthA).toMatch(/^\d{4}-\d{2}$/);
+    expect(monthA).not.toBe(issuanceMonthOf(a.verified.iat));
+    // The exact issuance second appears NOWHERE in either disclosed payload —
+    // the month bucket is the ONLY issuance-derived residue.
+    expect(JSON.stringify(decodeJwt(a.jwt))).not.toContain(String(issuanceSec));
+    expect(JSON.stringify(decodeJwt(b.jwt))).not.toContain(String(issuanceSec));
+    // And the pairwise sweep is unaffected by the added claim.
+    expect(a.verified.sub).not.toBe(b.verified.sub);
+    expect(a.verified.jti).not.toBe(b.verified.jti);
   });
 
   // Property 8 — lifetime not extended: exp clamped to Badge.expiresAt.
