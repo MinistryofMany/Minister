@@ -13,7 +13,7 @@ import {
   type Issuer,
 } from "@minister/vc";
 import { decodeJwt, decodeProtectedHeader, SignJWT } from "jose";
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 // Mock the two IO seams loadApprovedBadgeJwts touches. Everything else
 // (buildPairwiseUserDid, reMintVc, pairwiseJti) is the REAL code path, so this
