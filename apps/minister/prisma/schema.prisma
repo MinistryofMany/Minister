@@ -323,6 +323,12 @@ model OidcGrant {
   clientId      String
   // Minister badge slugs (TYPES) ever disclosed to this client.
   badgeTypes    String[]
+  // Specific badge INSTANCE ids ever disclosed to this client (union-
+  // accumulated). Force-included on re-consent so the user can't untick a
+  // badge they already proved — but ONLY these specific instances, never
+  // every instance of a granted TYPE (audit W1). A since-deleted id simply
+  // drops out (loadBadgesForUser scopes to the owning user).
+  badgeIds      String[]
   // Whether the curated display name / avatar were ever disclosed to this
   // client. Union-OR accumulated. Drives the transparency display only.
   profileName   Boolean  @default(false)

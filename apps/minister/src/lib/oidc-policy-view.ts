@@ -73,26 +73,39 @@ export interface AlreadyGrantedType {
   badges: PolicyBadgeOption[];
 }
 
-// Build the locked "already proven" section. Shows ONLY types that are BOTH
-// already-granted to this client AND requested by this room (F-2(a):
-// per-room minimal disclosure — a previously-granted type the room does not
-// request is not shown and not disclosed for this room), and of which the
-// user still holds at least one badge (nothing to lock otherwise). The
-// caller passes the already-granted ∩ requested type set; this resolves
-// each to the user's holdings for display.
+// Build the locked "already proven" section from the SPECIFIC badge instance
+// ids the user previously disclosed to this client AND that this room
+// requests (audit W1). It shows exactly those instances — never every held
+// instance of a granted TYPE — grouped by type for display, skipping any id
+// the user no longer holds (nothing to lock). The caller passes the
+// already-granted ∩ requested instance ids (grantedRelevantBadgeIds), scoped
+// to the room's requested types (F-2(a): a previously-granted instance the
+// room does not request is not shown and not disclosed for this room).
 //
 // NOTE: this section is a TRANSPARENCY display. What is actually disclosed
 // is decided server-side by minimizeToPolicy over (submitted ∪ granted-
-// relevant), which may trim a shown type away if this room's minimal
+// relevant), which may trim a shown instance away if this room's minimal
 // satisfying set does not need it.
 export function buildAlreadyGrantedView(
-  alreadyGrantedTypes: readonly string[],
+  grantedBadgeIds: readonly string[],
   badges: DisplayBadge[],
 ): AlreadyGrantedType[] {
+  const grantedSet = new Set(grantedBadgeIds);
+  // Preserve the input badge order within each type; group by type.
+  const byType = new Map<string, PolicyBadgeOption[]>();
+  for (const badge of badges) {
+    if (!grantedSet.has(badge.id)) continue;
+    const option: PolicyBadgeOption = {
+      id: badge.id,
+      label: badge.meta.label,
+      summary: summarizeAttributes(badge.type, badge.attributes),
+    };
+    const bucket = byType.get(badge.type);
+    if (bucket) bucket.push(option);
+    else byType.set(badge.type, [option]);
+  }
   const out: AlreadyGrantedType[] = [];
-  for (const type of alreadyGrantedTypes) {
-    const held = leafOptions({ type }, badges);
-    if (held.length === 0) continue; // nothing to lock if the user holds none
+  for (const [type, held] of byType) {
     const meta = getBadgeType(type);
     out.push({
       type,

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { grantedRelevantBadgeIds, type GrantState } from "@/lib/oidc-grants";
 import { evaluate, type PolicyNode, type UserBadge } from "@/lib/oidc-policy";
 import { minimizeToPolicy } from "@/server/oidc-consent-minimize";
 
@@ -145,5 +146,85 @@ describe("minimizeToPolicy with the already-granted set folded in (F-2)", () => 
     const kept = minimizeToPolicy(policy, candidate, COUNTS, NOW);
     expect(kept.length).toBe(1);
     expect(ids(kept)).toEqual(["over18"]); // 5000 > 200, most anonymous
+  });
+});
+
+// Audit W1: on the flat / no-policy path minimizeToPolicy is the identity, so
+// the granted fold is the ONLY over-disclosure guard. The old fold loaded
+// every instance of an already-granted TYPE; a user with two oauth-account
+// badges who first disclosed only github silently leaked google on the next
+// visit. The fix records disclosed INSTANCE ids and force-includes only those
+// specific instances. These model that no-policy fold end-to-end (the
+// DB/session machinery is covered by the Playwright e2e).
+describe("flat / no-policy granted fold — W1 over-disclosure", () => {
+  // Mirror oidc-actions.unionBadgesById: submitted first, granted appended,
+  // deduped by id, order-stable.
+  function fold(submitted: UserBadge[], granted: UserBadge[]): UserBadge[] {
+    const seen = new Set(submitted.map((b) => b.id));
+    return [...submitted, ...granted.filter((b) => !seen.has(b.id))];
+  }
+
+  const github = ub("github", "oauth-account", { provider: "github" });
+  const google = ub("google", "oauth-account", { provider: "google" });
+  const owned = [
+    { id: github.id, type: github.type },
+    { id: google.id, type: google.type },
+  ];
+  const requestedTypes = new Set(["oauth-account"]);
+
+  it("a user who disclosed ONLY github does NOT re-ship google on the next authorize", () => {
+    // The grant recorded the disclosed instance id (github), not just the type.
+    const grant: GrantState = {
+      badgeTypes: ["oauth-account"],
+      badgeIds: ["github"],
+      profileName: false,
+      profileAvatar: false,
+    };
+    // The room re-requests oauth-account with NO policy; the user re-ticks
+    // nothing (the locked box shows only github).
+    const foldedIds = grantedRelevantBadgeIds(grant, requestedTypes, owned);
+    expect(foldedIds).toEqual(["github"]); // NOT ["github","google"]
+
+    const grantedBadges = [github, google].filter((b) => foldedIds.includes(b.id));
+    const candidate = fold([], grantedBadges);
+    const kept = minimizeToPolicy(null, candidate, new Map(), NOW); // no policy → identity
+    expect(ids(kept)).toEqual(["github"]);
+    expect(kept.some((b) => b.id === "google")).toBe(false);
+
+    // Contrast: the OLD type-based fold force-loaded EVERY instance of the
+    // granted type — this is exactly the leak the id-based fold closes.
+    const oldTypeFold = [github, google].filter((b) => grant.badgeTypes.includes(b.type));
+    expect(ids(oldTypeFold)).toEqual(["github", "google"]);
+  });
+
+  it("a badge the user actively re-ticks is still disclosed (not over-disclosure)", () => {
+    const grant: GrantState = {
+      badgeTypes: ["oauth-account"],
+      badgeIds: ["github"],
+      profileName: false,
+      profileAvatar: false,
+    };
+    // User this time chooses to also disclose google (submitted explicitly).
+    const foldedIds = grantedRelevantBadgeIds(grant, requestedTypes, owned);
+    const grantedBadges = [github, google].filter((b) => foldedIds.includes(b.id));
+    const candidate = fold([google], grantedBadges);
+    const kept = minimizeToPolicy(null, candidate, new Map(), NOW);
+    expect(ids(kept)).toEqual(["github", "google"]);
+  });
+
+  it("a tampered POST that unticks the locked github still force-includes github (only)", () => {
+    const grant: GrantState = {
+      badgeTypes: ["oauth-account"],
+      badgeIds: ["github"],
+      profileName: false,
+      profileAvatar: false,
+    };
+    // Submitted is empty (the locked box was stripped client-side); the fold
+    // re-adds github from the grant, but never google.
+    const foldedIds = grantedRelevantBadgeIds(grant, requestedTypes, owned);
+    const grantedBadges = [github, google].filter((b) => foldedIds.includes(b.id));
+    const candidate = fold([], grantedBadges);
+    const kept = minimizeToPolicy(null, candidate, new Map(), NOW);
+    expect(ids(kept)).toEqual(["github"]);
   });
 });

@@ -132,19 +132,40 @@ describe("buildPolicyConsentView", () => {
   });
 });
 
+// buildAlreadyGrantedView now takes the SPECIFIC previously-disclosed badge
+// INSTANCE ids (audit W1), not types — so it shows only the instances the
+// user actually proved, grouped by type, never every held instance of a
+// granted type.
 describe("buildAlreadyGrantedView", () => {
-  it("one row per already-granted type with the user's holdings", () => {
+  it("one row per granted type, listing only the disclosed instances", () => {
     const badges = [db("a18", "age-over-18"), db("rc", "residency-country")];
-    const view = buildAlreadyGrantedView(["age-over-18"], badges);
+    const view = buildAlreadyGrantedView(["a18"], badges);
     expect(view).toHaveLength(1);
     expect(view[0]!.type).toBe("age-over-18");
     expect(view[0]!.badges.map((b) => b.id)).toEqual(["a18"]);
   });
 
-  it("skips a granted type the user no longer holds (nothing to lock)", () => {
+  it("W1: a sibling instance of a granted type that was never disclosed is NOT shown", () => {
+    // Two oauth-account badges held; only github was disclosed. The locked
+    // section must show github alone — google stays pickable elsewhere.
+    const badges = [db("github", "oauth-account"), db("google", "oauth-account")];
+    const view = buildAlreadyGrantedView(["github"], badges);
+    expect(view).toHaveLength(1);
+    expect(view[0]!.type).toBe("oauth-account");
+    expect(view[0]!.badges.map((b) => b.id)).toEqual(["github"]);
+  });
+
+  it("groups multiple disclosed instances of the same type into one row", () => {
+    const badges = [db("github", "oauth-account"), db("google", "oauth-account")];
+    const view = buildAlreadyGrantedView(["github", "google"], badges);
+    expect(view).toHaveLength(1);
+    expect(view[0]!.badges.map((b) => b.id).sort()).toEqual(["github", "google"]);
+  });
+
+  it("skips a granted id the user no longer holds (nothing to lock)", () => {
     const badges = [db("rc", "residency-country")];
-    // age-over-18 granted but the user holds none → omitted.
-    expect(buildAlreadyGrantedView(["age-over-18"], badges)).toEqual([]);
+    // The disclosed instance was deleted → not in `badges` → omitted.
+    expect(buildAlreadyGrantedView(["a18"], badges)).toEqual([]);
   });
 
   it("empty granted set → empty section", () => {
