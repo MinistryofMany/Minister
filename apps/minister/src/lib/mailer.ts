@@ -8,6 +8,9 @@ import type { MailMessage } from "@minister/plugin-sdk";
 // configure and one place that can leak link tokens.
 //
 // Transport selection:
+//   * SMTP_URL set                   → send via nodemailer over SMTP (any
+//                                       SMTP provider, e.g. AWS SES). MAIL_FROM
+//                                       is still required as the From address.
 //   * RESEND_API_KEY + MAIL_FROM set → send via Resend's HTTP API.
 //   * otherwise, dev/test            → print to the server log (links
 //                                       stay clickable without a relay).
@@ -34,7 +37,25 @@ function capture(message: MailMessage): void {
 // True when a real transport is configured. Handy for surfacing
 // "magic link printed to the server log" vs "check your inbox" copy.
 export function mailTransportConfigured(): boolean {
-  return Boolean(process.env.RESEND_API_KEY && process.env.MAIL_FROM);
+  return Boolean(process.env.SMTP_URL || (process.env.RESEND_API_KEY && process.env.MAIL_FROM));
+}
+
+// Generic SMTP transport via nodemailer. Works with any SMTP relay (AWS SES,
+// Postmark, a self-hosted MTA, …). nodemailer is lazy-imported so it stays out
+// of the bundle for deployments that never set SMTP_URL. `from` must be a
+// From address the relay is allowed to send as, e.g. "Minister <noreply@your.domain>".
+async function sendViaSmtp(message: MailMessage, smtpUrl: string, from: string): Promise<void> {
+  const { default: nodemailer } = await import("nodemailer");
+  const transport = nodemailer.createTransport(smtpUrl);
+  // nodemailer rejects on connection/auth/send failure; let it propagate so
+  // misconfig is loud (the caller logs it server-side; it never reaches a user).
+  await transport.sendMail({
+    from,
+    to: message.to,
+    subject: message.subject,
+    text: message.text,
+    ...(message.html ? { html: message.html } : {}),
+  });
 }
 
 // Resend HTTP transport. A single POST, so we use fetch rather than
@@ -68,8 +89,19 @@ export async function sendMail(message: MailMessage): Promise<void> {
   // capture-file env is set and we're not in production).
   capture(message);
 
-  const apiKey = process.env.RESEND_API_KEY;
+  const smtpUrl = process.env.SMTP_URL;
   const from = process.env.MAIL_FROM;
+  if (smtpUrl) {
+    if (!from) {
+      throw new Error(
+        'SMTP_URL is set but MAIL_FROM is not. Set MAIL_FROM to the From address the SMTP relay may send as, e.g. "Minister <noreply@your.domain>".',
+      );
+    }
+    await sendViaSmtp(message, smtpUrl, from);
+    return;
+  }
+
+  const apiKey = process.env.RESEND_API_KEY;
   if (apiKey && from) {
     await sendViaResend(message, apiKey, from);
     return;
@@ -77,7 +109,7 @@ export async function sendMail(message: MailMessage): Promise<void> {
 
   if (process.env.NODE_ENV === "production") {
     throw new Error(
-      "No mail transport is configured. Set RESEND_API_KEY and MAIL_FROM to send via Resend, or wire another transport in apps/minister/src/lib/mailer.ts.",
+      "No mail transport is configured. Set SMTP_URL (+ MAIL_FROM) to send via SMTP, or RESEND_API_KEY and MAIL_FROM to send via Resend, or wire another transport in apps/minister/src/lib/mailer.ts.",
     );
   }
 
