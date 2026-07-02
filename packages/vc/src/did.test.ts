@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { buildDid, buildKid, buildUserDid, getDidDocument } from "./did";
+import { buildDid, buildKid, buildPairwiseUserDid, buildUserDid, getDidDocument } from "./did";
 import type { Issuer } from "./types";
 
 describe("buildDid", () => {
@@ -26,6 +26,20 @@ describe("buildKid", () => {
 describe("buildUserDid", () => {
   it("namespaces user IDs under a did:web", () => {
     expect(buildUserDid("minister.local", "u_123")).toBe("did:web:minister.local:users:u_123");
+  });
+});
+
+describe("buildPairwiseUserDid", () => {
+  it("uses the :u: marker (not the legacy :users:) with the pairwise sub", () => {
+    expect(buildPairwiseUserDid("ministry.id", "abc_PAIRWISE")).toBe(
+      "did:web:ministry.id:u:abc_PAIRWISE",
+    );
+  });
+
+  it("is distinct from the stable buildUserDid shape for the same domain", () => {
+    // The stable :users: shape carries a cross-RP user id and is never
+    // disclosed; the pairwise :u: shape is the only one that leaves Minister.
+    expect(buildPairwiseUserDid("ministry.id", "s")).not.toBe(buildUserDid("ministry.id", "s"));
   });
 });
 
