@@ -4,6 +4,8 @@
 .env
 .env.local
 .env.*.local
+# Never bake the dev issuer signing key into an image.
+**/dev-keys
 **/*.log
 .DS_Store
 .claude

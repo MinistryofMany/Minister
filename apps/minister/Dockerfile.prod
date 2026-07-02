@@ -1,0 +1,55 @@
+# Production image for @minister/app (Next.js, `next build` + `next start`).
+#
+# The checked-in apps/minister/Dockerfile is the DEV image (prisma db push +
+# `pnpm dev`); this one builds the app for production. Build from the REPO ROOT:
+#
+#   docker build -f apps/minister/Dockerfile.prod -t minister .
+#
+# Runtime env contract (see infra/env/minister.env.example in the workspace
+# infra repo): DATABASE_URL, AUTH_SECRET, AUTH_URL, AUTH_TRUST_HOST,
+# MINISTER_ISSUER_DOMAIN, OIDC_PAIRWISE_SECRET, ISSUER_PRIVATE_JWK (required in
+# prod - loadIssuer refuses the dev key path when NODE_ENV=production),
+# RESEND_API_KEY + MAIL_FROM (required in prod - the mailer throws without a
+# transport and magic-link is the sign-up path).
+#
+# Dev dependencies are kept on purpose: the operational entry points
+# (`pnpm oidc:seed-client`, `pnpm admin:grant`, the prisma CLI) run via tsx from
+# inside the container. Image size is traded for a working toolbox; revisit if
+# this ever leaves the homeserver.
+
+FROM node:20-alpine
+
+WORKDIR /app
+
+# pnpm via corepack (uses packageManager from the root package.json).
+RUN corepack enable
+
+# Manifests first for layer caching. Every workspace project's manifest must be
+# present for the frozen-lockfile importer check, including ones outside the
+# install filter (demo-client, extension).
+COPY pnpm-workspace.yaml package.json pnpm-lock.yaml .npmrc ./
+COPY apps/minister/package.json apps/minister/
+COPY apps/demo-client/package.json apps/demo-client/
+COPY apps/extension/package.json apps/extension/
+COPY packages/vc/package.json packages/vc/
+COPY packages/plugin-sdk/package.json packages/plugin-sdk/
+COPY packages/shared/package.json packages/shared/
+
+# Skip lifecycle scripts on this layer: apps/minister's `postinstall` runs
+# `prisma generate`, which needs prisma/schema.prisma - not COPYed yet.
+RUN pnpm install --frozen-lockfile --filter "@minister/app..." --ignore-scripts
+
+COPY . .
+
+# `pnpm build` in apps/minister = `prisma generate && next build`.
+RUN cd apps/minister && pnpm build
+
+ENV NODE_ENV=production
+WORKDIR /app/apps/minister
+EXPOSE 3000
+
+# No committed Prisma migrations exist yet (prisma/ holds only schema.prisma),
+# so schema sync is still `prisma db push` - same mechanism as dev, run against
+# the prod DB at boot. Replace with `prisma migrate deploy` once the schema is
+# baselined into committed migrations.
+CMD ["sh", "-c", "pnpm prisma db push --skip-generate && pnpm start"]
