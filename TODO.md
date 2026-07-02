@@ -230,3 +230,13 @@ bugs/UX gaps, not deliberate stubs. Tracked as session tasks #26-#30.
 5. **Share Links page: list incoming shares too (#30).** `/shares` shows only
    the links the user created. Add an "incoming / shared with you" section for
    `ShareLink`s shared to the user's email/account.
+
+6. **Email OTP alongside the magic link (#31).** Sign-in emails only a link
+   today. Also issue a one-time passcode so a user reading email on their phone
+   can type the code to log in on desktop. Keep BOTH (link + OTP); either
+   completes auth. Custom flow on top of Auth.js's link-only email provider:
+   generate a short single-use code tied to the same verification identity, email
+   link + code together, add an "enter code" form on the verify-request page
+   (see #26). Security parity with the link: short TTL, single-use, per-identity
+   - per-IP rate limiting (a 6-8 char code is guessable in a way a 32-byte link
+     token isn't — throttle and lock after N failures), audit-logged.
