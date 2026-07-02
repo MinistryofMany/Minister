@@ -195,3 +195,38 @@ donor's `badgeTypes` / `profileName` / `profileAvatar` into the survivor's
 - `next.config.ts`: `typedRoutes` is OFF because it rejected `redirect()`
   to external RP `redirect_uri`s. If a typedRoutes-compatible escape
   hatch lands upstream, re-enable.
+
+---
+
+## Post-launch UI/UX findings (2026-07-02, live ministry-prod)
+
+Found by Tyler on the first real sign-up against the live deploy. These are
+bugs/UX gaps, not deliberate stubs. Tracked as session tasks #26-#30.
+
+1. **Magic-link copy says "check the server logs" even though email sent
+   (#26).** The verify-request page shows the dev/no-transport message despite
+   SES/SMTP being configured and the email being delivered. The send path is
+   correct (uses `SMTP_URL`); only the UI copy is keyed off the wrong signal.
+   Find where the signin/verify-request page picks "check your inbox" vs "check
+   the server logs" and make it honor `mailTransportConfigured()` (which already
+   returns true for `SMTP_URL`).
+
+2. **"Add a passkey" is in the badges box (#27).** Move it to a warning/CTA
+   banner at the top of the page and hide it once the user has ≥1 passkey
+   (Authenticator count > 0).
+
+3. **Auto-issue `email-domain` badge at signup (#28).** On magic-link
+   verification, auto-issue the `email-domain` badge for the user's domain
+   unless it's a public/freemail host (gmail, icloud, outlook, yahoo, proton,
+   …). Needs a freemail denylist; keep the no-PII rule (store only the domain).
+
+4. **GitHub badge button throws "Application error" (#29).** With
+   `GITHUB_CLIENT_ID`/`SECRET` unset in prod, the github plugin's OAuth redirect
+   fails unhandled. Hide the GitHub option (or show "not configured") when creds
+   are absent — never surface an unhandled error. Audit other OAuth plugins
+   (google) for the same unconfigured-provider foot-gun. (Or populate real
+   GitHub OAuth creds; callback `https://ministry.id/badges/new/github/callback`.)
+
+5. **Share Links page: list incoming shares too (#30).** `/shares` shows only
+   the links the user created. Add an "incoming / shared with you" section for
+   `ShareLink`s shared to the user's email/account.
