@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
 
-import { pairwiseSub, verifyPkceS256 } from "./oidc-tokens";
+import { pairwiseJti, pairwiseSub, verifyPkceS256 } from "./oidc-tokens";
 
 describe("pairwiseSub", () => {
   const ORIGINAL_PAIRWISE = process.env.OIDC_PAIRWISE_SECRET;
@@ -54,6 +54,51 @@ describe("pairwiseSub", () => {
     delete process.env.OIDC_PAIRWISE_SECRET;
     delete process.env.AUTH_SECRET;
     expect(() => pairwiseSub("u", "c")).toThrow(/must be set/);
+    process.env.OIDC_PAIRWISE_SECRET = "test-pairwise-secret-32-chars-min!!";
+  });
+});
+
+describe("pairwiseJti", () => {
+  const ORIGINAL_PAIRWISE = process.env.OIDC_PAIRWISE_SECRET;
+  const ORIGINAL_AUTH = process.env.AUTH_SECRET;
+
+  beforeAll(() => {
+    process.env.OIDC_PAIRWISE_SECRET = "test-pairwise-secret-32-chars-min!!";
+  });
+  afterAll(() => {
+    if (ORIGINAL_PAIRWISE === undefined) delete process.env.OIDC_PAIRWISE_SECRET;
+    else process.env.OIDC_PAIRWISE_SECRET = ORIGINAL_PAIRWISE;
+    if (ORIGINAL_AUTH === undefined) delete process.env.AUTH_SECRET;
+    else process.env.AUTH_SECRET = ORIGINAL_AUTH;
+  });
+
+  it("is stable per (badgeId, clientId) and base64url", () => {
+    const a = pairwiseJti("badge_1", "client_A");
+    expect(a).toBe(pairwiseJti("badge_1", "client_A"));
+    expect(a).toMatch(/^[A-Za-z0-9_-]+$/);
+    expect(a.length).toBe(43); // HMAC-SHA-256, 32 bytes → 43 base64url chars
+  });
+
+  it("differs across relying parties for the same badge (cross-RP unlinkable jti)", () => {
+    expect(pairwiseJti("badge_1", "client_A")).not.toBe(pairwiseJti("badge_1", "client_B"));
+  });
+
+  it("is never equal to the raw badge id (the stored jti = badge.id was the leak)", () => {
+    const badgeId = "badge_cuid_abcdef";
+    expect(pairwiseJti(badgeId, "client_A")).not.toBe(badgeId);
+  });
+
+  it("is domain-separated from pairwiseSub — no collision when the ids coincide", () => {
+    // A userId and a badgeId are cuids from different tables; even if one
+    // equalled the other, the "jti:" prefix keeps the two HMACs disjoint.
+    const shared = "collision_candidate_id";
+    expect(pairwiseJti(shared, "client_A")).not.toBe(pairwiseSub(shared, "client_A"));
+  });
+
+  it("throws if neither secret is set", () => {
+    delete process.env.OIDC_PAIRWISE_SECRET;
+    delete process.env.AUTH_SECRET;
+    expect(() => pairwiseJti("b", "c")).toThrow(/must be set/);
     process.env.OIDC_PAIRWISE_SECRET = "test-pairwise-secret-32-chars-min!!";
   });
 });

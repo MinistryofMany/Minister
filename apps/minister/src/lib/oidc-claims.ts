@@ -1,3 +1,7 @@
+import { buildPairwiseUserDid, reMintVc } from "@minister/vc";
+
+import { getIssuer } from "@/lib/issuer";
+import { pairwiseJti } from "@/lib/oidc-tokens";
 import { prisma } from "@/lib/prisma";
 
 // The user fields both OIDC claim paths need. Deliberately only the
@@ -69,15 +73,49 @@ export function resolveUserClaims(
   return resolved;
 }
 
-// Loads the VC JWTs for the badges the user approved for this grant. Scoped
-// to the owning user so a stale approvedBadgeIds list can never surface
-// another user's badge. Shared by both OIDC paths so the badge set is
-// loaded identically.
-export async function loadApprovedBadgeJwts(userId: string, badgeIds: string[]): Promise<string[]> {
+// Loads and RE-MINTS the VC JWTs for the badges the user approved for this
+// grant. Scoped to the owning user so a stale approvedBadgeIds list can never
+// surface another user's badge. Shared by both OIDC paths so the badge set is
+// disclosed identically.
+//
+// The stored VC carries a STABLE cross-RP subject (`did:web:<domain>:users:<userId>`)
+// and a stable `jti = badge.id`; disclosing it verbatim would let two colluding
+// relying parties re-link the user despite the pairwise id_token `sub`. So we
+// never disclose the stored VC. Each approved badge is re-minted, bound to
+// (userId, clientId):
+//   - `sub` / `credentialSubject.id` → the PAIRWISE subject DID for this RP.
+//   - `jti` → a per-RP value (never the raw badge id).
+//   - `iat`/`nbf` → re-stamped to now; `exp` clamped so lifetime never extends.
+//   - `iss`, `kid`, and every claim value → unchanged.
+//
+// `sub` is threaded in from the caller (the exact value stamped as the id_token
+// `sub`) rather than recomputed here, so the disclosed badge subject's trailing
+// component equals the id_token `sub` even when an account-merge SubjectOverride
+// makes that differ from the pure `pairwiseSub(userId, clientId)`. That equality
+// is what lets a relying party bind a disclosed badge to the login.
+export async function loadApprovedBadgeJwts(
+  userId: string,
+  clientId: string,
+  sub: string,
+  badgeIds: string[],
+): Promise<string[]> {
   if (badgeIds.length === 0) return [];
   const rows = await prisma.badge.findMany({
     where: { userId, id: { in: badgeIds } },
-    select: { vcJwt: true },
+    select: { id: true, vcJwt: true, expiresAt: true },
   });
-  return rows.map((r) => r.vcJwt);
+  if (rows.length === 0) return [];
+
+  const issuer = await getIssuer();
+  const subjectId = buildPairwiseUserDid(issuer.domain, sub);
+
+  return Promise.all(
+    rows.map((row) =>
+      reMintVc(issuer, row.vcJwt, {
+        subjectId,
+        jti: pairwiseJti(row.id, clientId),
+        maxExpiresAt: row.expiresAt,
+      }),
+    ),
+  );
 }

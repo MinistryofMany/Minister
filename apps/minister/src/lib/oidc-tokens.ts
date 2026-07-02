@@ -27,6 +27,24 @@ export function pairwiseSub(userId: string, clientId: string): string {
   return mac.toString("base64url");
 }
 
+// Per-RP `jti` for a badge VC re-minted at disclosure. Deterministic per
+// (badge, relying-party) — a stable revocation handle — but unlinkable across
+// relying parties (different `clientId` → different `jti`), so two colluding
+// RPs cannot join on `jti` the way they could on the raw stored `badge.id`.
+//
+// Domain-separated from `pairwiseSub` with a `"jti:"` prefix: both HMACs share
+// OIDC_PAIRWISE_SECRET, and userId/badgeId are both cuids from different
+// tables, so the prefix guarantees a `pairwiseSub(userId, clientId)` can never
+// collide with a `pairwiseJti(badgeId, clientId)`.
+export function pairwiseJti(badgeId: string, clientId: string): string {
+  const secret = process.env.OIDC_PAIRWISE_SECRET ?? process.env.AUTH_SECRET;
+  if (!secret) {
+    throw new Error("OIDC_PAIRWISE_SECRET (or AUTH_SECRET fallback) must be set");
+  }
+  const mac = createHmac("sha256", secret).update(`jti:${badgeId}:${clientId}`).digest();
+  return mac.toString("base64url");
+}
+
 // PKCE: verify the code_verifier received on /token matches the
 // code_challenge stored at /authorize.
 // S256: challenge = base64url(SHA-256(verifier)).

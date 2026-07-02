@@ -147,7 +147,15 @@ export async function POST(request: Request) {
   const sub = await resolveSub(user.id, client.clientId);
   const issuer = await getIssuer();
 
-  const minister_badges = await loadApprovedBadgeJwts(user.id, stored.approvedBadgeIds);
+  // Re-minted at disclosure, bound to (user, clientId): each disclosed badge
+  // carries the same pairwise `sub` as the id_token, so no cross-RP-stable
+  // correlator rides alongside the pairwise id_token subject.
+  const minister_badges = await loadApprovedBadgeJwts(
+    user.id,
+    client.clientId,
+    sub,
+    stored.approvedBadgeIds,
+  );
   // Shared resolver so the ID token's claims provably match /oidc/userinfo.
   // The per-claim profile grant is persisted on the auth code, not inferred
   // from the scope string, so name and avatar disclose independently.

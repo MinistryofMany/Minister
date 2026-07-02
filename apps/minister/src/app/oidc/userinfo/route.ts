@@ -70,6 +70,13 @@ export async function GET(request: Request) {
   if (typeof jti !== "string") {
     return unauthorized("invalid_token", "Token missing jti");
   }
+  // The access token's `sub` is the pairwise pseudonym stamped at /token
+  // (via resolveSub). Re-minting the disclosed badges under this same `sub`
+  // keeps userinfo's badges bound to the login exactly as the id_token's were.
+  const sub = payload.sub;
+  if (typeof sub !== "string" || sub.length === 0) {
+    return unauthorized("invalid_token", "Token missing sub");
+  }
 
   const row = await prisma.oidcAccessToken.findUnique({
     where: { jti },
@@ -93,7 +100,12 @@ export async function GET(request: Request) {
     return unauthorized("invalid_token", "Token has expired");
   }
 
-  const approvedBadgeJwts = await loadApprovedBadgeJwts(row.userId, row.approvedBadgeIds);
+  const approvedBadgeJwts = await loadApprovedBadgeJwts(
+    row.userId,
+    row.clientId,
+    sub,
+    row.approvedBadgeIds,
+  );
   // Shared resolver so these claims provably match the ID token's. The
   // per-claim profile grant comes from the access-token row (denormalized
   // from the auth code), not from the scope string.
@@ -106,7 +118,7 @@ export async function GET(request: Request) {
   const claims: Record<string, unknown> = {
     // OIDC requires `sub` in userinfo to match the ID token's `sub`.
     // The pairwise pseudonymous value lives on the JWT's `sub` claim.
-    sub: payload.sub,
+    sub,
   };
 
   // Emit each profile claim only when the resolver produced it — the same
