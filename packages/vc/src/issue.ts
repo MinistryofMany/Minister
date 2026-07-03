@@ -1,5 +1,6 @@
-import { compactVerify, SignJWT } from "jose";
+import { compactVerify } from "jose";
 
+import { signCompactJwt } from "./signer";
 import type { CredentialSubject, IssueOptions, Issuer, VerifiableCredentialClaim } from "./types";
 
 const VC_CONTEXT = "https://www.w3.org/ns/credentials/v2";
@@ -35,17 +36,21 @@ export async function issueVc<TClaims extends Record<string, unknown>>(
     credentialSubject,
   };
 
-  let builder = new SignJWT({ vc })
-    .setProtectedHeader({ alg: "EdDSA", kid: issuer.kid, typ: "vc+jwt" })
-    .setIssuer(issuer.did)
-    .setSubject(subjectId)
-    .setIssuedAt();
+  // One clock read stamps iat and the exp base (whole seconds), mirroring
+  // jose's SignJWT so the VC shape is unchanged aside from the signing seam.
+  const nowSec = Math.floor(Date.now() / 1000);
+  const payload: Record<string, unknown> = {
+    vc,
+    iss: issuer.did,
+    sub: subjectId,
+    iat: nowSec,
+  };
+  if (options.jti) payload.jti = options.jti;
+  if (options.notBefore) payload.nbf = Math.floor(options.notBefore.getTime() / 1000);
+  payload.exp = nowSec + durationToSeconds(options.expiresIn);
 
-  if (options.jti) builder = builder.setJti(options.jti);
-  if (options.notBefore) builder = builder.setNotBefore(options.notBefore);
-  builder = builder.setExpirationTime(coerceExpiresIn(options.expiresIn));
-
-  return builder.sign(issuer.privateKey);
+  const header = { alg: "EdDSA", kid: issuer.kid, typ: "vc+jwt" };
+  return signCompactJwt(header, payload, issuer.signer);
 }
 
 // Reserved credentialSubject key carrying the COARSE issuance bucket of a
@@ -257,24 +262,69 @@ export async function reMintVc(
   const nbfSec =
     options.notBefore !== undefined ? Math.floor(options.notBefore.getTime() / 1000) : nowSec;
 
-  return new SignJWT({ vc })
-    .setProtectedHeader({ alg: "EdDSA", kid: issuer.kid, typ: "vc+jwt" })
-    .setIssuer(issuer.did)
-    .setSubject(options.subjectId)
-    .setIssuedAt(nowSec)
-    .setNotBefore(nbfSec)
-    .setJti(options.jti)
-    .setExpirationTime(expSec)
-    .sign(issuer.privateKey);
+  const payload: Record<string, unknown> = {
+    vc,
+    iss: issuer.did,
+    sub: options.subjectId,
+    iat: nowSec,
+    nbf: nbfSec,
+    jti: options.jti,
+    exp: expSec,
+  };
+  const header = { alg: "EdDSA", kid: issuer.kid, typ: "vc+jwt" };
+  return signCompactJwt(header, payload, issuer.signer);
 }
 
-// jose's setExpirationTime treats bare numbers as *absolute* epoch
-// seconds (1970-relative), which is almost never what callers want.
-// `IssueOptions.expiresIn` is documented as "duration from now" — when
-// we get a number, hand jose a "<n>s" string so it does the right
-// thing. Strings are passed through (jose supports "1y", "30d", etc.).
-function coerceExpiresIn(value: IssueOptions["expiresIn"]): string {
-  if (value === undefined) return "1y";
-  if (typeof value === "number") return `${value}s`;
-  return value;
+// Seconds per duration unit. Mirrors jose's `secs` table (day * 365.25 for a
+// year) so the compact-JWS path we build by hand matches the exp jose's
+// SignJWT would have stamped from the same `expiresIn` string.
+const UNIT_SECONDS: Record<string, number> = {
+  s: 1,
+  sec: 1,
+  secs: 1,
+  second: 1,
+  seconds: 1,
+  m: 60,
+  min: 60,
+  mins: 60,
+  minute: 60,
+  minutes: 60,
+  h: 3600,
+  hr: 3600,
+  hrs: 3600,
+  hour: 3600,
+  hours: 3600,
+  d: 86_400,
+  day: 86_400,
+  days: 86_400,
+  w: 604_800,
+  week: 604_800,
+  weeks: 604_800,
+  y: 31_557_600,
+  yr: 31_557_600,
+  yrs: 31_557_600,
+  year: 31_557_600,
+  years: 31_557_600,
+};
+
+// `IssueOptions.expiresIn` is a duration FROM NOW: a number of seconds, or a
+// "<n><unit>" string (e.g. "1y", "30d"). Returns whole seconds. jose's
+// SignJWT.setExpirationTime accepted these forms; we resolve them ourselves
+// because the KMS signer builds the JWS by hand (no jose SignJWT).
+const DEFAULT_EXPIRY_SECONDS = 31_557_600; // 1 year (day * 365.25), jose parity
+
+function durationToSeconds(value: IssueOptions["expiresIn"]): number {
+  if (value === undefined) return DEFAULT_EXPIRY_SECONDS;
+  if (typeof value === "number") return Math.floor(value);
+  const match = /^\s*(\d+)\s*([a-z]+)\s*$/i.exec(value);
+  const count = match?.[1];
+  const rawUnit = match?.[2];
+  if (count === undefined || rawUnit === undefined) {
+    throw new Error(`issueVc: unparseable expiresIn "${value}"`);
+  }
+  const unit = UNIT_SECONDS[rawUnit.toLowerCase()];
+  if (unit === undefined) {
+    throw new Error(`issueVc: unknown duration unit in expiresIn "${value}"`);
+  }
+  return Number(count) * unit;
 }

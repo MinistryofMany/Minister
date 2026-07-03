@@ -1,14 +1,45 @@
 import type { JWK, KeyLike } from "jose";
 
-// Loaded Minister issuer key + its DID-bound identifiers. Threaded through
-// `issueVc` / `verifyVc` so the package itself never reads env directly.
-export interface Issuer {
-  domain: string;
-  did: string;
+// Pluggable signer over a JWS signing input. The seam that lets badge VCs be
+// signed by AWS KMS (non-extractable, HSM-held) while tokens keep an in-process
+// key. `sign` MUST return a pure-Ed25519 (RFC 8032 §5.1, no prehash) signature
+// over the exact bytes given — that is what a compact JWS `EdDSA` verifier
+// expects. Implementations live in `signer.ts` (local) and `kms.ts` (KMS).
+export interface IssuerSigner {
+  sign(signingInput: Uint8Array): Promise<Uint8Array>;
+}
+
+// In-process token-signing key (#key-3). Signs the OIDC id_token and access
+// token, which can exceed KMS's 4096-byte RAW-sign limit once several badges
+// are embedded, so they never route through KMS. Its public JWK is served in
+// JWKS but deliberately NOT in the DID document's `assertionMethod`: it attests
+// nothing, so a stolen token key cannot forge a badge VC that badge verifiers
+// (which pin to `assertionMethod`) will accept.
+export interface TokenSigningKey {
   kid: string;
   privateKey: KeyLike;
   publicKey: KeyLike;
   publicJwk: JWK;
+}
+
+// Loaded Minister issuer key + its DID-bound identifiers. Threaded through
+// `issueVc` / `verifyVc` so the package itself never reads env directly.
+//
+// Two keys, distinguished by `kid`:
+//   - Badge key (#key-2): `signer` + `kid` + `publicKey`/`publicJwk`. Signs
+//     badge VCs (`issueVc`, `reMintVc`). In production `signer` is KMS-backed;
+//     in dev/tests it wraps a local Ed25519 key. `publicKey` is the badge
+//     verification key (also the `reMintVc` integrity gate) and the sole entry
+//     in the DID document's `assertionMethod`.
+//   - Token key (#key-3): `token`. In-process only; signs id/access tokens.
+export interface Issuer {
+  domain: string;
+  did: string;
+  kid: string;
+  signer: IssuerSigner;
+  publicKey: KeyLike;
+  publicJwk: JWK;
+  token: TokenSigningKey;
 }
 
 // W3C VC Data Model 2.0 payload, restricted to the shapes Minister issues
