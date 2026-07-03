@@ -134,6 +134,27 @@ model VerificationToken {
   @@id([identifier, token])
 }
 
+model SignInOtp {
+  // Short numeric/alphanumeric sign-in code delivered in the same email as
+  // the magic link, so a user reading email on their phone can type the code
+  // to sign in on another device. Deliberately separate from
+  // VerificationToken (whose (identifier, token) is the magic link): a short
+  // code needs a hit counter and lockout that the link — a 32-byte,
+  // unguessable token — does not.
+  //
+  // Stored as an HMAC (keyed on AUTH_SECRET), never the plaintext, so a DB
+  // read alone can't reveal a live code. Single-use: consumed (deleted) on a
+  // correct match. `attempts` drives per-code lockout after N wrong guesses.
+  id         String   @id @default(cuid())
+  identifier String // the verified email address, lowercased
+  codeHash   String // HMAC-SHA256(AUTH_SECRET, normalized code) — never the code itself
+  expires    DateTime
+  attempts   Int      @default(0)
+  createdAt  DateTime @default(now())
+
+  @@index([identifier])
+}
+
 model Authenticator {
   credentialID         String  @unique
   userId               String

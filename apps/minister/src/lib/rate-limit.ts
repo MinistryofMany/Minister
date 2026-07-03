@@ -190,6 +190,21 @@ export const signInEmailLimiter = createRateLimiter({
   max: envMax("MINISTER_RL_SIGNIN_MAX", 10),
 });
 
+// OTP code verification, keyed per-IP. A short code is brute-forceable, so
+// cap guessing rate regardless of which identity is targeted. This sits on
+// top of the per-code lockout (OTP_MAX_ATTEMPTS) in src/lib/signin-otp.ts.
+export const signInOtpIpLimiter = createRateLimiter({
+  windowMs: 15 * MINUTE,
+  max: envMax("MINISTER_RL_OTP_IP_MAX", 30),
+});
+
+// OTP code verification, keyed per-identity (email). Bounds how fast a single
+// address can be attacked even from rotating IPs.
+export const signInOtpIdentityLimiter = createRateLimiter({
+  windowMs: 15 * MINUTE,
+  max: envMax("MINISTER_RL_OTP_ID_MAX", 15),
+});
+
 // Share-link views: every render writes a ShareLinkView row, and the
 // token space shouldn't be probeable at speed.
 export const shareViewLimiter = createRateLimiter({

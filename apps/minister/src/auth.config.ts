@@ -17,7 +17,11 @@ function aalForProvider(provider: string): Aal {
       return aalForCredential("passkey");
     case "recovery":
       return aalForCredential("recovery-code");
+    // Both email sign-in credentials — the magic link ("email") and the
+    // one-time code ("email-otp") — verify the same factor (control of the
+    // inbox) and confer the same AAL1.
     case "email":
+    case "email-otp":
     default:
       return aalForCredential("email");
   }

@@ -20,13 +20,22 @@ function safeCallbackUrl(from: string | null): string | undefined {
   return from;
 }
 
-export function SignInForm() {
+// One uniform failure message for the code form — never reveal whether the
+// code was wrong, expired, or the identity unknown (the email-otp provider
+// returns a single generic error for every failure mode).
+const OTP_ERROR = "That code is invalid or expired. Check the email, or request a new one.";
+
+export function SignInForm({ mailConfigured }: { mailConfigured: boolean }) {
   const searchParams = useSearchParams();
   const callbackUrl = safeCallbackUrl(searchParams.get("from"));
 
   const [email, setEmail] = useState("");
   const [emailSent, setEmailSent] = useState(false);
   const [emailError, setEmailError] = useState<string | null>(null);
+
+  const [code, setCode] = useState("");
+  const [codeError, setCodeError] = useState<string | null>(null);
+  const [verifying, setVerifying] = useState(false);
 
   async function handleEmail(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -41,6 +50,27 @@ export function SignInForm() {
       return;
     }
     setEmailSent(true);
+  }
+
+  async function handleCode(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setCodeError(null);
+    setVerifying(true);
+    const result = await signInReact("email-otp", {
+      email,
+      code,
+      redirect: false,
+      callbackUrl,
+    });
+    setVerifying(false);
+    if (!result || result.error) {
+      setCodeError(OTP_ERROR);
+      return;
+    }
+    // Full navigation so the freshly-set session cookie is picked up. The OTP
+    // path yields the same session as the magic link, so this lands exactly
+    // where the link would.
+    window.location.href = result.url ?? callbackUrl ?? "/profile";
   }
 
   async function handlePasskey() {
@@ -60,9 +90,31 @@ export function SignInForm() {
       </div>
 
       {emailSent ? (
-        <p className="rounded-md border border-neutral-200 bg-neutral-50 p-4 text-sm dark:border-neutral-800 dark:bg-neutral-900">
-          Check the server logs for your magic link (dev mode).
-        </p>
+        <div className="flex flex-col gap-4">
+          <p className="rounded-md border border-neutral-200 bg-neutral-50 p-4 text-sm dark:border-neutral-800 dark:bg-neutral-900">
+            {mailConfigured
+              ? "Check your inbox — we sent a sign-in link and a code. Click the link, or enter the code below to sign in on this device."
+              : "No mail transport is configured, so the sign-in link and code were printed to the server logs (dev mode). Enter the code below to sign in on this device."}
+          </p>
+
+          <form onSubmit={handleCode} className="flex flex-col gap-3">
+            <Input
+              type="text"
+              name="code"
+              inputMode="text"
+              autoComplete="one-time-code"
+              autoCapitalize="characters"
+              placeholder="Enter your code"
+              required
+              value={code}
+              onChange={(e) => setCode(e.target.value)}
+            />
+            <Button type="submit" variant="outline" className="w-full" disabled={verifying}>
+              {verifying ? "Verifying…" : "Verify code"}
+            </Button>
+            {codeError ? <p className="text-xs text-red-600">{codeError}</p> : null}
+          </form>
+        </div>
       ) : (
         <form onSubmit={handleEmail} className="flex flex-col gap-3">
           <Input
