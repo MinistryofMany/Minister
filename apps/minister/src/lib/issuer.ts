@@ -42,7 +42,7 @@ export function getIssuer(): Promise<Issuer> {
       throw new Error("TOKEN_SIGNING_JWK must be set in production (id/access-token signing key)");
     }
 
-    globalThis.__ministerIssuerPromise = loadIssuer({
+    const promise = loadIssuer({
       domain,
       // KMS wins for the badge key; only fall back to a local private JWK when
       // KMS is not configured. In prod the local badge key is required; in dev
@@ -53,6 +53,19 @@ export function getIssuer(): Promise<Issuer> {
       tokenJwk,
       tokenDevKeyPath: isProd ? undefined : TOKEN_DEV_KEY_PATH,
     });
+
+    // Never cache a REJECTED promise. loadIssuer's KMS trust-anchor check
+    // (assertKmsPublicKeyMatches) hits AWS at first load; a transient blip there
+    // would otherwise poison the global for the process lifetime, re-throwing the
+    // stale rejection on every later call until a restart. Clear the cache on
+    // failure so the next getIssuer() re-attempts the load.
+    promise.catch(() => {
+      if (globalThis.__ministerIssuerPromise === promise) {
+        globalThis.__ministerIssuerPromise = undefined;
+      }
+    });
+
+    globalThis.__ministerIssuerPromise = promise;
   }
   return globalThis.__ministerIssuerPromise;
 }

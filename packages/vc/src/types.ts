@@ -13,8 +13,12 @@ export interface IssuerSigner {
 // token, which can exceed KMS's 4096-byte RAW-sign limit once several badges
 // are embedded, so they never route through KMS. Its public JWK is served in
 // JWKS but deliberately NOT in the DID document's `assertionMethod`: it attests
-// nothing, so a stolen token key cannot forge a badge VC that badge verifiers
-// (which pin to `assertionMethod`) will accept.
+// nothing. The reference RP verifier (`@minister/client`) resolves badge keys
+// from the DID document's `assertionMethod` — NOT the raw JWKS — and rejects any
+// badge whose `kid` is not listed there, so a stolen token key cannot forge a
+// badge VC that verifier will accept. Verifiers that instead trust the raw JWKS
+// select a key by `kid` and WOULD accept a `#key-3`-signed badge; the split only
+// holds for verifiers that pin to `assertionMethod`.
 export interface TokenSigningKey {
   kid: string;
   privateKey: KeyLike;

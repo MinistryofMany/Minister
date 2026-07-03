@@ -13,6 +13,17 @@ max). Badge VCs are ≤ ~900 B, so they sign on KMS with headroom; tokens stay o
 an in-process key. Only `#key-2` is in `assertionMethod`, so a stolen token key
 cannot forge a badge VC that a verifier pinning to `assertionMethod` accepts.
 
+**The split only protects verifiers that pin to `assertionMethod`.** JWKS serves
+BOTH keys, and a compact-JWS verifier selects the key by the JWT `kid`; a verifier
+that trusts the raw JWKS would therefore accept a badge carrying `kid ...#key-3`
+(a forgery signed with a stolen token key). The reference RP SDK
+(`@minister/client`, `verifyMinisterBadge`) closes this: it fetches the issuer's
+`/.well-known/did.json`, builds its badge-verification key set from the
+`assertionMethod` verification methods ONLY (i.e. `#key-2`), and rejects any badge
+whose `kid` is not in that set — it never verifies a badge against the raw JWKS.
+Any third-party verifier MUST do the same; verifying badge VCs against
+`/.well-known/jwks.json` defeats the KMS split.
+
 RAW + `ED25519_SHA_512` produces a pure-Ed25519 (RFC 8032) signature that drops
 straight into a compact JWS `EdDSA`. `ED25519_PH_SHA_512` and `MessageType=DIGEST`
 are HashEdDSA (do **not** verify as JWS EdDSA) and are unreachable in code — the
