@@ -24,11 +24,10 @@ const CallbackInput = z.object({
 const GithubUser = z.object({
   id: z.number().int(),
   login: z.string().min(1),
-  // Extra facts drive the derived badges (account-age, 2fa, following). All
+  // Extra facts drive the derived badges (account-age, following). All
   // optional: a partial /user response still yields the oauth-account badge.
   // We read these but never persist the raw values — only coarse thresholds.
   created_at: z.string().min(1).optional(),
-  two_factor_authentication: z.boolean().optional(),
   followers: z.number().int().nonnegative().optional(),
   // Avatar/name are nice-to-haves; not part of the badge claims.
 });
@@ -51,8 +50,8 @@ export const githubPlugin: Plugin = {
     description:
       "Prove you control a GitHub account. Issues an `oauth-account` badge plus " +
       "coarse, privacy-preserving anti-sybil badges the account supports: " +
-      "account age, two-factor-enabled, and a follower-count tier.",
-    badgeTypes: ["oauth-account", "account-age", "two-factor", "social-following"],
+      "account age and a follower-count tier.",
+    badgeTypes: ["oauth-account", "account-age", "social-following"],
     requiresExtension: false,
     iconKey: "link",
   },
@@ -205,7 +204,6 @@ export const githubPlugin: Plugin = {
         id: ghUser.id,
         login: ghUser.login,
         createdAt: ghUser.created_at,
-        twoFactor: ghUser.two_factor_authentication,
         followers: ghUser.followers,
       },
       new Date(),

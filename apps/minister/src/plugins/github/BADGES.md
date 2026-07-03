@@ -6,17 +6,15 @@ minimal disclosure: **thresholds and buckets only, never the raw value.**
 
 ## Implemented
 
-| Badge slug         | GitHub source field         | Claim shape                                              | Bucket / threshold                    | Why                                                                                                                             |
-| ------------------ | --------------------------- | -------------------------------------------------------- | ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| `oauth-account`    | `id`, `login`               | `{ provider, accountId, handle? }`                       | n/a (identity)                        | Baseline: proves control of the account.                                                                                        |
-| `account-age`      | `created_at`                | `{ provider, olderThanMonths: 12\|24\|36\|60 }`          | highest calendar-month bucket cleared | Anti-sybil. A fresh account can't fake a multi-year lower bound; the exact date never leaves Minister.                          |
-| `two-factor`       | `two_factor_authentication` | `{ provider }` (strict; presence _is_ the claim)         | issued only when `true`               | Security signal for gated communities; a bare boolean, no value to leak.                                                        |
-| `social-following` | `followers`                 | `{ provider, followersAtLeast: 10\|50\|100\|500\|1000 }` | highest bucket cleared                | Reputation / anti-sybil. Followers need social proof, unlike repo count which is `git init`-cheap. Exact count never disclosed. |
+| Badge slug         | GitHub source field | Claim shape                                              | Bucket / threshold                    | Why                                                                                                                             |
+| ------------------ | ------------------- | -------------------------------------------------------- | ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `oauth-account`    | `id`, `login`       | `{ provider, accountId, handle? }`                       | n/a (identity)                        | Baseline: proves control of the account.                                                                                        |
+| `account-age`      | `created_at`        | `{ provider, olderThanMonths: 12\|24\|36\|60 }`          | highest calendar-month bucket cleared | Anti-sybil. A fresh account can't fake a multi-year lower bound; the exact date never leaves Minister.                          |
+| `social-following` | `followers`         | `{ provider, followersAtLeast: 10\|50\|100\|500\|1000 }` | highest bucket cleared                | Reputation / anti-sybil. Followers need social proof, unlike repo count which is `git init`-cheap. Exact count never disclosed. |
 
-All four are provider-generic (the `provider` field is one of
+All three are provider-generic (the `provider` field is one of
 `OAUTH_PROVIDERS`) so a future Google/Discord plugin can reuse the same badge
-types. `two_factor_authentication` is only present on the authenticated user's
-own `/user` response; when absent we simply don't issue the badge.
+types.
 
 ## Candidates — recommend, but left for a decision
 

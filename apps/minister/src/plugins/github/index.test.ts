@@ -125,14 +125,13 @@ describe("githubPlugin.handleStep — code exchange + /user fetch", () => {
     expect((userInit?.headers as Record<string, string>).Authorization).toBe("Bearer gho_test");
   });
 
-  it("derives account-age, two-factor, and social-following from a full /user response", async () => {
-    // created_at ~11 years before now, 2FA on, 1500 followers.
+  it("derives account-age and social-following from a full /user response", async () => {
+    // created_at ~11 years before now, 1500 followers.
     fetchSpy.mockResolvedValueOnce(mockOk({ access_token: "gho_test" })).mockResolvedValueOnce(
       mockOk({
         id: 7,
         login: "power",
         created_at: "2015-01-01T00:00:00Z",
-        two_factor_authentication: true,
         followers: 1500,
       }),
     );
@@ -152,7 +151,6 @@ describe("githubPlugin.handleStep — code exchange + /user fetch", () => {
       provider: "github",
       olderThanMonths: 60,
     });
-    expect(byType.get("two-factor")?.claims).toEqual({ provider: "github" });
     expect(byType.get("social-following")?.claims).toEqual({
       provider: "github",
       followersAtLeast: 1000,
@@ -165,7 +163,6 @@ describe("githubPlugin.handleStep — code exchange + /user fetch", () => {
         id: 8,
         login: "fresh",
         created_at: "2026-06-01T00:00:00Z",
-        two_factor_authentication: false,
         followers: 2,
       }),
     );

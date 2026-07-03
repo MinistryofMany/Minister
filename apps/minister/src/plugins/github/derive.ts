@@ -12,7 +12,6 @@ export interface GithubUserFacts {
   login: string;
   // Optional so a partial /user response still yields the oauth-account badge.
   createdAt?: string; // ISO 8601, GitHub `created_at`
-  twoFactor?: boolean; // GitHub `two_factor_authentication`
   followers?: number; // GitHub `followers`
 }
 
@@ -36,8 +35,8 @@ export function highestBucket(value: number, buckets: readonly number[]): number
 }
 
 // Build every badge we can attest from one GitHub /user response. Always
-// includes oauth-account; appends account-age / two-factor / social-following
-// only when the source data supports a threshold. `now` is injected for tests.
+// includes oauth-account; appends account-age / social-following only when the
+// source data supports a threshold. `now` is injected for tests.
 export function buildGithubBadges(facts: GithubUserFacts, now: Date): IssuedBadge[] {
   const accountId = String(facts.id);
   const badges: IssuedBadge[] = [
@@ -60,14 +59,6 @@ export function buildGithubBadges(facts: GithubUserFacts, now: Date): IssuedBadg
         });
       }
     }
-  }
-
-  if (facts.twoFactor === true) {
-    badges.push({
-      type: "two-factor",
-      attributes: { provider: PROVIDER },
-      claims: { provider: PROVIDER },
-    });
   }
 
   if (typeof facts.followers === "number") {

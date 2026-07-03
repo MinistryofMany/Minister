@@ -75,16 +75,6 @@ export const AccountAgeClaims = z
   .strict();
 export type AccountAgeClaims = z.infer<typeof AccountAgeClaims>;
 
-// Two-factor enabled — a bare presence badge. Its existence *is* the claim
-// ("this provider account has 2FA on"); there is no value to disclose beyond
-// the provider, so the schema is strict with a single field.
-export const TwoFactorClaims = z
-  .object({
-    provider: z.enum(OAUTH_PROVIDERS),
-  })
-  .strict();
-export type TwoFactorClaims = z.infer<typeof TwoFactorClaims>;
-
 // Social following — a COARSE "at least N followers" bucket, never the exact
 // count. Followers are a stronger anti-sybil / reputation signal than repo
 // count (they need social proof, not just `git init`). Highest bucket wins.
@@ -193,13 +183,6 @@ export const BADGE_TYPES: Record<string, BadgeTypeMeta> = {
     description: "Holder's connected account is at least the stated number of months old.",
     iconKey: "cake",
     schema: AccountAgeClaims,
-  },
-  "two-factor": {
-    type: "two-factor",
-    label: "Two-factor enabled",
-    description: "Holder's connected account has two-factor authentication enabled.",
-    iconKey: "shield-check",
-    schema: TwoFactorClaims,
   },
   "social-following": {
     type: "social-following",

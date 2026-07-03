@@ -79,29 +79,6 @@ describe("buildGithubBadges", () => {
     expect(badges.some((b) => b.type === "account-age")).toBe(false);
   });
 
-  it("issues two-factor only when the flag is exactly true", () => {
-    expect(
-      buildGithubBadges({ id: 1, login: "u", twoFactor: true }, NOW).some(
-        (b) => b.type === "two-factor",
-      ),
-    ).toBe(true);
-    expect(
-      buildGithubBadges({ id: 1, login: "u", twoFactor: false }, NOW).some(
-        (b) => b.type === "two-factor",
-      ),
-    ).toBe(false);
-    expect(buildGithubBadges({ id: 1, login: "u" }, NOW).some((b) => b.type === "two-factor")).toBe(
-      false,
-    );
-  });
-
-  it("two-factor claims validate against the strict schema", () => {
-    const badges = buildGithubBadges({ id: 1, login: "u", twoFactor: true }, NOW);
-    const tf = badges.find((b) => b.type === "two-factor")!;
-    expect(tf.claims).toEqual({ provider: "github" });
-    assertClaimsValid("two-factor", tf.claims);
-  });
-
   it("buckets followers to the highest tier cleared (742 => 500)", () => {
     const badges = buildGithubBadges({ id: 1, login: "u", followers: 742 }, NOW);
     const sf = badges.find((b) => b.type === "social-following");
@@ -120,13 +97,12 @@ describe("buildGithubBadges", () => {
         id: 99,
         login: "power",
         createdAt: "2015-05-01T00:00:00Z",
-        twoFactor: true,
         followers: 1500,
       },
       NOW,
     );
     const types = badges.map((b) => b.type).sort();
-    expect(types).toEqual(["account-age", "oauth-account", "social-following", "two-factor"]);
+    expect(types).toEqual(["account-age", "oauth-account", "social-following"]);
     for (const b of badges) assertClaimsValid(b.type, b.claims);
   });
 });

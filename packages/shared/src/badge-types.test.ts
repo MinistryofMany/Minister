@@ -7,7 +7,6 @@ import {
   EmailExactClaims,
   OAuthAccountClaims,
   AccountAgeClaims,
-  TwoFactorClaims,
   SocialFollowingClaims,
   ACCOUNT_AGE_MONTHS,
   FOLLOWERS_BUCKETS,
@@ -26,7 +25,6 @@ describe("registry shape", () => {
       "email-exact",
       "oauth-account",
       "account-age",
-      "two-factor",
       "social-following",
       "residency-country",
       "residency-state",
@@ -136,15 +134,6 @@ describe("AccountAgeClaims schema (github-derived)", () => {
     expect(() =>
       AccountAgeClaims.parse({ provider: "github", olderThanMonths: 12, createdAt: "2020" }),
     ).toThrow();
-  });
-});
-
-describe("TwoFactorClaims schema (github-derived)", () => {
-  it("accepts a bare provider", () => {
-    expect(TwoFactorClaims.parse({ provider: "github" })).toEqual({ provider: "github" });
-  });
-  it("rejects any extra field", () => {
-    expect(() => TwoFactorClaims.parse({ provider: "github", enabled: true })).toThrow();
   });
 });
 
