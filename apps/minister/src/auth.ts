@@ -150,12 +150,17 @@ const EmailOtpProvider = Credentials({
       return null;
     }
 
-    // Code verified ⇒ the inbox is proven. Resolve to the owning account,
-    // creating one on first sign-in exactly as the magic-link adapter path
-    // does. A pre-existing account without emailVerified gets it set.
+    // Code verified ⇒ the inbox is proven. Resolve to the owning account via
+    // getUserByEmailIdentity, which matches ONLY verified emails — so an
+    // unverified foreign pre-claim on this address never resolves here, and
+    // proving control creates/reclaims a fresh account for the prover exactly
+    // as the magic-link adapter path does.
     const existing = await getUserByEmailIdentity(email);
     const user = existing ?? (await createEmailUser(email));
     if (existing && existing.emailVerified === null) {
+      // Backfill verification on the RESOLVED OWNER only. Both writes are
+      // scoped to existing.id, so a proven inbox can only ever mark this
+      // account's own claim verified — never a different account's claim.
       await prisma.user.update({
         where: { id: existing.id },
         data: { emailVerified: new Date() },
@@ -222,6 +227,13 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       if (account.provider !== "email" && account.provider !== "email-otp") return;
       const email = typeof user.email === "string" ? user.email : null;
       if (!user.id || !email) return;
+      // Don't mint a badge for a banned or tombstoned (merged-away) account,
+      // matching the recovery provider's refusal to resurrect one.
+      const state = await prisma.user.findUnique({
+        where: { id: user.id },
+        select: { isBanned: true, mergedIntoUserId: true },
+      });
+      if (!state || state.isBanned || state.mergedIntoUserId !== null) return;
       try {
         await autoIssueEmailDomainBadge(user.id, email);
       } catch {
