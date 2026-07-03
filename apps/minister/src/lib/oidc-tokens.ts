@@ -85,14 +85,16 @@ export async function mintIdToken(issuer: Issuer, claims: IdTokenClaims): Promis
     payload.minister_badges = claims.minister_badges;
   }
 
+  // Tokens sign with the in-process token key (#key-3), never KMS: an id_token
+  // can exceed KMS's 4096-byte RAW-sign limit once several badges are embedded.
   return new SignJWT(payload)
-    .setProtectedHeader({ alg: "EdDSA", kid: issuer.kid, typ: "JWT" })
+    .setProtectedHeader({ alg: "EdDSA", kid: issuer.token.kid, typ: "JWT" })
     .setIssuer(oidcIssuerUrl())
     .setSubject(claims.sub)
     .setAudience(claims.aud)
     .setIssuedAt()
     .setExpirationTime(`${ID_TOKEN_TTL_SECONDS}s`)
-    .sign(issuer.privateKey);
+    .sign(issuer.token.privateKey);
 }
 
 export interface AccessTokenClaims {
@@ -103,7 +105,8 @@ export interface AccessTokenClaims {
 }
 
 // RFC 9068 (JWT Profile for OAuth 2.0 Access Tokens). Signed with the
-// same Ed25519 key as ID tokens; RPs verify via /.well-known/jwks.json.
+// same in-process token key (#key-3) as ID tokens; RPs verify via
+// /.well-known/jwks.json.
 //
 // We deliberately do NOT include a raw userId in the JWT. /userinfo
 // resolves the principal via OidcAccessToken row lookup keyed by `jti`.
@@ -116,14 +119,14 @@ export async function mintAccessToken(issuer: Issuer, claims: AccessTokenClaims)
     client_id: claims.clientId,
     token_use: "access",
   })
-    .setProtectedHeader({ alg: "EdDSA", kid: issuer.kid, typ: "at+jwt" })
+    .setProtectedHeader({ alg: "EdDSA", kid: issuer.token.kid, typ: "at+jwt" })
     .setIssuer(oidcIssuerUrl())
     .setSubject(claims.sub)
     .setAudience(oidcIssuerUrl())
     .setJti(claims.jti)
     .setIssuedAt()
     .setExpirationTime(`${ACCESS_TOKEN_TTL_SECONDS}s`)
-    .sign(issuer.privateKey);
+    .sign(issuer.token.privateKey);
 }
 
 export const ACCESS_TOKEN_TTL = ACCESS_TOKEN_TTL_SECONDS;

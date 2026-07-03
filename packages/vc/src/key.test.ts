@@ -27,7 +27,7 @@ describe("loadIssuer", () => {
       devKeyPath: keyPath,
     });
     expect(issuer.did).toBe("did:web:minister.local");
-    expect(issuer.kid).toBe("did:web:minister.local#key-1");
+    expect(issuer.kid).toBe("did:web:minister.local#key-2");
     expect(issuer.publicJwk.kty).toBe("OKP");
     expect(issuer.publicJwk.crv).toBe("Ed25519");
     // Public JWK must not leak the private scalar.

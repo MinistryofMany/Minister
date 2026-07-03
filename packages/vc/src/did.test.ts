@@ -49,17 +49,30 @@ describe("getDidDocument", () => {
   const issuer = {
     domain: "minister.local",
     did: "did:web:minister.local",
-    kid: "did:web:minister.local#key-1",
+    kid: "did:web:minister.local#key-2",
     publicJwk: {
       kty: "OKP",
       crv: "Ed25519",
       x: "AAAA",
       alg: "EdDSA",
       use: "sig",
-      kid: "did:web:minister.local#key-1",
+      kid: "did:web:minister.local#key-2",
     },
-    privateKey: {} as Issuer["privateKey"],
+    signer: { sign: async () => new Uint8Array(64) },
     publicKey: {} as Issuer["publicKey"],
+    token: {
+      kid: "did:web:minister.local#key-3",
+      privateKey: {} as Issuer["token"]["privateKey"],
+      publicKey: {} as Issuer["token"]["publicKey"],
+      publicJwk: {
+        kty: "OKP",
+        crv: "Ed25519",
+        x: "BBBB",
+        alg: "EdDSA",
+        use: "sig",
+        kid: "did:web:minister.local#key-3",
+      },
+    },
   } satisfies Issuer;
 
   it("emits the W3C DID context and security-suite context", () => {

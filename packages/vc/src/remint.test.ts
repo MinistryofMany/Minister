@@ -2,14 +2,24 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { decodeJwt, decodeProtectedHeader, SignJWT } from "jose";
+import { decodeJwt, decodeProtectedHeader } from "jose";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { buildPairwiseUserDid, buildUserDid } from "./did";
 import { DEFAULT_DISCLOSURE_TTL_SECONDS, issuanceMonthOf, reMintVc } from "./issue";
 import { _resetIssuerCache, loadIssuer } from "./key";
+import { signCompactJwt } from "./signer";
 import { verifyVc } from "./verify";
 import type { Issuer } from "./types";
+
+const ONE_YEAR_SECONDS = 31_536_000;
+
+// Build a stored-original VC through the issuer's own signer seam (local in
+// tests), with full control over the payload — including deliberately omitting
+// `iat`/`exp` to exercise reMintVc's integrity gates.
+function signJws(issuer: Issuer, payload: Record<string, unknown>): Promise<string> {
+  return signCompactJwt({ alg: "EdDSA", kid: issuer.kid, typ: "vc+jwt" }, payload, issuer.signer);
+}
 
 // Mint an "original" stored VC directly (mirrors issueVc's output) with full
 // control over iat/exp/jti so the re-mint transformation can be asserted
@@ -29,20 +39,18 @@ async function signOriginal(
   const iat = opts.iatSec ?? nowSec;
   const subjectDid = buildUserDid(issuer.domain, opts.userId ?? "user_1");
   const claims = opts.claims ?? { domain: "example.com" };
-  return new SignJWT({
+  return signJws(issuer, {
     vc: {
       "@context": ["https://www.w3.org/ns/credentials/v2"],
       type: ["VerifiableCredential", opts.credentialType ?? "MinisterEmailDomainCredential"],
       credentialSubject: { id: subjectDid, ...claims },
     },
-  })
-    .setProtectedHeader({ alg: "EdDSA", kid: issuer.kid, typ: "vc+jwt" })
-    .setIssuer(issuer.did)
-    .setSubject(subjectDid)
-    .setIssuedAt(iat)
-    .setJti(opts.jti ?? "badge_original_id")
-    .setExpirationTime(opts.expSec ?? nowSec + 31_536_000)
-    .sign(issuer.privateKey);
+    iss: issuer.did,
+    sub: subjectDid,
+    iat,
+    jti: opts.jti ?? "badge_original_id",
+    exp: opts.expSec ?? nowSec + ONE_YEAR_SECONDS,
+  });
 }
 
 describe("reMintVc", () => {
@@ -363,18 +371,16 @@ describe("reMintVc", () => {
 
   it("fails loud when the original VC has no iat (cannot derive an honest issuance bucket)", async () => {
     const subjectDid = buildUserDid(issuer.domain, "u");
-    const noIat = await new SignJWT({
+    const noIat = await signJws(issuer, {
       vc: {
         "@context": ["https://www.w3.org/ns/credentials/v2"],
         type: ["VerifiableCredential", "MinisterEmailDomainCredential"],
         credentialSubject: { id: subjectDid, domain: "example.com" },
       },
-    })
-      .setProtectedHeader({ alg: "EdDSA", kid: issuer.kid, typ: "vc+jwt" })
-      .setIssuer(issuer.did)
-      .setSubject(subjectDid)
-      .setExpirationTime("1y")
-      .sign(issuer.privateKey);
+      iss: issuer.did,
+      sub: subjectDid,
+      exp: Math.floor(Date.now() / 1000) + ONE_YEAR_SECONDS,
+    });
     const pairwise = buildPairwiseUserDid(issuer.domain, "S");
     await expect(reMintVc(issuer, noIat, { subjectId: pairwise, jti: "j" })).rejects.toThrow(/iat/);
   });
@@ -427,19 +433,17 @@ describe("reMintVc", () => {
   it("refuses to re-sign a VC stamped with a foreign iss even when the signature verifies", async () => {
     // Signed with the issuer's key (signature passes) but carrying a foreign
     // `iss` — an imported credential must never be re-issued as Minister's own.
-    const foreign = await new SignJWT({
+    const foreign = await signJws(issuer, {
       vc: {
         "@context": ["https://www.w3.org/ns/credentials/v2"],
         type: ["VerifiableCredential", "MinisterEmailDomainCredential"],
         credentialSubject: { id: "did:web:elsewhere.example:u:x", domain: "example.com" },
       },
-    })
-      .setProtectedHeader({ alg: "EdDSA", kid: issuer.kid, typ: "vc+jwt" })
-      .setIssuer("did:web:elsewhere.example")
-      .setSubject("did:web:elsewhere.example:u:x")
-      .setIssuedAt()
-      .setExpirationTime("1y")
-      .sign(issuer.privateKey);
+      iss: "did:web:elsewhere.example",
+      sub: "did:web:elsewhere.example:u:x",
+      iat: Math.floor(Date.now() / 1000),
+      exp: Math.floor(Date.now() / 1000) + ONE_YEAR_SECONDS,
+    });
     const pairwise = buildPairwiseUserDid(issuer.domain, "S");
     await expect(reMintVc(issuer, foreign, { subjectId: pairwise, jti: "j" })).rejects.toThrow(
       /refusing to re-sign/,
@@ -464,30 +468,28 @@ describe("reMintVc", () => {
   it("throws (fails loud) when the original VC has no exp and no maxExpiresAt cap", async () => {
     // Craft an original with the exp claim deliberately absent.
     const subjectDid = buildUserDid(issuer.domain, "u");
-    const noExp = await new SignJWT({
+    const noExp = await signJws(issuer, {
       vc: {
         "@context": ["https://www.w3.org/ns/credentials/v2"],
         type: ["VerifiableCredential", "MinisterEmailDomainCredential"],
         credentialSubject: { id: subjectDid, domain: "example.com" },
       },
-    })
-      .setProtectedHeader({ alg: "EdDSA", kid: issuer.kid, typ: "vc+jwt" })
-      .setIssuer(issuer.did)
-      .setSubject(subjectDid)
-      .setIssuedAt()
-      .sign(issuer.privateKey);
+      iss: issuer.did,
+      sub: subjectDid,
+      iat: Math.floor(Date.now() / 1000),
+    });
     const pairwise = buildPairwiseUserDid(issuer.domain, "S");
     await expect(reMintVc(issuer, noExp, { subjectId: pairwise, jti: "j" })).rejects.toThrow(/exp/);
   });
 
   it("rejects a malformed original VC missing its `vc` claim", async () => {
-    const notAVc = await new SignJWT({ hello: "world" })
-      .setProtectedHeader({ alg: "EdDSA", kid: issuer.kid, typ: "vc+jwt" })
-      .setIssuer(issuer.did)
-      .setSubject("x")
-      .setIssuedAt()
-      .setExpirationTime("1y")
-      .sign(issuer.privateKey);
+    const notAVc = await signJws(issuer, {
+      hello: "world",
+      iss: issuer.did,
+      sub: "x",
+      iat: Math.floor(Date.now() / 1000),
+      exp: Math.floor(Date.now() / 1000) + ONE_YEAR_SECONDS,
+    });
     const pairwise = buildPairwiseUserDid(issuer.domain, "S");
     await expect(reMintVc(issuer, notAVc, { subjectId: pairwise, jti: "j" })).rejects.toThrow(/vc/);
   });

@@ -8,11 +8,12 @@ import {
   issuanceMonthOf,
   issueVc,
   loadIssuer,
+  signCompactJwt,
   verifyVc,
   _resetIssuerCache,
   type Issuer,
 } from "@minister/vc";
-import { decodeJwt, decodeProtectedHeader, SignJWT } from "jose";
+import { decodeJwt, decodeProtectedHeader } from "jose";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 // Mock the two IO seams loadApprovedBadgeJwts touches. Everything else
@@ -197,20 +198,22 @@ describe("loadApprovedBadgeJwts — pairwise disclosure (MIN-1)", () => {
     // provably differs from the disclosure month.
     const issuanceSec = Math.floor(Date.now() / 1000) - 70 * 86_400;
     const subjectDid = buildUserDid(issuer.domain, USER);
-    const vcJwt = await new SignJWT({
-      vc: {
-        "@context": ["https://www.w3.org/ns/credentials/v2"],
-        type: ["VerifiableCredential", "MinisterEmailDomainCredential"],
-        credentialSubject: { id: subjectDid, domain: "example.com" },
+    const vcJwt = await signCompactJwt(
+      { alg: "EdDSA", kid: issuer.kid, typ: "vc+jwt" },
+      {
+        vc: {
+          "@context": ["https://www.w3.org/ns/credentials/v2"],
+          type: ["VerifiableCredential", "MinisterEmailDomainCredential"],
+          credentialSubject: { id: subjectDid, domain: "example.com" },
+        },
+        iss: issuer.did,
+        sub: subjectDid,
+        iat: issuanceSec,
+        jti: BADGE_ID,
+        exp: issuanceSec + 31_536_000,
       },
-    })
-      .setProtectedHeader({ alg: "EdDSA", kid: issuer.kid, typ: "vc+jwt" })
-      .setIssuer(issuer.did)
-      .setSubject(subjectDid)
-      .setIssuedAt(issuanceSec)
-      .setJti(BADGE_ID)
-      .setExpirationTime(issuanceSec + 31_536_000)
-      .sign(issuer.privateKey);
+      issuer.signer,
+    );
     const row = { id: BADGE_ID, vcJwt, expiresAt: null };
 
     const a = await discloseTo(CLIENT_A, row);

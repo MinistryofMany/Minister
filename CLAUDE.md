@@ -322,7 +322,7 @@ Each native badge is a VC issued by Minister. Imported badges keep their origina
 
 `@minister/vc` (in-repo workspace package `packages/vc`) exports:
 
-- `loadIssuer({ domain, privateJwk?, devKeyPath? })` → `Issuer`. Env-driven in prod (`ISSUER_PRIVATE_JWK`); ephemeral persistent key on first dev boot (`apps/minister/dev-keys/issuer.jwk`, gitignored).
+- `loadIssuer({ domain, privateJwk?, devKeyPath?, kms?, tokenJwk?, tokenDevKeyPath? })` → `Issuer`. **Two keys** (see `docs/kms-signing.md`): the badge key `#key-2` signs badge VCs (`issueVc`/`reMintVc`) and is AWS-KMS-backed in prod (`MINISTER_KMS_KEY_ID` + pinned `ISSUER_KMS_PUBLIC_JWK`, verified against KMS at boot, fail-closed, no local fallback) or a local `ISSUER_PRIVATE_JWK`/dev key otherwise; the in-process token key `#key-3` signs the id/access tokens (`TOKEN_SIGNING_JWK`, or a dev key), because an id_token can exceed KMS's 4 KB RAW-sign limit once badges are embedded. Signing is pluggable via the `IssuerSigner` seam (`localSigner` / `kmsSigner`). JWKS serves both keys; the DID doc's `assertionMethod` lists only `#key-2`.
 - `issueVc(issuer, type, subjectId, claims, options?)` → `vcJwt`. Stamps `iat`/`nbf`/`exp`/`jti`; protected header carries `kid` matching the DID document.
 - `verifyVc(issuer, vcJwt)` → typed credential or throws.
 - `getDidDocument(issuer)` → DID document with a `JsonWebKey2020` verificationMethod.
@@ -505,7 +505,7 @@ Why a separate Rust sidecar over WASM in Node: simpler operationally, pins one t
 - VC JWTs leave Minister only via (a) an ID token to an RP the user consented to (Stage 3+), (b) a share link the user generated (Stage 7+), (c) user-initiated export.
 - Share links: bearer token in URL; `requiresAccount` and `expiresAt` enforced server-side; revocable. Default 7-day expiry.
 - Audit-log every badge issuance, share link creation, OIDC consent decision, session revocation, signing-key access.
-- The Minister signing key is the trust anchor for all native VCs. Dev: ephemeral, written to `apps/minister/dev-keys/issuer.jwk` (gitignored). Prod: KMS-backed (out of scope for now).
+- The Minister badge signing key (`#key-2`) is the trust anchor for all native VCs. Dev: ephemeral, written to `apps/minister/dev-keys/issuer.jwk` (gitignored). Prod: AWS-KMS-backed, non-extractable, RAW + `ED25519_SHA_512`, verified against the pinned public JWK at boot (fail-closed). See `docs/kms-signing.md`.
 - Sessions: 24h sliding JWT + per-user `sessionGeneration` revocation. Two-layer enforcement (Edge middleware for signature, server-side `getCurrentSession` for revocation). See "Authentication and session model" above.
 - Do **not** log raw VC JWTs, plugin step `data` payloads, magic-link tokens, or PKCE verifiers.
 - No PII storage policy — see the badge type docs above. If a plugin would need to store DOB or street address to function, the plugin is wrong; rework it.
