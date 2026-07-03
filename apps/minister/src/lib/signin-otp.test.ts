@@ -48,6 +48,28 @@ vi.mock("@/lib/prisma", () => {
         return row;
       },
     ),
+    // Atomic guarded increment used by verifySignInOtp. Mirrors Prisma's
+    // updateMany: only rows matching the WHERE (id + attempts < ceiling) are
+    // bumped, and it reports how many. The read+write happen synchronously
+    // inside this call, so concurrent invocations serialize like the DB does.
+    updateMany: vi.fn(
+      async ({
+        where,
+        data,
+      }: {
+        where: { id: string; attempts?: { lt: number } };
+        data: { attempts: { increment: number } };
+      }) => {
+        const row = store.rows.find((r) => r.id === where.id);
+        if (!row) return { count: 0 };
+        if (where.attempts && !(row.attempts < where.attempts.lt)) return { count: 0 };
+        row.attempts += data.attempts.increment;
+        return { count: 1 };
+      },
+    ),
+    findUnique: vi.fn(async ({ where }: { where: { id: string }; select?: { attempts: true } }) => {
+      return store.rows.find((r) => r.id === where.id) ?? null;
+    }),
   };
 
   return {
@@ -120,6 +142,22 @@ describe("verifySignInOtp", () => {
     expect(await verifySignInOtp(ID, wrong)).toEqual({ ok: false, reason: "locked-out" });
     // Even the correct code no longer works — a fresh one is required.
     expect(await verifySignInOtp(ID, code)).toEqual({ ok: false, reason: "no-code" });
+  });
+
+  it("burns the code under concurrent wrong guesses (no TOCTOU past the ceiling)", async () => {
+    const code = await createSignInOtp(ID);
+    const wrong = code === "22222222" ? "33333333" : "22222222";
+    // Fire many wrong guesses that all read the same initial attempt count
+    // before any write lands — the pre-fix read-modify-write let every one of
+    // these slip past the ceiling. With the atomic guarded increment the burn
+    // still triggers: at least one attempt locks out and the code is gone.
+    const results = await Promise.all(
+      Array.from({ length: OTP_MAX_ATTEMPTS + 5 }, () => verifySignInOtp(ID, wrong)),
+    );
+    expect(results.some((r) => !r.ok && r.reason === "locked-out")).toBe(true);
+    // Code burned: even the correct value no longer works.
+    expect(await verifySignInOtp(ID, code)).toEqual({ ok: false, reason: "no-code" });
+    expect(store.rows).toHaveLength(0);
   });
 
   it("rejects an expired code and clears it", async () => {

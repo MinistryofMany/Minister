@@ -124,12 +124,29 @@ export async function verifySignInOtp(
     return { ok: true };
   }
 
-  const attempts = row.attempts + 1;
-  if (attempts >= OTP_MAX_ATTEMPTS) {
-    // Burn the code: further guessing must wait for a freshly emailed one.
+  // Atomic increment guarded on the ceiling, so concurrent wrong guesses can't
+  // race the burn (a plain read-then-write lets N simultaneous guesses all read
+  // the same low count and none cross OTP_MAX_ATTEMPTS). The DB applies each
+  // increment serially; the `attempts < ceiling` guard caps total successful
+  // increments at OTP_MAX_ATTEMPTS. Zero rows updated ⇒ a concurrent guess
+  // already reached the ceiling ⇒ burn.
+  const bumped = await prisma.signInOtp.updateMany({
+    where: { id: row.id, attempts: { lt: OTP_MAX_ATTEMPTS } },
+    data: { attempts: { increment: 1 } },
+  });
+  if (bumped.count === 0) {
     await prisma.signInOtp.deleteMany({ where: { identifier } });
     return { ok: false, reason: "locked-out" };
   }
-  await prisma.signInOtp.update({ where: { id: row.id }, data: { attempts } });
+  // Re-read the post-increment count: reaching the ceiling burns the code so
+  // further guessing must wait for a freshly emailed one.
+  const after = await prisma.signInOtp.findUnique({
+    where: { id: row.id },
+    select: { attempts: true },
+  });
+  if (!after || after.attempts >= OTP_MAX_ATTEMPTS) {
+    await prisma.signInOtp.deleteMany({ where: { identifier } });
+    return { ok: false, reason: "locked-out" };
+  }
   return { ok: false, reason: "mismatch" };
 }
