@@ -28,8 +28,12 @@ export async function issueBadge(args: {
   userId: string;
   pluginId: string | null;
   badge: BadgeToIssue;
+  // Optional idempotency key (Badge.dedupeKey, unique). When set, a concurrent
+  // duplicate insert fails with P2002 instead of minting a second badge; the
+  // caller decides whether that is benign (see auto-issue-email-domain).
+  dedupeKey?: string | null;
 }): Promise<string> {
-  const { userId, pluginId, badge } = args;
+  const { userId, pluginId, badge, dedupeKey } = args;
 
   const meta = BADGE_TYPES[badge.type];
   if (!meta) {
@@ -51,6 +55,7 @@ export async function issueBadge(args: {
         issuedAt: new Date(),
         expiresAt: badge.expiresAt ?? null,
         pluginId,
+        dedupeKey: dedupeKey ?? null,
       },
     });
 

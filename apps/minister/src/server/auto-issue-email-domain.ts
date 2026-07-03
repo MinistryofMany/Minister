@@ -32,8 +32,11 @@ export async function autoIssueEmailDomainBadge(userId: string, email: string): 
   }
 
   try {
-    // Idempotency guard: match on the denormalized attribute so we don't
-    // re-mint on every subsequent sign-in with the same domain.
+    // Cheap idempotency pre-check on the denormalized attribute so the common
+    // already-issued path skips VC signing. The AUTHORITATIVE guard against a
+    // concurrent double-mint is the unique Badge.dedupeKey below: two
+    // near-simultaneous sign-ins can both pass this read, so the DB constraint
+    // is what actually prevents the duplicate.
     const existing = await prisma.badge.findFirst({
       where: { userId, type: BADGE_TYPE, attributes: { path: ["domain"], equals: domain } },
       select: { id: true },
@@ -44,10 +47,17 @@ export async function autoIssueEmailDomainBadge(userId: string, email: string): 
       userId,
       pluginId: PLUGIN_ID,
       badge: { type: BADGE_TYPE, attributes: { domain }, claims: { domain } },
+      dedupeKey: `${BADGE_TYPE}:${userId}:${domain}`,
     });
     await audit(userId, "badge.email_domain.auto_issued", { domain, badgeId });
   } catch (err) {
-    // Never let a badge-issuance failure surface as a failed sign-in.
+    // A unique-constraint violation means a concurrent sign-in already minted
+    // this exact badge — benign, not a failure: the race lost cleanly.
+    if (typeof err === "object" && err !== null && "code" in err && err.code === "P2002") {
+      await audit(userId, "badge.email_domain.auto_issue_skipped", { reason: "duplicate" });
+      return;
+    }
+    // Never let a genuine badge-issuance failure surface as a failed sign-in.
     await audit(userId, "badge.email_domain.auto_issue_failed", {
       domain,
       error: err instanceof Error ? err.message : "unknown",

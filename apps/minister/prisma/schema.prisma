@@ -209,6 +209,14 @@ model Badge {
   // be tuned without a migration.
   assuranceLevel String?
 
+  // Optional idempotency key for badges that must not double-mint under
+  // concurrent issuance (e.g. the email-domain badge auto-issued on sign-in,
+  // where two near-simultaneous logins would otherwise both pass a
+  // check-then-insert). The unique constraint makes the second insert fail
+  // (P2002) instead of minting a duplicate. NULL for ordinary badges, and
+  // Postgres treats each NULL as distinct, so unkeyed badges stay unconstrained.
+  dedupeKey String? @unique
+
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, type])

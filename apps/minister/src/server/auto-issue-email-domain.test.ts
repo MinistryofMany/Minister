@@ -38,6 +38,7 @@ describe("autoIssueEmailDomainBadge", () => {
         attributes: { domain: "acme.com" },
         claims: { domain: "acme.com" },
       },
+      dedupeKey: "email-domain:user_1:acme.com",
     });
     expect(mocks.audit).toHaveBeenCalledWith(USER, "badge.email_domain.auto_issued", {
       domain: "acme.com",
@@ -75,6 +76,21 @@ describe("autoIssueEmailDomainBadge", () => {
     await autoIssueEmailDomainBadge(USER, "no-domain");
     expect(mocks.issueBadge).not.toHaveBeenCalled();
     expect(mocks.audit).not.toHaveBeenCalled();
+  });
+
+  it("treats a concurrent duplicate (P2002 on dedupeKey) as benign, not a failure", async () => {
+    // A second near-simultaneous sign-in loses the unique-constraint race.
+    mocks.issueBadge.mockRejectedValue(Object.assign(new Error("unique"), { code: "P2002" }));
+    await expect(autoIssueEmailDomainBadge(USER, "dave@acme.com")).resolves.toBeUndefined();
+    expect(mocks.audit).toHaveBeenCalledWith(USER, "badge.email_domain.auto_issue_skipped", {
+      reason: "duplicate",
+    });
+    // Not audited as a failure.
+    expect(mocks.audit).not.toHaveBeenCalledWith(
+      USER,
+      "badge.email_domain.auto_issue_failed",
+      expect.anything(),
+    );
   });
 
   it("fails open: a mint failure is audited, not thrown", async () => {
