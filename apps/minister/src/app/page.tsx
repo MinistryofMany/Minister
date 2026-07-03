@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { SignInForm } from "@/components/sign-in-form";
+import { mailTransportConfigured } from "@/lib/mailer";
 import { getCurrentSession } from "@/lib/session";
 
 export default async function HomePage({
@@ -44,7 +45,10 @@ export default async function HomePage({
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <SignInForm />
+          {/* mailConfigured drives the "check your inbox" vs "check the
+              server logs" copy — the email is really delivered whenever a
+              transport is set (SMTP_URL or Resend). */}
+          <SignInForm mailConfigured={mailTransportConfigured()} />
         </CardContent>
       </Card>
     </div>

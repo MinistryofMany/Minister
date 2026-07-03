@@ -1,13 +1,11 @@
-import { BADGE_TYPES } from "@minister/shared";
 import type { IssuedBadge, PluginContext, WizardState } from "@minister/plugin-sdk";
-import { buildUserDid, issueVc } from "@minister/vc";
 
 import type { Prisma } from "@/generated/prisma";
 import { audit } from "@/lib/audit";
-import { getIssuer } from "@/lib/issuer";
 import { sendMail } from "@/lib/mailer";
 import { prisma } from "@/lib/prisma";
 import { getPlugin } from "@/plugins/registry";
+import { issueBadge } from "@/server/issue-badge";
 import { pendingTokenFor } from "@/server/wizard-helpers";
 
 const SESSION_TTL_MINUTES = 60;
@@ -213,90 +211,19 @@ async function issueBadgesAndComplete(args: {
   issued: IssuedBadge[];
 }): Promise<string[]> {
   const { sessionId, userId, pluginId, issued } = args;
-  const issuer = await getIssuer();
-  const subjectDid = buildUserDid(issuer.domain, userId);
 
   const createdIds: string[] = [];
-
   for (const badge of issued) {
-    const meta = BADGE_TYPES[badge.type];
-    if (!meta) {
-      throw new Error(`Plugin ${pluginId} produced an unknown badge type: ${badge.type}`);
-    }
-    const claims = meta.schema.parse(badge.claims);
-
-    // Issue the badge atomically: insert the row, sign the VC keyed on
-    // the new id (jti = badge.id), then write the JWT back — all in one
-    // interactive transaction, alongside the eligibility upserts and the
-    // issuance audit. issueVc is pure in-process Ed25519 signing (no
-    // network/IO), so wrapping it here is safe and guarantees a Badge row
-    // is never observable with an empty vcJwt: a signing failure rolls
-    // back the insert instead of leaving an empty credential behind.
-    const createdId = await prisma.$transaction(async (tx) => {
-      const created = await tx.badge.create({
-        data: {
-          userId,
-          type: badge.type,
-          attributes: badge.attributes as Prisma.InputJsonValue,
-          vcJwt: "",
-          issuer: issuer.did,
-          issuedAt: new Date(),
-          expiresAt: badge.expiresAt ?? null,
-          pluginId,
-        },
-      });
-
-      const vcJwt = await issueVc(
-        issuer,
-        badge.type,
-        subjectDid,
-        claims as Record<string, unknown>,
-        { jti: created.id, expiresIn: "1y" },
-      );
-
-      await tx.badge.update({
-        where: { id: created.id },
-        data: { vcJwt },
-      });
-
-      if (badge.eligibilities && badge.eligibilities.length > 0) {
-        for (const e of badge.eligibilities) {
-          await tx.eligibility.upsert({
-            where: {
-              userId_badgeType: { userId, badgeType: e.badgeType },
-            },
-            create: {
-              userId,
-              badgeType: e.badgeType,
-              eligibleAt: e.eligibleAt,
-              fuzzDays: e.fuzzDays,
-              source: pluginId,
-            },
-            update: {
-              eligibleAt: e.eligibleAt,
-              fuzzDays: e.fuzzDays,
-              source: pluginId,
-            },
-          });
-        }
+    // Shared mint path — see src/server/issue-badge.ts. Unknown badge types
+    // throw there; surface which plugin produced it.
+    try {
+      createdIds.push(await issueBadge({ userId, pluginId, badge }));
+    } catch (err) {
+      if (err instanceof Error && err.message.startsWith("Unknown badge type:")) {
+        throw new Error(`Plugin ${pluginId} produced an ${err.message.toLowerCase()}`);
       }
-
-      await tx.auditLog.create({
-        data: {
-          userId,
-          action: "badge.issued",
-          metadata: {
-            badgeId: created.id,
-            type: badge.type,
-            pluginId,
-          } as Prisma.InputJsonValue,
-        },
-      });
-
-      return created.id;
-    });
-
-    createdIds.push(createdId);
+      throw err;
+    }
   }
 
   await prisma.wizardSession.update({
