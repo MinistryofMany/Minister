@@ -4,6 +4,14 @@ import { z } from "zod";
 
 import type { Plugin, PluginContext, WizardState } from "@minister/plugin-sdk";
 
+import {
+  emailButton,
+  emailFinePrint,
+  emailLinkFallback,
+  emailText,
+  renderEmail,
+} from "@/lib/email-layout";
+
 const STEP_FORM = "collect-email";
 const STEP_MAGIC = "wait-magic-link";
 const TOKEN_BYTES = 32;
@@ -75,6 +83,19 @@ export const emailDomainPlugin: Plugin = {
             "",
             "If not, ignore this email — no badge will be issued.",
           ].join("\n"),
+          html: renderEmail({
+            title: "Verify your email for Minister",
+            heading: "Verify your email domain",
+            blocks: [
+              emailText(
+                `Someone (hopefully you) asked Minister to issue a badge proving control of an email address at ${domain}.`,
+              ),
+              emailText("If that's you, complete the proof:"),
+              emailButton("Verify this email", verifyUrl),
+              emailLinkFallback(verifyUrl),
+              emailFinePrint("If not, ignore this email — no badge will be issued."),
+            ],
+          }),
         });
 
         await ctx.audit.log("plugin.email_domain.verification_sent", {

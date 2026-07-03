@@ -4,6 +4,13 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
 import { audit } from "@/lib/audit";
+import {
+  emailButton,
+  emailFinePrint,
+  emailLinkFallback,
+  emailText,
+  renderEmail,
+} from "@/lib/email-layout";
 import { sendMail } from "@/lib/mailer";
 import { prisma } from "@/lib/prisma";
 import { requireSession } from "@/lib/session";
@@ -93,6 +100,22 @@ export async function createShareLink(
           requiresAccount ? " Opening it requires a Minister account." : ""
         }`,
       ].join("\n"),
+      html: renderEmail({
+        title: "Someone shared their Minister badges with you",
+        heading: "Someone shared badges with you",
+        blocks: [
+          emailText(
+            `You've been sent a Minister share link. It carries ${badgeIds.length} verifiable credential${badgeIds.length === 1 ? "" : "s"}.`,
+          ),
+          emailButton("View the badges", url),
+          emailLinkFallback(url),
+          emailFinePrint(
+            `Link is valid for ${ttlDays} day${ttlDays === 1 ? "" : "s"}; the sender can revoke it at any time.${
+              requiresAccount ? " Opening it requires a Minister account." : ""
+            }`,
+          ),
+        ],
+      }),
     });
   }
 

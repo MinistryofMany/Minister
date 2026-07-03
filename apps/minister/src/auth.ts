@@ -9,6 +9,15 @@ import type { Adapter, AdapterUser } from "next-auth/adapters";
 import { authConfig } from "@/auth.config";
 import { audit } from "@/lib/audit";
 import { createEmailUser, getUserByEmailIdentity, USER_SELECT } from "@/lib/email-signin-user";
+import {
+  emailButton,
+  emailCode,
+  emailFinePrint,
+  emailLinkFallback,
+  emailParagraph,
+  emailText,
+  renderEmail,
+} from "@/lib/email-layout";
 import { sendMail } from "@/lib/mailer";
 import { prisma } from "@/lib/prisma";
 import { clientIpFrom, signInOtpIdentityLimiter, signInOtpIpLimiter } from "@/lib/rate-limit";
@@ -55,14 +64,21 @@ const EmailProvider = (): EmailConfig => ({
         "The link and code both expire in 1 hour and each can be used once.",
         "If you didn't request this, you can ignore this email.",
       ].join("\n"),
-      html: [
-        `<p>Sign in to Minister one of two ways:</p>`,
-        `<p><strong>1)</strong> Click this link on this device:<br/>`,
-        `<a href="${url}">Sign in to Minister</a></p>`,
-        `<p><strong>2)</strong> Or enter this code where you started signing in:</p>`,
-        `<p style="font-size:22px;font-weight:600;letter-spacing:3px;font-family:monospace">${code}</p>`,
-        `<p style="color:#6b7280;font-size:12px">The link and code both expire in 1 hour and each can be used once. If you didn't request this, you can ignore this email.</p>`,
-      ].join(""),
+      html: renderEmail({
+        title: "Sign in to Minister",
+        heading: "Sign in to Minister",
+        blocks: [
+          emailText("Sign in one of two ways."),
+          emailParagraph("<strong>1.</strong> Click the button to sign in on this device:"),
+          emailButton("Sign in to Minister", url),
+          emailLinkFallback(url),
+          emailParagraph("<strong>2.</strong> Or enter this code where you started signing in:"),
+          emailCode(code),
+          emailFinePrint(
+            "The link and code both expire in 1 hour and each can be used once. If you didn't request this, you can ignore this email.",
+          ),
+        ],
+      }),
     });
   },
 });

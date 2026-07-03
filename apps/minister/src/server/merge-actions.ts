@@ -5,6 +5,15 @@ import { randomBytes } from "node:crypto";
 import { headers } from "next/headers";
 
 import { audit } from "@/lib/audit";
+import {
+  emailButton,
+  emailFinePrint,
+  emailInlineLink,
+  emailLinkFallback,
+  emailParagraph,
+  emailText,
+  renderEmail,
+} from "@/lib/email-layout";
 import { sendMail } from "@/lib/mailer";
 import { mergeAccounts } from "@/lib/merge";
 import { issueDonorProof, verifyDonorProof } from "@/lib/merge-proof";
@@ -155,12 +164,21 @@ export async function startMerge(donorEmail: string): Promise<StartMergeResult> 
       "",
       "If this wasn't you, ignore this email — nothing will be merged.",
     ].join("\n"),
-    html: [
-      `<p>Someone signed in to a Minister account is asking to <strong>merge this account into theirs</strong>.</p>`,
-      `<p>If that's you, confirm you control this account too:</p>`,
-      `<p><a href="${link}">Confirm and continue the merge</a></p>`,
-      `<p style="color:#6b7280;font-size:12px">After confirming, this account becomes part of the other one and can no longer be signed into on its own. If this wasn't you, ignore this email — nothing will be merged.</p>`,
-    ].join(""),
+    html: renderEmail({
+      title: "Confirm merging this account into another",
+      heading: "Confirm merging your account",
+      blocks: [
+        emailParagraph(
+          "Someone signed in to a Minister account is asking to <strong>merge this account into theirs</strong>.",
+        ),
+        emailText("If that's you, confirm you control this account too:"),
+        emailButton("Confirm and continue the merge", link),
+        emailLinkFallback(link),
+        emailFinePrint(
+          "After confirming, this account becomes part of the other one and can no longer be signed into on its own. If this wasn't you, ignore this email — nothing will be merged.",
+        ),
+      ],
+    }),
   });
 
   await audit(survivorUserId, "merge.link_requested", { delivered: true, donorUserId });
@@ -351,10 +369,16 @@ export async function confirmMerge(
     "/settings and review your account immediately — a merge can be reversed",
     "for a limited time.",
   ].join("\n");
-  const html = [
-    `<p>Two Minister accounts were merged into one.</p>`,
-    `<p>If you started this, no action is needed. If you didn't, go to <a href="/settings">/settings</a> and review your account immediately — a merge can be reversed for a limited time.</p>`,
-  ].join("");
+  const html = renderEmail({
+    title: subject,
+    heading: "Two accounts were merged",
+    blocks: [
+      emailText("Two Minister accounts were merged into one."),
+      emailParagraph(
+        `If you started this, no action is needed. If you didn't, go to ${emailInlineLink("/settings", "/settings")} and review your account immediately — a merge can be reversed for a limited time.`,
+      ),
+    ],
+  });
   for (const { email } of emails) {
     await sendMail({ to: email, subject, text, html });
   }

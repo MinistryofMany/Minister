@@ -6,6 +6,13 @@ import { signIn } from "@/auth";
 import { RECOVERY_ELIGIBLE_TYPES } from "@/lib/assurance";
 import { audit } from "@/lib/audit";
 import { notifyCredentialChange } from "@/lib/credential-notify";
+import {
+  emailButton,
+  emailFinePrint,
+  emailLinkFallback,
+  emailText,
+  renderEmail,
+} from "@/lib/email-layout";
 import { sendMail } from "@/lib/mailer";
 import { prisma } from "@/lib/prisma";
 import { clientIpFrom, createRateLimiter } from "@/lib/rate-limit";
@@ -234,6 +241,19 @@ export async function requestEmailDomainReProof(
       "",
       "If not, ignore this email — no recovery proof will be recorded.",
     ].join("\n"),
+    html: renderEmail({
+      title: "Confirm control of your email for account recovery",
+      heading: "Confirm your email for recovery",
+      blocks: [
+        emailText(
+          `Someone is recovering a Minister account by proving control of an email address at ${heldDomain}.`,
+        ),
+        emailText("If that's you, add this proof to the recovery:"),
+        emailButton("Confirm control", link),
+        emailLinkFallback(link),
+        emailFinePrint("If not, ignore this email — no recovery proof will be recorded."),
+      ],
+    }),
   });
 
   await audit(attempt.userId, "recovery.badge_threshold.reproof_sent", {

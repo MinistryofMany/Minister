@@ -1,4 +1,5 @@
 import { audit } from "@/lib/audit";
+import { emailInlineLink, emailParagraph, emailText, renderEmail } from "@/lib/email-layout";
 import { sendMail } from "@/lib/mailer";
 import { prisma } from "@/lib/prisma";
 
@@ -36,10 +37,16 @@ export async function notifyCredentialChange(userId: string, summary: string): P
     "",
     "If this wasn't you, go to /settings/credentials and revoke it.",
   ].join("\n");
-  const html = [
-    `<p>A credential changed on your Minister account: ${summary}.</p>`,
-    `<p>If this wasn't you, go to <a href="/settings/credentials">/settings/credentials</a> and revoke it.</p>`,
-  ].join("");
+  const html = renderEmail({
+    title: subject,
+    heading: "A credential changed on your account",
+    blocks: [
+      emailText(`A credential changed on your Minister account: ${summary}.`),
+      emailParagraph(
+        `If this wasn't you, go to ${emailInlineLink("/settings/credentials", "/settings/credentials")} and revoke it.`,
+      ),
+    ],
+  });
 
   // Send to every verified address. Run sequentially so a single transport
   // failure is surfaced deterministically (sendMail throws on a misconfigured

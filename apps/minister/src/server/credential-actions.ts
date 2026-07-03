@@ -7,6 +7,13 @@ import { SignJWT, jwtVerify } from "jose";
 import { CREDENTIAL_QUARANTINE_MS } from "@/lib/assurance";
 import { audit } from "@/lib/audit";
 import { notifyCredentialChange } from "@/lib/credential-notify";
+import {
+  emailButton,
+  emailFinePrint,
+  emailLinkFallback,
+  emailText,
+  renderEmail,
+} from "@/lib/email-layout";
 import { sendMail } from "@/lib/mailer";
 import { prisma } from "@/lib/prisma";
 import { getCurrentSession, requireAal, StepUpRequiredError } from "@/lib/session";
@@ -362,11 +369,18 @@ export async function addEmail(emailInput: string): Promise<{ id: string; email:
         "",
         "If you didn't request this, you can ignore this email. The link expires in 24 hours.",
       ].join("\n"),
-      html: [
-        `<p>Confirm this address to add it to your Minister account:</p>`,
-        `<p><a href="${url}">Verify this email</a></p>`,
-        `<p style="color:#6b7280;font-size:12px">If you didn't request this, you can ignore this email. The link expires in 24 hours.</p>`,
-      ].join(""),
+      html: renderEmail({
+        title: "Verify your email for Minister",
+        heading: "Confirm your email address",
+        blocks: [
+          emailText("Confirm this address to add it to your Minister account:"),
+          emailButton("Verify this email", url),
+          emailLinkFallback(url),
+          emailFinePrint(
+            "If you didn't request this, you can ignore this email. The link expires in 24 hours.",
+          ),
+        ],
+      }),
     });
   } catch (err) {
     await prisma.userEmail.delete({ where: { id: row.id } }).catch(() => {
