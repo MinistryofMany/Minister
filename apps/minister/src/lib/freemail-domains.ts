@@ -25,6 +25,10 @@ export const FREEMAIL_DOMAINS: ReadonlySet<string> = new Set([
   // Yahoo
   "yahoo.com",
   "ymail.com",
+  "yahoo.co.uk",
+  "yahoo.ca",
+  "yahoo.fr",
+  "yahoo.de",
   // Proton
   "proton.me",
   "protonmail.com",
@@ -34,6 +38,25 @@ export const FREEMAIL_DOMAINS: ReadonlySet<string> = new Set([
   // GMX
   "gmx.com",
   "gmx.net",
+  "gmx.de",
+  "gmx.at",
+  // German / European consumer providers
+  "web.de",
+  "seznam.cz",
+  "libero.it",
+  "laposte.net",
+  // French consumer providers
+  "orange.fr",
+  "free.fr",
+  // Chinese consumer providers
+  "qq.com",
+  "163.com",
+  "126.com",
+  "sina.com",
+  // Russian consumer providers
+  "mail.ru",
+  "bk.ru",
+  "inbox.ru",
   // Others
   "mail.com",
   "zoho.com",
