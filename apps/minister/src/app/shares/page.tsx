@@ -7,15 +7,16 @@ import { ShareLinkRevokeButton } from "@/components/share-link-revoke";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { loadUserBadges } from "@/lib/badges";
 import { getCurrentSession } from "@/lib/session";
-import { loadUserShareLinks } from "@/lib/share-links";
+import { loadIncomingShareLinks, loadUserShareLinks } from "@/lib/share-links";
 
 export default async function SharesPage() {
   const session = await getCurrentSession();
   if (!session?.user) redirect("/");
 
-  const [badges, shareLinks] = await Promise.all([
+  const [badges, shareLinks, incoming] = await Promise.all([
     loadUserBadges(session.user.id),
     loadUserShareLinks(session.user.id),
+    loadIncomingShareLinks(session.user.id),
   ]);
 
   const h = await headers();
@@ -79,6 +80,48 @@ export default async function SharesPage() {
                   {link.status === "active" ? (
                     <ShareLinkRevokeButton shareLinkId={link.id} />
                   ) : null}
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </section>
+
+      <section className="space-y-3">
+        <h2 className="text-lg font-semibold">
+          Shared with you{" "}
+          <span className="text-sm font-normal text-neutral-500">({incoming.length})</span>
+        </h2>
+
+        {incoming.length === 0 ? (
+          <p className="text-sm text-neutral-600 dark:text-neutral-400">
+            Links other people have shared with you show up here once you open them.
+          </p>
+        ) : (
+          <ul className="flex flex-col gap-2">
+            {incoming.map((link) => {
+              const url = `${origin}/share/${link.token}`;
+              return (
+                <li
+                  key={link.token}
+                  className="flex items-center gap-3 rounded-lg border border-neutral-200 bg-white p-3 dark:border-neutral-800 dark:bg-neutral-950"
+                >
+                  <StatusBadge status={link.status} />
+                  <div className="min-w-0 flex-1">
+                    <Link
+                      href={`/share/${link.token}`}
+                      className="block truncate font-mono text-xs underline-offset-2 hover:underline"
+                    >
+                      {url}
+                    </Link>
+                    <div className="mt-0.5 text-xs text-neutral-500">
+                      {link.badgeCount} badge
+                      {link.badgeCount === 1 ? "" : "s"} · expires{" "}
+                      {link.expiresAt.toLocaleDateString()} · opened{" "}
+                      {link.lastViewedAt.toLocaleDateString()}
+                      {link.requiresAccount ? " · account-gated" : ""}
+                    </div>
+                  </div>
                 </li>
               );
             })}

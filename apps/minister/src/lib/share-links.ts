@@ -201,3 +201,73 @@ export async function loadUserShareLinks(userId: string): Promise<ShareLinkSumma
     status: r.revokedAt ? "revoked" : r.expiresAt < now ? "expired" : "active",
   }));
 }
+
+// "Shared with you" — links the viewer received from someone else.
+export interface IncomingShareLinkSummary {
+  token: string;
+  badgeCount: number;
+  requiresAccount: boolean;
+  expiresAt: Date;
+  lastViewedAt: Date;
+  status: "active" | "expired" | "revoked";
+}
+
+// Links this user has legitimately opened, authored by someone else.
+//
+// AUTHZ: the ONLY key is a `ShareLinkView` row whose `viewerUserId` is this
+// user. That row is written exclusively by the `/share/[token]` route, and
+// only AFTER it has passed the very gate that governs viewing: the caller
+// possessed the ≥128-bit bearer token, the link was neither revoked nor
+// expired, and — for `requiresAccount` links — the caller was signed in (the
+// row then records THAT signed-in user's id). So a `viewerUserId == me` row
+// can exist only if I already viewed the link under the exact rule
+// `/share/[token]` enforces. Deriving this list from my own recorded views is
+// therefore a strict consequence of that gate, never looser — it cannot
+// surface a link I was never given, and a different user (no matching view
+// row) can never see it. We also exclude links I own; those are the outgoing
+// list. Owner identity is deliberately NOT returned — the per-link pairwise
+// subjects keep viewers from correlating a holder across links, and this list
+// must not undo that.
+export async function loadIncomingShareLinks(userId: string): Promise<IncomingShareLinkSummary[]> {
+  const rows = await prisma.shareLink.findMany({
+    where: {
+      userId: { not: userId },
+      views: { some: { viewerUserId: userId } },
+    },
+    orderBy: { createdAt: "desc" },
+    select: {
+      token: true,
+      badgeIds: true,
+      requiresAccount: true,
+      expiresAt: true,
+      revokedAt: true,
+      views: {
+        where: { viewerUserId: userId },
+        orderBy: { viewedAt: "desc" },
+        take: 1,
+        select: { viewedAt: true },
+      },
+    },
+  });
+  const now = new Date();
+  return rows.flatMap((r) => {
+    // The `some` filter guarantees a matching view; the guard just satisfies
+    // the compiler (noUncheckedIndexedAccess) and drops any impossible row.
+    const lastViewedAt = r.views[0]?.viewedAt;
+    if (!lastViewedAt) return [];
+    return [
+      {
+        token: r.token,
+        badgeCount: r.badgeIds.length,
+        requiresAccount: r.requiresAccount,
+        expiresAt: r.expiresAt,
+        lastViewedAt,
+        status: (r.revokedAt
+          ? "revoked"
+          : r.expiresAt < now
+            ? "expired"
+            : "active") as IncomingShareLinkSummary["status"],
+      },
+    ];
+  });
+}
