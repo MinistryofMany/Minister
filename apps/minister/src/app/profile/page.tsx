@@ -1,24 +1,51 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { Plus } from "lucide-react";
+import { KeyRound, Plus } from "lucide-react";
 
 import { BadgeGrid } from "@/components/badge-grid";
 import { RegisterPasskeyButton } from "@/components/register-passkey-button";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { loadUserBadges } from "@/lib/badges";
+import { prisma } from "@/lib/prisma";
 import { getCurrentSession } from "@/lib/session";
 
 export default async function ProfilePage() {
   const session = await getCurrentSession();
   if (!session?.user) redirect("/");
 
-  const badges = await loadUserBadges(session.user.id);
+  const [badges, passkeyCount] = await Promise.all([
+    loadUserBadges(session.user.id),
+    // Passkeys are the Auth.js Authenticator rows. Zero means the account
+    // only has the magic-link fallback, so we surface the add-a-passkey CTA;
+    // once the user has at least one, the banner disappears.
+    prisma.authenticator.count({ where: { userId: session.user.id } }),
+  ]);
   const name = session.user.name ?? session.user.email ?? "Anonymous user";
   const hasPublic = badges.some((b) => b.isPublic);
 
   return (
     <div className="mx-auto flex max-w-2xl flex-col gap-6 px-4 py-12">
+      {passkeyCount === 0 ? (
+        <div
+          role="region"
+          aria-label="Add a passkey"
+          className="flex flex-col gap-3 rounded-lg border border-amber-300 bg-amber-50 p-4 text-amber-900 sm:flex-row sm:items-center sm:justify-between dark:border-amber-900/50 dark:bg-amber-900/20 dark:text-amber-200"
+        >
+          <div className="flex items-start gap-3">
+            <KeyRound className="mt-0.5 h-5 w-5 shrink-0" aria-hidden />
+            <div className="space-y-0.5">
+              <p className="text-sm font-semibold">Add a passkey</p>
+              <p className="text-sm text-amber-800 dark:text-amber-300/90">
+                Your account has no passkey yet. Add one for faster, phishing-resistant sign-in
+                instead of waiting on a magic-link email.
+              </p>
+            </div>
+          </div>
+          <RegisterPasskeyButton className="shrink-0" />
+        </div>
+      ) : null}
+
       <header className="space-y-1">
         <h1 className="text-2xl font-semibold tracking-tight">Profile</h1>
         <p className="text-sm text-neutral-600 dark:text-neutral-400">
@@ -59,11 +86,10 @@ export default async function ProfilePage() {
               Pick a plugin and walk through its wizard to claim your first badge.
             </CardDescription>
           </CardHeader>
-          <CardContent className="flex gap-2">
+          <CardContent>
             <Button asChild>
               <Link href="/badges/new">Add a badge</Link>
             </Button>
-            <RegisterPasskeyButton />
           </CardContent>
         </Card>
       ) : (
