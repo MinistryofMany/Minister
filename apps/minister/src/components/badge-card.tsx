@@ -8,6 +8,7 @@ import {
   MapPin,
   ShieldCheck,
   Ticket,
+  Users,
 } from "lucide-react";
 
 import type { BadgeIconKey } from "@minister/shared";
@@ -31,6 +32,7 @@ const ICONS: Record<string, LucideIcon> = {
   "map-pin": MapPin,
   "shield-check": ShieldCheck,
   ticket: Ticket,
+  users: Users,
 } satisfies Record<BadgeIconKey, LucideIcon>;
 
 interface BadgeCardProps {

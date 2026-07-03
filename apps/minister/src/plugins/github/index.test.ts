@@ -125,6 +125,55 @@ describe("githubPlugin.handleStep — code exchange + /user fetch", () => {
     expect((userInit?.headers as Record<string, string>).Authorization).toBe("Bearer gho_test");
   });
 
+  it("derives account-age, two-factor, and social-following from a full /user response", async () => {
+    // created_at ~11 years before now, 2FA on, 1500 followers.
+    fetchSpy.mockResolvedValueOnce(mockOk({ access_token: "gho_test" })).mockResolvedValueOnce(
+      mockOk({
+        id: 7,
+        login: "power",
+        created_at: "2015-01-01T00:00:00Z",
+        two_factor_authentication: true,
+        followers: 1500,
+      }),
+    );
+
+    const result = await githubPlugin.handleStep(authState(), { code: "GH_CODE" }, ctx());
+    expect(result.kind).toBe("complete");
+    if (result.kind !== "complete") throw new Error("kind");
+
+    const byType = new Map(result.badges.map((b) => [b.type, b] as const));
+    expect(byType.get("oauth-account")?.claims).toEqual({
+      provider: "github",
+      accountId: "7",
+      handle: "power",
+    });
+    // Coarse threshold only — the raw created_at never becomes a claim.
+    expect(byType.get("account-age")?.claims).toEqual({
+      provider: "github",
+      olderThanMonths: 60,
+    });
+    expect(byType.get("two-factor")?.claims).toEqual({ provider: "github" });
+    expect(byType.get("social-following")?.claims).toEqual({
+      provider: "github",
+      followersAtLeast: 1000,
+    });
+  });
+
+  it("issues only oauth-account when the derived signals are absent/low", async () => {
+    fetchSpy.mockResolvedValueOnce(mockOk({ access_token: "gho_test" })).mockResolvedValueOnce(
+      mockOk({
+        id: 8,
+        login: "fresh",
+        created_at: "2026-06-01T00:00:00Z",
+        two_factor_authentication: false,
+        followers: 2,
+      }),
+    );
+    const result = await githubPlugin.handleStep(authState(), { code: "X" }, ctx());
+    if (result.kind !== "complete") throw new Error("kind");
+    expect(result.badges.map((b) => b.type)).toEqual(["oauth-account"]);
+  });
+
   it("propagates a github-side error from the token endpoint", async () => {
     fetchSpy.mockResolvedValueOnce(
       mockOk({

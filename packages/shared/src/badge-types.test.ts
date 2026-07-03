@@ -6,6 +6,11 @@ import {
   EmailDomainClaims,
   EmailExactClaims,
   OAuthAccountClaims,
+  AccountAgeClaims,
+  TwoFactorClaims,
+  SocialFollowingClaims,
+  ACCOUNT_AGE_MONTHS,
+  FOLLOWERS_BUCKETS,
   ResidencyCityClaims,
   ResidencyCountryClaims,
   ResidencyStateClaims,
@@ -20,6 +25,9 @@ describe("registry shape", () => {
       "email-domain",
       "email-exact",
       "oauth-account",
+      "account-age",
+      "two-factor",
+      "social-following",
       "residency-country",
       "residency-state",
       "residency-city",
@@ -109,6 +117,50 @@ describe("OAuthAccountClaims schema", () => {
 
   it("rejects unknown providers", () => {
     expect(() => OAuthAccountClaims.parse({ provider: "myspace", accountId: "x" })).toThrow();
+  });
+});
+
+describe("AccountAgeClaims schema (github-derived)", () => {
+  it("accepts each declared month threshold", () => {
+    for (const m of ACCOUNT_AGE_MONTHS) {
+      expect(AccountAgeClaims.parse({ provider: "github", olderThanMonths: m })).toEqual({
+        provider: "github",
+        olderThanMonths: m,
+      });
+    }
+  });
+  it("rejects an off-grid month value (raw age must never leak)", () => {
+    expect(() => AccountAgeClaims.parse({ provider: "github", olderThanMonths: 30 })).toThrow();
+  });
+  it("rejects unknown keys (no raw created_at smuggled into a VC)", () => {
+    expect(() =>
+      AccountAgeClaims.parse({ provider: "github", olderThanMonths: 12, createdAt: "2020" }),
+    ).toThrow();
+  });
+});
+
+describe("TwoFactorClaims schema (github-derived)", () => {
+  it("accepts a bare provider", () => {
+    expect(TwoFactorClaims.parse({ provider: "github" })).toEqual({ provider: "github" });
+  });
+  it("rejects any extra field", () => {
+    expect(() => TwoFactorClaims.parse({ provider: "github", enabled: true })).toThrow();
+  });
+});
+
+describe("SocialFollowingClaims schema (github-derived)", () => {
+  it("accepts each declared follower bucket", () => {
+    for (const n of FOLLOWERS_BUCKETS) {
+      expect(SocialFollowingClaims.parse({ provider: "github", followersAtLeast: n })).toEqual({
+        provider: "github",
+        followersAtLeast: n,
+      });
+    }
+  });
+  it("rejects an off-grid count (exact count must never leak)", () => {
+    expect(() =>
+      SocialFollowingClaims.parse({ provider: "github", followersAtLeast: 742 }),
+    ).toThrow();
   });
 });
 

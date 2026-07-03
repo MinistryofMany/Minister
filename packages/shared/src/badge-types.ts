@@ -14,7 +14,7 @@ import { z } from "zod";
 // exhaustiveness: adding a badge type with an unmapped icon fails the
 // typecheck instead of silently degrading to a fallback glyph.
 export type BadgeIconKey =
-  "at-sign" | "cake" | "globe" | "link" | "mail" | "map-pin" | "shield-check" | "ticket";
+  "at-sign" | "cake" | "globe" | "link" | "mail" | "map-pin" | "shield-check" | "ticket" | "users";
 
 export interface BadgeTypeMeta<TClaims = unknown> {
   type: string;
@@ -51,6 +51,58 @@ export const OAuthAccountClaims = z.object({
   handle: z.string().min(1).optional(),
 });
 export type OAuthAccountClaims = z.infer<typeof OAuthAccountClaims>;
+
+// ---------------------------------------------------------------------------
+// GitHub-derived (provider-generic) badge types
+//
+// These attest facts about a connected OAuth account without leaking the
+// underlying PII. The provider is one of OAUTH_PROVIDERS; today only the
+// github plugin issues them, but the claim shapes stay provider-generic so
+// a future Google/Discord plugin can reuse them.
+// ---------------------------------------------------------------------------
+
+// Account age — a COARSE "older than N months" threshold, never the exact
+// creation date. The plugin picks the highest bucket the account satisfies,
+// so disclosing this reveals only a lower bound. Anti-sybil: a fresh account
+// can't fake a multi-year lower bound.
+export const ACCOUNT_AGE_MONTHS = [12, 24, 36, 60] as const;
+export type AccountAgeMonths = (typeof ACCOUNT_AGE_MONTHS)[number];
+export const AccountAgeClaims = z
+  .object({
+    provider: z.enum(OAUTH_PROVIDERS),
+    olderThanMonths: z.union([z.literal(12), z.literal(24), z.literal(36), z.literal(60)]),
+  })
+  .strict();
+export type AccountAgeClaims = z.infer<typeof AccountAgeClaims>;
+
+// Two-factor enabled — a bare presence badge. Its existence *is* the claim
+// ("this provider account has 2FA on"); there is no value to disclose beyond
+// the provider, so the schema is strict with a single field.
+export const TwoFactorClaims = z
+  .object({
+    provider: z.enum(OAUTH_PROVIDERS),
+  })
+  .strict();
+export type TwoFactorClaims = z.infer<typeof TwoFactorClaims>;
+
+// Social following — a COARSE "at least N followers" bucket, never the exact
+// count. Followers are a stronger anti-sybil / reputation signal than repo
+// count (they need social proof, not just `git init`). Highest bucket wins.
+export const FOLLOWERS_BUCKETS = [10, 50, 100, 500, 1000] as const;
+export type FollowersBucket = (typeof FOLLOWERS_BUCKETS)[number];
+export const SocialFollowingClaims = z
+  .object({
+    provider: z.enum(OAUTH_PROVIDERS),
+    followersAtLeast: z.union([
+      z.literal(10),
+      z.literal(50),
+      z.literal(100),
+      z.literal(500),
+      z.literal(1000),
+    ]),
+  })
+  .strict();
+export type SocialFollowingClaims = z.infer<typeof SocialFollowingClaims>;
 
 export const AGE_THRESHOLDS = [16, 18, 21, 25, 30, 35, 40, 45, 55, 65] as const;
 export type AgeThreshold = (typeof AGE_THRESHOLDS)[number];
@@ -134,6 +186,27 @@ export const BADGE_TYPES: Record<string, BadgeTypeMeta> = {
     description: "Holder controls a third-party account (GitHub, Google, etc).",
     iconKey: "link",
     schema: OAuthAccountClaims,
+  },
+  "account-age": {
+    type: "account-age",
+    label: "Account age",
+    description: "Holder's connected account is at least the stated number of months old.",
+    iconKey: "cake",
+    schema: AccountAgeClaims,
+  },
+  "two-factor": {
+    type: "two-factor",
+    label: "Two-factor enabled",
+    description: "Holder's connected account has two-factor authentication enabled.",
+    iconKey: "shield-check",
+    schema: TwoFactorClaims,
+  },
+  "social-following": {
+    type: "social-following",
+    label: "Following",
+    description: "Holder's connected account has at least the stated number of followers.",
+    iconKey: "users",
+    schema: SocialFollowingClaims,
   },
   "residency-country": {
     type: "residency-country",

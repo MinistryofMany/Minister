@@ -92,6 +92,21 @@ export function summarizeAttributes(type: string, attributes: Record<string, unk
       const h = typeof attributes.handle === "string" ? attributes.handle : "";
       return h ? `${p} · @${h}` : p;
     }
+    case "account-age": {
+      const p = typeof attributes.provider === "string" ? attributes.provider : "";
+      const m = typeof attributes.olderThanMonths === "number" ? attributes.olderThanMonths : 0;
+      const years = m % 12 === 0 ? `${m / 12}y` : `${m}mo`;
+      return p ? `${p} · ${years}+` : `${years}+`;
+    }
+    case "two-factor": {
+      const p = typeof attributes.provider === "string" ? attributes.provider : "";
+      return p ? `${p} · 2FA` : "2FA";
+    }
+    case "social-following": {
+      const p = typeof attributes.provider === "string" ? attributes.provider : "";
+      const n = typeof attributes.followersAtLeast === "number" ? attributes.followersAtLeast : 0;
+      return p ? `${p} · ${n}+ followers` : `${n}+ followers`;
+    }
     case "residency-country":
       return typeof attributes.country === "string" ? attributes.country : "";
     case "residency-state":

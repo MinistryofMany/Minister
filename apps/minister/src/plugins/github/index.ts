@@ -4,6 +4,8 @@ import { z } from "zod";
 
 import type { Plugin } from "@minister/plugin-sdk";
 
+import { buildGithubBadges } from "./derive";
+
 const STEP_AUTHORIZE = "github-authorize";
 
 const GITHUB_AUTHORIZE_URL = "https://github.com/login/oauth/authorize";
@@ -22,6 +24,12 @@ const CallbackInput = z.object({
 const GithubUser = z.object({
   id: z.number().int(),
   login: z.string().min(1),
+  // Extra facts drive the derived badges (account-age, 2fa, following). All
+  // optional: a partial /user response still yields the oauth-account badge.
+  // We read these but never persist the raw values — only coarse thresholds.
+  created_at: z.string().min(1).optional(),
+  two_factor_authentication: z.boolean().optional(),
+  followers: z.number().int().nonnegative().optional(),
   // Avatar/name are nice-to-haves; not part of the badge claims.
 });
 
@@ -41,8 +49,10 @@ export const githubPlugin: Plugin = {
     id: "github",
     name: "GitHub",
     description:
-      "Prove you control a GitHub account. Issues an `oauth-account` badge with the GitHub user id and handle, signed by Minister.",
-    badgeTypes: ["oauth-account"],
+      "Prove you control a GitHub account. Issues an `oauth-account` badge plus " +
+      "coarse, privacy-preserving anti-sybil badges the account supports: " +
+      "account age, two-factor-enabled, and a follower-count tier.",
+    badgeTypes: ["oauth-account", "account-age", "two-factor", "social-following"],
     requiresExtension: false,
     iconKey: "link",
   },
@@ -187,20 +197,28 @@ export const githubPlugin: Plugin = {
         message: "GitHub returned an unexpected user shape",
       };
     }
-    const { id, login } = userParse.data;
-    const accountId = String(id);
+    const ghUser = userParse.data;
+    const accountId = String(ghUser.id);
 
-    await ctx.audit.log("plugin.github.verified", { accountId, handle: login });
+    const badges = buildGithubBadges(
+      {
+        id: ghUser.id,
+        login: ghUser.login,
+        createdAt: ghUser.created_at,
+        twoFactor: ghUser.two_factor_authentication,
+        followers: ghUser.followers,
+      },
+      new Date(),
+    );
 
-    return {
-      kind: "complete",
-      badges: [
-        {
-          type: "oauth-account",
-          attributes: { provider: "github", accountId, handle: login },
-          claims: { provider: "github", accountId, handle: login },
-        },
-      ],
-    };
+    // Audit the derived badge TYPES only — never the raw counts/date, per the
+    // no-PII rule. accountId + handle are already the oauth-account claim.
+    await ctx.audit.log("plugin.github.verified", {
+      accountId,
+      handle: ghUser.login,
+      issuedTypes: badges.map((b) => b.type),
+    });
+
+    return { kind: "complete", badges };
   },
 };
