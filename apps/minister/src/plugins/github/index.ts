@@ -47,6 +47,13 @@ export const githubPlugin: Plugin = {
     iconKey: "link",
   },
 
+  // GitHub OAuth is optional at deploy time. Without both credentials the
+  // whole flow is dead, so the host hides the entry instead of surfacing a
+  // wizard that would throw on the first step.
+  isConfigured() {
+    return readClientCreds() !== null;
+  },
+
   async startWizard(ctx) {
     const creds = readClientCreds();
     if (!creds) {

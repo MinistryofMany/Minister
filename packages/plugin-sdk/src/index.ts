@@ -160,4 +160,11 @@ export interface Plugin {
   manifest: PluginManifest;
   startWizard(ctx: PluginContext): Promise<WizardState>;
   handleStep(state: WizardState, input: unknown, ctx: PluginContext): Promise<HandleStepResult>;
+  // Optional readiness probe. A plugin that depends on deployment-time
+  // configuration (e.g. OAuth client credentials) reports whether that
+  // configuration is present. When it returns false the host hides the
+  // plugin from the add-a-badge menu and refuses to start its wizard,
+  // rather than letting `startWizard` throw an unhandled error at the user.
+  // Absent ⇒ always available.
+  isConfigured?(): boolean;
 }

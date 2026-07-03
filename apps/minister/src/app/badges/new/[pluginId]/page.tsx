@@ -3,7 +3,7 @@ import { notFound, redirect } from "next/navigation";
 
 import { WizardClient } from "@/components/wizard-client";
 import { getCurrentSession } from "@/lib/session";
-import { getPlugin } from "@/plugins/registry";
+import { getPlugin, isPluginConfigured } from "@/plugins/registry";
 import { loadWizard, startWizard } from "@/server/wizard";
 
 interface PageProps {
@@ -21,6 +21,11 @@ export default async function PluginWizardPage({ params, searchParams }: PagePro
 
   const plugin = getPlugin(pluginId);
   if (!plugin) notFound();
+
+  // Defense in depth against a direct URL to an unconfigured plugin: the menu
+  // already hides it, but hitting /badges/new/github with no OAuth creds would
+  // otherwise reach startWizard and throw an unhandled "Application error".
+  if (!isPluginConfigured(plugin)) notFound();
 
   // First visit: start a fresh wizard session, redirect with wsid so a
   // page refresh keeps the same session.

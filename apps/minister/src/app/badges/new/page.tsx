@@ -3,13 +3,16 @@ import { redirect } from "next/navigation";
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { getCurrentSession } from "@/lib/session";
-import { listPlugins } from "@/plugins/registry";
+import { listAvailablePlugins } from "@/plugins/registry";
 
 export default async function BadgePluginsList() {
   const session = await getCurrentSession();
   if (!session?.user) redirect("/");
 
-  const plugins = listPlugins();
+  // Only offer plugins that are actually usable — an unconfigured OAuth
+  // provider (missing client creds) is filtered out rather than shown as an
+  // entry that would blow up the moment the user clicks it.
+  const plugins = listAvailablePlugins();
 
   return (
     <div className="mx-auto flex max-w-2xl flex-col gap-6 px-4 py-12">
