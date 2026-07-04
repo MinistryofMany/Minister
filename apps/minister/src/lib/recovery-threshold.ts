@@ -38,11 +38,14 @@ import { issueRecoveryTicket } from "@/lib/recovery-ticket";
 //
 //   3. Confirmed the proven real-world account is one the TARGET user actually
 //      holds a badge for (e.g. the GitHub account id on the fresh OAuth token
-//      matches the `accountId` attribute of a held oauth-account badge). This
-//      engine re-checks badge HOLDING (a non-public badge of `badgeType`
-//      exists for the user) but it cannot check that the freshly proven
-//      identity matches the badge's specific account — only the plugin step
-//      that saw both the live proof and the badge attributes can.
+//      resolves — via deriveDedupValue → the nullifier ledger — to the entry
+//      behind a held oauth-account badge's `nullifierRef`, owner-checked; the
+//      raw `accountId` attribute no longer exists post crypto-core Phase 1, and
+//      the renameable `handle` must NOT be used as the match key). This engine
+//      re-checks badge HOLDING (a non-public badge of `badgeType` exists for the
+//      user) but it cannot check that the freshly proven identity matches the
+//      badge's specific account — only the plugin step that saw both the live
+//      proof and the badge's nullifier binding can.
 //
 // Given those three caller obligations, recordReProof enforces the accounting
 // invariants: attempt liveness, eligibility, non-public badge holding, the
