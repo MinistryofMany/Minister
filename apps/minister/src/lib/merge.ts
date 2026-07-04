@@ -170,6 +170,29 @@ export async function mergeAccounts(
       throw new Error(`Donor account ${donorUserId} is already merged (tombstoned)`);
     }
 
+    // Finding 7 — donor-sub precompute drift. `donorSubByClient` was resolved
+    // BEFORE the transaction (§2.6: no PRF/nullifier network call inside an open
+    // tx). A donor token minted for a NEW clientId in that gap would be
+    // re-pointed to the survivor below with NO SubjectOverride / stranded record
+    // and no precomputed sub — the survivor would silently present an
+    // un-preserved sub to that RP. Re-read the donor's distinct token clients
+    // inside the tx and abort on ANY drift; the merge is safe to retry.
+    const donorTokenClientsInTx = await tx.oidcAccessToken.findMany({
+      where: { userId: donorUserId },
+      select: { clientId: true },
+      distinct: ["clientId"],
+    });
+    const precomputedClientIds = new Set(donorTokenClients.map((r) => r.clientId));
+    const currentClientIds = donorTokenClientsInTx.map((r) => r.clientId);
+    if (
+      currentClientIds.length !== precomputedClientIds.size ||
+      currentClientIds.some((c) => !precomputedClientIds.has(c))
+    ) {
+      throw new Error(
+        "merge: donor OIDC token clients changed between sub precompute and transaction — aborting (safe to retry)",
+      );
+    }
+
     // -----------------------------------------------------------------------
     // (b-pre) Capture the subject-override seam inputs BEFORE re-pointing the
     // OidcAccessToken rows — re-pointing fuses the donor's and survivor's token

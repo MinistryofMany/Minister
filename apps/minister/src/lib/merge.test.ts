@@ -321,6 +321,24 @@ describe("mergeAccounts", () => {
     expect(at(h.tables.authenticator, 0).userId).toBe(SURVIVOR);
   });
 
+  it("aborts when a donor token client appears between the sub precompute and the tx (Finding 7)", async () => {
+    seedUsers();
+    // A donor token exists in the store, but the PRE-transaction precompute of
+    // donor subs misses it — modelling a token minted for a new clientId in the
+    // gap between the §2.6 precompute and the transaction. Re-pointing it with no
+    // SubjectOverride would silently drift the survivor's sub at that RP.
+    h.tables.oidcAccessToken.push({ jti: "t_gap", userId: DONOR, clientId: "mc_gap_client" });
+    const oatFindMany = (h.prisma.oidcAccessToken as { findMany: ReturnType<typeof vi.fn> })
+      .findMany;
+    oatFindMany.mockImplementationOnce(async () => []); // precompute sees nothing
+
+    await expect(mergeAccounts(SURVIVOR, DONOR)).rejects.toThrow(/token clients changed/);
+
+    // Aborted BEFORE tombstoning — the donor is untouched, the merge is safe to
+    // retry (the retry's precompute will see the now-visible token).
+    expect(user(DONOR).mergedIntoUserId).toBeNull();
+  });
+
   it("re-points OidcClient.ownerUserId and the donor's UserEmail rows", async () => {
     seedUsers();
     h.tables.oidcClient.push({ id: "oc1", ownerUserId: DONOR, clientId: "c-app" });
