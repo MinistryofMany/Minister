@@ -102,11 +102,21 @@ export const interimBackend: NullifierService = {
     //     NOT EXISTS sees the badge → the DELETE no-ops, the entry survives;
     //   * release commits BEFORE the badge INSERT commits → the entry is gone
     //     when the mint-side re-validation probes it → self-heal re-registers.
-    // Known theoretical residual: a DELETE whose snapshot predates the badge
-    // commit but whose own commit lands after the mint probe (the statement
-    // in flight across both) — a sub-statement window, microseconds, with no
-    // client round trips inside it; accepted for the interim backend and
-    // flagged for the Phase 3 split (build plan Phase 3).
+    // Known residual: a DELETE whose statement-start snapshot predates the
+    // badge commit (so NOT EXISTS is true and it deletes the entry) but whose
+    // own commit lands after the mint probe already read the entry as present.
+    // The window runs through the DELETE's COMMIT — executor time PLUS the WAL
+    // fsync, i.e. milliseconds under synchronous_commit=on, NOT microseconds —
+    // and it is attacker-stretchable: Badge.nullifierRef being unindexed makes
+    // the NOT EXISTS a Badge seq-scan that widens the window as the table
+    // grows, and the attacker drives both racing requests (its own delete +
+    // re-issue) and can loop them. Accepted for the interim backend ONLY
+    // because users == 0 is an ENFORCED deploy gate (scripts/count-users.ts);
+    // admitting real users on the interim backend BEFORE the Phase 3 split
+    // would make serialization mandatory then — a
+    // pg_advisory_xact_lock(hashtext(entryRef)) taken by BOTH the mint (for
+    // anchor-bearing badges) and this release, or an FK ON DELETE RESTRICT.
+    // Flagged for the Phase 3 split (build plan Phase 3).
     //
     // Cross-table NOT EXISTS instead of an FK RESTRICT: Badge.nullifierRef is
     // deliberately un-FK'd (the ledger moves into Signet in Phase 3 — see the

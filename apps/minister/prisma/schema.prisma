@@ -238,6 +238,9 @@ model Badge {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, type])
+  // Speeds the dedup-release NOT EXISTS sibling check and collectUserNullifierRefs,
+  // and narrows the interim release residual window (see lib/nullifier/interim.ts).
+  @@index([nullifierRef])
 }
 
 model Eligibility {
