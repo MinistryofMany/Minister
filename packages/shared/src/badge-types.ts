@@ -16,6 +16,16 @@ import { z } from "zod";
 export type BadgeIconKey =
   "at-sign" | "cake" | "globe" | "link" | "mail" | "map-pin" | "shield-check" | "ticket" | "users";
 
+// How much Sybil resistance a badge of this type provides — the HONEST claim is
+// "one credential", never "one person". Informational (surfaced in docs +
+// consent copy), NOT policy-enforced; RPs weight it themselves.
+//   none     = no dedup nullifier is wired for this type; it claims none.
+//   weak     = anchored to a cheap-to-farm credential (catch-all email domains,
+//              throwaway github accounts).
+//   moderate = anchored to a costlier-to-farm signal (an aged account, a
+//              followed account).
+export type SybilResistance = "none" | "weak" | "moderate";
+
 export interface BadgeTypeMeta<TClaims = unknown> {
   type: string;
   label: string;
@@ -24,6 +34,8 @@ export interface BadgeTypeMeta<TClaims = unknown> {
   // Zod schema for the credentialSubject claims (without the `id`
   // field, which is always present and is added by issueVc).
   schema: z.ZodType<TClaims>;
+  // REQUIRED for every registered type — a builder hits no holes.
+  sybilResistance: SybilResistance;
 }
 
 // ---------------------------------------------------------------------------
@@ -45,9 +57,12 @@ export const EmailExactClaims = z.object({
 export type EmailExactClaims = z.infer<typeof EmailExactClaims>;
 
 export const OAUTH_PROVIDERS = ["github", "google", "discord"] as const;
+// accountId REMOVED (crypto-core Phase 1): the provider's numeric account id was
+// the raw Sybil anchor and leaked into the signed VC + AuditLog. It is now
+// nullified into an opaque Badge.nullifierRef and DISCARDED. Only the renameable
+// `handle` is revealed.
 export const OAuthAccountClaims = z.object({
   provider: z.enum(OAUTH_PROVIDERS),
-  accountId: z.string().min(1),
   handle: z.string().min(1).optional(),
 });
 export type OAuthAccountClaims = z.infer<typeof OAuthAccountClaims>;
@@ -151,6 +166,8 @@ function ageOverEntry(threshold: AgeThreshold): BadgeTypeMeta {
     description: `Holder has proven they are over ${threshold} years old.`,
     iconKey: "cake",
     schema: AgeOverClaimsFor(threshold),
+    // No issuance primitive today; revisit with the issuing plugin (Stage 8).
+    sybilResistance: "none",
   };
 }
 
@@ -161,6 +178,8 @@ export const BADGE_TYPES: Record<string, BadgeTypeMeta> = {
     description: "Holder controls an email address at the named domain.",
     iconKey: "at-sign",
     schema: EmailDomainClaims,
+    // Catch-all domains are cheap.
+    sybilResistance: "weak",
   },
   "email-exact": {
     type: "email-exact",
@@ -169,6 +188,7 @@ export const BADGE_TYPES: Record<string, BadgeTypeMeta> = {
       "Holder controls the exact email address. Less private than email-domain — opt-in.",
     iconKey: "mail",
     schema: EmailExactClaims,
+    sybilResistance: "weak",
   },
   "oauth-account": {
     type: "oauth-account",
@@ -176,6 +196,8 @@ export const BADGE_TYPES: Record<string, BadgeTypeMeta> = {
     description: "Holder controls a third-party account (GitHub, Google, etc).",
     iconKey: "link",
     schema: OAuthAccountClaims,
+    // github accounts are cheap.
+    sybilResistance: "weak",
   },
   "account-age": {
     type: "account-age",
@@ -183,6 +205,8 @@ export const BADGE_TYPES: Record<string, BadgeTypeMeta> = {
     description: "Holder's connected account is at least the stated number of months old.",
     iconKey: "cake",
     schema: AccountAgeClaims,
+    // Aged accounts are costlier to farm.
+    sybilResistance: "moderate",
   },
   "social-following": {
     type: "social-following",
@@ -190,6 +214,8 @@ export const BADGE_TYPES: Record<string, BadgeTypeMeta> = {
     description: "Holder's connected account has at least the stated number of followers.",
     iconKey: "users",
     schema: SocialFollowingClaims,
+    // Followed accounts are costlier to farm.
+    sybilResistance: "moderate",
   },
   "residency-country": {
     type: "residency-country",
@@ -197,6 +223,7 @@ export const BADGE_TYPES: Record<string, BadgeTypeMeta> = {
     description: "Holder is a resident of the named country.",
     iconKey: "globe",
     schema: ResidencyCountryClaims,
+    sybilResistance: "none",
   },
   "residency-state": {
     type: "residency-state",
@@ -204,6 +231,7 @@ export const BADGE_TYPES: Record<string, BadgeTypeMeta> = {
     description: "Holder is a resident of the named state or region.",
     iconKey: "map-pin",
     schema: ResidencyStateClaims,
+    sybilResistance: "none",
   },
   "residency-city": {
     type: "residency-city",
@@ -211,6 +239,7 @@ export const BADGE_TYPES: Record<string, BadgeTypeMeta> = {
     description: "Holder is a resident of the named city.",
     iconKey: "map-pin",
     schema: ResidencyCityClaims,
+    sybilResistance: "none",
   },
   "invite-code": {
     type: "invite-code",
@@ -219,6 +248,8 @@ export const BADGE_TYPES: Record<string, BadgeTypeMeta> = {
       "Holder redeemed an invite code issued by a Minister admin for the named campaign.",
     iconKey: "ticket",
     schema: InviteCodeClaims,
+    // No nullifier, decided (beta-only).
+    sybilResistance: "none",
   },
   "tlsn-attestation": {
     type: "tlsn-attestation",
@@ -227,6 +258,8 @@ export const BADGE_TYPES: Record<string, BadgeTypeMeta> = {
       "Generic TLSNotary attestation. Specific plugins refine this with their own claim shapes.",
     iconKey: "shield-check",
     schema: TlsnAttestationClaims,
+    // Type-level value until per-plugin nullifiers land (Tyler-owned).
+    sybilResistance: "none",
   },
   ...Object.fromEntries(AGE_THRESHOLDS.map((t) => [`age-over-${t}`, ageOverEntry(t)] as const)),
 };

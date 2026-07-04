@@ -104,8 +104,12 @@ describe("githubPlugin.handleStep — code exchange + /user fetch", () => {
     expect(result.badges).toEqual([
       {
         type: "oauth-account",
-        attributes: { provider: "github", accountId: "42", handle: "octocat" },
-        claims: { provider: "github", accountId: "42", handle: "octocat" },
+        // No accountId anywhere in attributes/claims — the numeric id rides
+        // ONLY as the in-memory sybilAnchor, which the wizard runtime nullifies
+        // and discards.
+        attributes: { provider: "github", handle: "octocat" },
+        claims: { provider: "github", handle: "octocat" },
+        sybilAnchor: "42",
       },
     ]);
 
@@ -143,9 +147,12 @@ describe("githubPlugin.handleStep — code exchange + /user fetch", () => {
     const byType = new Map(result.badges.map((b) => [b.type, b] as const));
     expect(byType.get("oauth-account")?.claims).toEqual({
       provider: "github",
-      accountId: "7",
       handle: "power",
     });
+    // Every github badge carries the same numeric-id anchor under its own type.
+    expect(byType.get("oauth-account")?.sybilAnchor).toBe("7");
+    expect(byType.get("account-age")?.sybilAnchor).toBe("7");
+    expect(byType.get("social-following")?.sybilAnchor).toBe("7");
     // Coarse threshold only — the raw created_at never becomes a claim.
     expect(byType.get("account-age")?.claims).toEqual({
       provider: "github",

@@ -17,7 +17,6 @@ describe("summarizeAttributes", () => {
     expect(
       summarizeAttributes("oauth-account", {
         provider: "github",
-        accountId: "1",
         handle: "octocat",
       }),
     ).toBe("github · @octocat");
@@ -27,7 +26,6 @@ describe("summarizeAttributes", () => {
     expect(
       summarizeAttributes("oauth-account", {
         provider: "github",
-        accountId: "1",
       }),
     ).toBe("github");
   });

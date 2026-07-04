@@ -93,13 +93,9 @@ describe("EmailExactClaims schema", () => {
 });
 
 describe("OAuthAccountClaims schema", () => {
-  it("accepts a known provider with an accountId", () => {
-    const parsed = OAuthAccountClaims.parse({
-      provider: "github",
-      accountId: "123",
-    });
+  it("accepts a known provider with no accountId (the anchor is discarded)", () => {
+    const parsed = OAuthAccountClaims.parse({ provider: "github" });
     expect(parsed.provider).toBe("github");
-    expect(parsed.accountId).toBe("123");
     expect(parsed.handle).toBeUndefined();
   });
 
@@ -107,14 +103,22 @@ describe("OAuthAccountClaims schema", () => {
     expect(
       OAuthAccountClaims.parse({
         provider: "github",
-        accountId: "1",
         handle: "octocat",
       }),
-    ).toEqual({ provider: "github", accountId: "1", handle: "octocat" });
+    ).toEqual({ provider: "github", handle: "octocat" });
+  });
+
+  it("STRIPS a stray accountId — it is no longer part of the claim shape", () => {
+    // accountId was the raw Sybil anchor (crypto-core Phase 1 removed it). The
+    // non-strict schema drops unknown keys, so a legacy shape can't smuggle it
+    // back into a signed VC.
+    const parsed = OAuthAccountClaims.parse({ provider: "github", accountId: "1", handle: "x" });
+    expect(parsed).toEqual({ provider: "github", handle: "x" });
+    expect("accountId" in parsed).toBe(false);
   });
 
   it("rejects unknown providers", () => {
-    expect(() => OAuthAccountClaims.parse({ provider: "myspace", accountId: "x" })).toThrow();
+    expect(() => OAuthAccountClaims.parse({ provider: "myspace" })).toThrow();
   });
 });
 

@@ -44,12 +44,28 @@ describe("buildGithubBadges", () => {
     const badges = buildGithubBadges({ id: 42, login: "octocat" }, NOW);
     expect(badges).toHaveLength(1);
     expect(badges[0]!.type).toBe("oauth-account");
-    expect(badges[0]!.claims).toEqual({
-      provider: "github",
-      accountId: "42",
-      handle: "octocat",
-    });
+    // The bug fix: no accountId in claims OR attributes — only the handle is
+    // revealed; the numeric id rides as the in-memory sybilAnchor.
+    expect(badges[0]!.claims).toEqual({ provider: "github", handle: "octocat" });
+    expect(badges[0]!.attributes).toEqual({ provider: "github", handle: "octocat" });
+    expect(badges[0]!.sybilAnchor).toBe("42");
     assertClaimsValid("oauth-account", badges[0]!.claims);
+  });
+
+  it("carries the numeric github id ONLY as sybilAnchor, never as a claim/attribute", () => {
+    const badges = buildGithubBadges(
+      { id: 123456, login: "u", createdAt: "2015-01-01T00:00:00Z", followers: 1500 },
+      NOW,
+    );
+    for (const b of badges) {
+      // The anchor is present on every derived badge...
+      expect(b.sybilAnchor).toBe("123456");
+      // ...and NOWHERE in the serialized claim/attribute surface.
+      expect(JSON.stringify(b.claims)).not.toContain("123456");
+      expect(JSON.stringify(b.attributes)).not.toContain("123456");
+      expect("accountId" in b.claims).toBe(false);
+      expect("accountId" in b.attributes).toBe(false);
+    }
   });
 
   it("derives the highest account-age bucket from created_at (5y => 60mo)", () => {
