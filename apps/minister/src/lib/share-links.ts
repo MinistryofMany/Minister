@@ -18,9 +18,11 @@ export function generateShareToken(): string {
 }
 
 function pairwiseSecret(): string {
-  const secret = process.env.OIDC_PAIRWISE_SECRET ?? process.env.AUTH_SECRET;
+  // No AUTH_SECRET fallback: a silent fallback would re-key every share-link
+  // pairwise subject/jti if OIDC_PAIRWISE_SECRET were ever unset. Fail fast.
+  const secret = process.env.OIDC_PAIRWISE_SECRET;
   if (!secret) {
-    throw new Error("OIDC_PAIRWISE_SECRET (or AUTH_SECRET fallback) must be set");
+    throw new Error("OIDC_PAIRWISE_SECRET must be set");
   }
   return secret;
 }

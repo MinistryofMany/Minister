@@ -19,9 +19,12 @@ const ACCESS_TOKEN_TTL_SECONDS = 60 * 60;
 // different subject identifiers for the same user, so they can't
 // correlate across RPs. Stable per (userId, clientId).
 export function pairwiseSub(userId: string, clientId: string): string {
-  const secret = process.env.OIDC_PAIRWISE_SECRET ?? process.env.AUTH_SECRET;
+  // No AUTH_SECRET fallback: falling back silently re-keys every pairwise `sub`
+  // if OIDC_PAIRWISE_SECRET is ever unset in prod (env.ts requires it at boot
+  // unless MINISTER_SUB_BACKEND=signet). Fail fast instead.
+  const secret = process.env.OIDC_PAIRWISE_SECRET;
   if (!secret) {
-    throw new Error("OIDC_PAIRWISE_SECRET (or AUTH_SECRET fallback) must be set");
+    throw new Error("OIDC_PAIRWISE_SECRET must be set");
   }
   const mac = createHmac("sha256", secret).update(`${userId}:${clientId}`).digest();
   return mac.toString("base64url");
@@ -37,9 +40,10 @@ export function pairwiseSub(userId: string, clientId: string): string {
 // tables, so the prefix guarantees a `pairwiseSub(userId, clientId)` can never
 // collide with a `pairwiseJti(badgeId, clientId)`.
 export function pairwiseJti(badgeId: string, clientId: string): string {
-  const secret = process.env.OIDC_PAIRWISE_SECRET ?? process.env.AUTH_SECRET;
+  // No AUTH_SECRET fallback — same fail-fast rationale as pairwiseSub.
+  const secret = process.env.OIDC_PAIRWISE_SECRET;
   if (!secret) {
-    throw new Error("OIDC_PAIRWISE_SECRET (or AUTH_SECRET fallback) must be set");
+    throw new Error("OIDC_PAIRWISE_SECRET must be set");
   }
   const mac = createHmac("sha256", secret).update(`jti:${badgeId}:${clientId}`).digest();
   return mac.toString("base64url");

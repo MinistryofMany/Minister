@@ -43,14 +43,16 @@ describe("pairwiseSub", () => {
     expect(pairwiseSub("u", "c").length).toBe(43);
   });
 
-  it("falls back to AUTH_SECRET when OIDC_PAIRWISE_SECRET is unset", () => {
+  it("fails fast when only AUTH_SECRET is set — no silent fallback", () => {
+    // The AUTH_SECRET fallback was removed: leaning on it silently re-keys every
+    // pairwise sub if OIDC_PAIRWISE_SECRET is ever unset. Must throw instead.
     delete process.env.OIDC_PAIRWISE_SECRET;
     process.env.AUTH_SECRET = "auth-fallback-secret-32-chars-min!!";
-    expect(() => pairwiseSub("u", "c")).not.toThrow();
+    expect(() => pairwiseSub("u", "c")).toThrow(/OIDC_PAIRWISE_SECRET must be set/);
     process.env.OIDC_PAIRWISE_SECRET = "test-pairwise-secret-32-chars-min!!";
   });
 
-  it("throws if neither secret is set", () => {
+  it("throws if the secret is not set", () => {
     delete process.env.OIDC_PAIRWISE_SECRET;
     delete process.env.AUTH_SECRET;
     expect(() => pairwiseSub("u", "c")).toThrow(/must be set/);
