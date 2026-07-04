@@ -113,19 +113,20 @@ export async function deleteBadge(input: z.infer<typeof DeleteInput>) {
   // `already_yours`). Releasing the ledger entry while a sibling badge still
   // references it would be a dedup bypass — the freed entry lets a DIFFERENT
   // account register the same credential while this user still holds a live,
-  // signed sibling badge. So release ONLY when no other Badge row references the
-  // entry after this delete.
+  // signed sibling badge.
   //
-  // This count is NOT sufficient on its own: a concurrent re-issue whose badge
-  // INSERT lags behind its Ed25519 signing step is invisible to this count, so
-  // we can release an entry that the lagging insert is about to point at —
-  // stranding it AND, worse, freeing the credential for another account (a
-  // genuine bypass, not merely a conservative strand). That window is closed on
-  // the MINT side: issueBadgesAndComplete re-validates each freshly persisted
-  // nullifierRef and re-registers if the entry was released underneath it
-  // (server/wizard.ts, Finding 1). The two guards compose — this count avoids
-  // releasing a live sibling's entry; mint-side re-validation self-heals the
-  // narrow release-vs-lagging-insert race this count cannot see.
+  // Correctness does NOT rest on the count below — it is a fast path that
+  // skips a pointless release round trip (a network call in the Phase 3
+  // backend) when siblings obviously remain. A one-shot count cannot guard a
+  // release that fires LATER: a concurrent re-issue's badge INSERT can commit
+  // between this count and the release, and the mint-side probe can run
+  // before the release fires — both one-shot reads miss it (the proven Case-A
+  // bypass). The authoritative guard is the release itself: the interim
+  // backend deletes the entry ATOMICALLY only when no Badge row references it
+  // (one conditional statement, see lib/nullifier/interim.ts). That composes
+  // with the mint-side re-validation in issueBadgesAndComplete
+  // (server/wizard.ts): release-after-badge-commit no-ops on the sibling;
+  // release-before-badge-commit is seen by the probe and self-healed.
   if (badge.nullifierRef && owner?.dedupHandle) {
     const ref = badge.nullifierRef;
     const ownerHandle = owner.dedupHandle;

@@ -112,8 +112,32 @@ const h = vi.hoisted(() => {
     }),
   });
 
+  // Emulates ONLY the interim release's atomic conditional DELETE
+  // (lib/nullifier/interim.ts): entry deleted iff id+ownerHandle match AND no
+  // Badge row references it — one atomic step here exactly as it is one
+  // statement in Postgres. Shape-asserted so a query change must consciously
+  // update this emulation, not silently pass.
+  const $executeRaw = vi.fn(async (strings: TemplateStringsArray, ...values: unknown[]) => {
+    const sql = strings.raw.join("?").replace(/\s+/g, " ").trim();
+    const isConditionalRelease =
+      sql.startsWith('DELETE FROM "NullifierEntry"') &&
+      sql.includes('NOT EXISTS (SELECT 1 FROM "Badge" WHERE "nullifierRef" = ?') &&
+      values.length === 3;
+    if (!isConditionalRelease) {
+      throw new Error(`wizard-discard prisma mock: unrecognized raw query: ${sql}`);
+    }
+    const [entryRef, ownerHandle] = values as [string, string, string];
+    if (tables.badge.some((b) => b.nullifierRef === entryRef)) return 0;
+    const before = tables.nullifierEntry.length;
+    tables.nullifierEntry = tables.nullifierEntry.filter(
+      (e) => !(e.id === entryRef && e.ownerHandle === ownerHandle),
+    );
+    return before - tables.nullifierEntry.length;
+  });
+
   const prisma: Record<string, unknown> = {
     $transaction: vi.fn(async (fn: (tx: unknown) => Promise<unknown>) => fn(prisma)),
+    $executeRaw,
   };
   for (const name of Object.keys(tables) as (keyof Store)[]) prisma[name] = makeModel(name);
   return { tables, prisma };
@@ -380,6 +404,134 @@ describe("wizard runtime — Sybil-anchor discard + scrub", () => {
 
     // No bypass: a DIFFERENT account cannot now register the same credential —
     // the healed entry still holds it.
+    const other = await interimBackend.registerDedup({
+      anchor: ANCHOR,
+      badgeType: "oauth-account",
+      ownerHandle: "handle_C",
+    });
+    expect(other.status).toBe("taken");
+  });
+
+  // Case A — the ordering the probe CANNOT see: the release fires AFTER the
+  // mint-side re-validation returned true. Audit timeline: t4 the concurrent
+  // deleteBadge(B1) counts siblings → 0 (B2's INSERT not yet committed) and
+  // decides to release; t5 the re-issue commits B2 referencing E; t6 the mint
+  // probe sees E present → true → no self-heal; t7 the delete's post-commit
+  // release fires. A plain owner-checked deleteMany at t7 frees E under the
+  // live signed B2 — dedup bypass. The atomic conditional release must no-op
+  // at t7 because B2 references E. This test FAILS against the plain
+  // deleteMany release and passes only with the conditional DELETE.
+  it("Case A — a release firing AFTER the probe returned true cannot free the entry B2 references", async () => {
+    h.tables.user[0]!.dedupHandle = "handle_A";
+
+    // Account A holds sibling badge B1 → ledger entry E.
+    const { interimBackend } = await import("@/lib/nullifier/interim");
+    const first = await interimBackend.registerDedup({
+      anchor: ANCHOR,
+      badgeType: "oauth-account",
+      ownerHandle: "handle_A",
+    });
+    if (first.status !== "registered") throw new Error("setup: expected a fresh registration");
+    const eRef = first.entryRef;
+    h.tables.badge.push({
+      id: "badge_sibling_B1",
+      userId: USER,
+      type: "oauth-account",
+      nullifierRef: eRef,
+      vcJwt: "sibling",
+    });
+
+    // t5 + t6: the re-issue mints B2 (registerDedup → already_yours E) and the
+    // REAL probe runs — E is present (the release has not fired yet) → true →
+    // no self-heal. The spy keeps the real implementation; it only pins that
+    // the probe really returned true, i.e. this is the probe-BEFORE-release
+    // ordering, not the already-tested release-BEFORE-probe one.
+    const probeSpy = vi.spyOn(nullifierService, "entryExistsForOwner");
+    try {
+      vi.mocked(getPlugin).mockReturnValue(fakePlugin([githubBadge()]));
+      seedSession("ws8");
+      const result = await submitStep("ws8", USER, "http://localhost:3000", { code: "x" });
+      expect(result.kind).toBe("complete");
+      expect(probeSpy).toHaveBeenCalledTimes(1);
+      await expect(probeSpy.mock.results[0]!.value).resolves.toBe(true);
+    } finally {
+      probeSpy.mockRestore();
+    }
+    const mintedB2 = h.tables.badge.find((b) => b.id !== "badge_sibling_B1")!;
+    expect(mintedB2.nullifierRef).toBe(eRef);
+
+    // t7 (with t4's stale decision): B1's row delete has committed and the
+    // deleteBadge release — gated only by the one-shot count taken back at t4
+    // — fires NOW, through the real backend.
+    h.tables.badge = h.tables.badge.filter((b) => b.id !== "badge_sibling_B1");
+    await interimBackend.release({ entryRef: eRef, ownerHandle: "handle_A" });
+
+    // E survives: the conditional DELETE saw B2 referencing it and no-op'd.
+    expect(h.tables.nullifierEntry).toHaveLength(1);
+    expect(h.tables.nullifierEntry[0]!.id).toBe(eRef);
+    expect(mintedB2.nullifierRef).toBe(eRef);
+
+    // No bypass: a second account registering the same anchor is refused.
+    const other = await interimBackend.registerDedup({
+      anchor: ANCHOR,
+      badgeType: "oauth-account",
+      ownerHandle: "handle_C",
+    });
+    expect(other.status).toBe("taken");
+  });
+
+  // W-1 — the compensateBatch analogue of Case A. A batch registers the anchor
+  // FRESH (→ freshRegs), then aborts mid-batch; its compensating release of the
+  // fresh registration is unconditional bookkeeping-wise, but a concurrent
+  // SAME-USER batch can have gotten `already_yours` against that entry and
+  // committed a live badge B2 pointing at it before the release fires. The
+  // release must no-op on the referenced entry. Fails against the plain
+  // deleteMany release; passes with the conditional DELETE.
+  it("W-1 — compensateBatch cannot free an entry a concurrent same-user batch's badge references", async () => {
+    h.tables.user[0]!.dedupHandle = "handle_A";
+    const { interimBackend } = await import("@/lib/nullifier/interim");
+
+    // Batch: badge 1 registers ANCHOR fresh and mints; badge 2 aborts the
+    // batch (unknown type throws inside issueBadge, before any insert).
+    const badBadge: IssuedBadge = { type: "not-a-real-type", attributes: {}, claims: {} };
+    vi.mocked(getPlugin).mockReturnValue(fakePlugin([githubBadge(), badBadge]));
+    seedSession("ws9");
+
+    // Model the concurrent same-user batch: its `already_yours` badge B2
+    // commits in the window between this batch's fresh registration of E and
+    // the compensating release. Inject at compensateBatch's own-badge cleanup
+    // (the last write before its releases run) — wrap the base implementation,
+    // then land B2 referencing E.
+    const badgeDeleteMany = (h.prisma as { badge: { deleteMany: ReturnType<typeof vi.fn> } }).badge
+      .deleteMany;
+    const base = badgeDeleteMany.getMockImplementation();
+    if (!base) throw new Error("setup: badge.deleteMany has no base implementation");
+    badgeDeleteMany.mockImplementationOnce(async (args: { where: Record<string, unknown> }) => {
+      const res = await base(args);
+      const entry = h.tables.nullifierEntry[0];
+      if (!entry) throw new Error("setup: expected the batch's fresh registration to exist");
+      h.tables.badge.push({
+        id: "badge_concurrent_B2",
+        userId: USER,
+        type: "oauth-account",
+        nullifierRef: entry.id,
+        vcJwt: "concurrent",
+      });
+      return res;
+    });
+
+    await expect(submitStep("ws9", USER, "http://localhost:3000", { code: "x" })).rejects.toThrow(
+      /unknown badge type/,
+    );
+
+    // The batch's own badge was rolled back; only the concurrent B2 remains.
+    expect(h.tables.badge).toHaveLength(1);
+    expect(h.tables.badge[0]!.id).toBe("badge_concurrent_B2");
+    // E survives the compensating release — B2 references it.
+    expect(h.tables.nullifierEntry).toHaveLength(1);
+    expect(h.tables.badge[0]!.nullifierRef).toBe(h.tables.nullifierEntry[0]!.id);
+
+    // No bypass: the credential is still held against a different account.
     const other = await interimBackend.registerDedup({
       anchor: ANCHOR,
       badgeType: "oauth-account",

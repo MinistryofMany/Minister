@@ -21,7 +21,11 @@ const h = vi.hoisted(() => {
     id: string;
     dedupHandle: string | null;
   }
-  const store = { entries: [] as Entry[], users: [] as UserRow[] };
+  interface BadgeRow {
+    id: string;
+    nullifierRef: string | null;
+  }
+  const store = { entries: [] as Entry[], users: [] as UserRow[], badges: [] as BadgeRow[] };
   let seq = 1;
 
   const hex = (v: Uint8Array): string => Buffer.from(v).toString("hex");
@@ -98,7 +102,34 @@ const h = vi.hoisted(() => {
     ),
   };
 
-  const prisma = { nullifierEntry, user };
+  // Emulates ONLY the release's atomic conditional DELETE (interim.ts). The
+  // shape is asserted, not assumed: an unrecognized raw query throws, so a
+  // future query change must consciously update this emulation. Semantics
+  // mirrored from Postgres: delete the entry iff id+ownerHandle match AND no
+  // Badge row references it — the sibling check and the delete are one atomic
+  // step here exactly as they are one statement there.
+  const $executeRaw = vi.fn(async (strings: TemplateStringsArray, ...values: unknown[]) => {
+    const sql = strings.raw.join("?").replace(/\s+/g, " ").trim();
+    const isConditionalRelease =
+      sql.startsWith('DELETE FROM "NullifierEntry"') &&
+      sql.includes('NOT EXISTS (SELECT 1 FROM "Badge" WHERE "nullifierRef" = ?') &&
+      values.length === 3;
+    if (!isConditionalRelease) {
+      throw new Error(`interim.test prisma mock: unrecognized raw query: ${sql}`);
+    }
+    const [entryRef, ownerHandle, refAgain] = values as [string, string, string];
+    if (refAgain !== entryRef) {
+      throw new Error("interim.test prisma mock: release must bind the SAME entryRef twice");
+    }
+    if (store.badges.some((b) => b.nullifierRef === entryRef)) return 0;
+    const before = store.entries.length;
+    store.entries = store.entries.filter(
+      (e) => !(e.id === entryRef && e.ownerHandle === ownerHandle),
+    );
+    return before - store.entries.length;
+  });
+
+  const prisma = { nullifierEntry, user, $executeRaw };
   return { store, prisma };
 });
 
@@ -113,6 +144,7 @@ const SAVED = process.env.OIDC_PAIRWISE_SECRET;
 beforeEach(() => {
   h.store.entries.length = 0;
   h.store.users.length = 0;
+  h.store.badges.length = 0;
   vi.clearAllMocks();
 });
 
@@ -338,6 +370,35 @@ describe("interimBackend", () => {
       ownerHandle: "owner_B",
     });
     expect(reclaim.status).toBe("registered");
+  });
+
+  it("release is an atomic no-op while ANY Badge row still references the entry", async () => {
+    const reg = await interimBackend.registerDedup({
+      anchor: "gh_guarded",
+      badgeType: "oauth-account",
+      ownerHandle: "owner_A",
+    });
+    const entryRef = (reg as { entryRef: string }).entryRef;
+
+    // A live signed badge references the entry — even an owner-matched release
+    // must NOT free it (the sibling guard lives IN the release statement; a
+    // caller-side count cannot be trusted to still hold when release fires).
+    h.store.badges.push({ id: "badge_B2", nullifierRef: entryRef });
+    await interimBackend.release({ entryRef, ownerHandle: "owner_A" });
+    expect(h.store.entries).toHaveLength(1);
+
+    // The credential stays held: another account is refused while the badge lives.
+    const taken = await interimBackend.registerDedup({
+      anchor: "gh_guarded",
+      badgeType: "oauth-account",
+      ownerHandle: "owner_B",
+    });
+    expect(taken).toEqual({ status: "taken" });
+
+    // Last referencing badge gone → the SAME release call now fires.
+    h.store.badges.length = 0;
+    await interimBackend.release({ entryRef, ownerHandle: "owner_A" });
+    expect(h.store.entries).toHaveLength(0);
   });
 
   it("entryExistsForOwner: true only for a present, owner-matched entry (mint-side re-validation)", async () => {

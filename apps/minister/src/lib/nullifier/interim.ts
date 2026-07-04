@@ -90,11 +90,39 @@ export const interimBackend: NullifierService = {
   },
 
   async release({ entryRef, ownerHandle }): Promise<void> {
-    // Owner-checked, idempotent. deleteMany (not delete) so releasing an
-    // already-gone or non-owned entry is a silent no-op, not a throw.
-    await prisma.nullifierEntry.deleteMany({
-      where: { id: entryRef, ownerHandle },
-    });
+    // Owner-checked, idempotent, and ATOMICALLY sibling-guarded: the entry is
+    // deleted only if NO Badge row references it, in ONE statement, so the
+    // sibling check and the delete share a single snapshot. A caller-side
+    // check-then-release (deleteBadge's pre-count, compensateBatch's
+    // fresh-registration bookkeeping) is one-shot and cannot guard against a
+    // referencing badge that COMMITS between the check and the release — that
+    // exact gap was the proven delete-vs-reissue dedup bypass. Composition
+    // with the mint-side probe (server/wizard.ts) closes both orderings:
+    //   * release statement starts AFTER the sibling badge's INSERT commits →
+    //     NOT EXISTS sees the badge → the DELETE no-ops, the entry survives;
+    //   * release commits BEFORE the badge INSERT commits → the entry is gone
+    //     when the mint-side re-validation probes it → self-heal re-registers.
+    // Known theoretical residual: a DELETE whose snapshot predates the badge
+    // commit but whose own commit lands after the mint probe (the statement
+    // in flight across both) — a sub-statement window, microseconds, with no
+    // client round trips inside it; accepted for the interim backend and
+    // flagged for the Phase 3 split (build plan Phase 3).
+    //
+    // Cross-table NOT EXISTS instead of an FK RESTRICT: Badge.nullifierRef is
+    // deliberately un-FK'd (the ledger moves into Signet in Phase 3 — see the
+    // schema comment). This mechanism therefore relies on NullifierEntry and
+    // Badge being co-located in Minister's Postgres, which holds for the
+    // interim backend ONLY; the signet backend must re-establish equivalent
+    // release atomicity on its side of the split.
+    //
+    // Tagged-template $executeRaw is parameterized ($1..$3) — never build this
+    // SQL by string interpolation.
+    await prisma.$executeRaw`
+      DELETE FROM "NullifierEntry"
+      WHERE "id" = ${entryRef}
+        AND "ownerHandle" = ${ownerHandle}
+        AND NOT EXISTS (SELECT 1 FROM "Badge" WHERE "nullifierRef" = ${entryRef})
+    `;
   },
 
   async reassignOwner({ entryRefs, fromOwnerHandle, toOwnerHandle }): Promise<number> {

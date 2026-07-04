@@ -72,7 +72,13 @@ export interface NullifierService {
 
   // Release an entry so the credential is free to be re-registered from another
   // account (account/badge deletion). Owner-checked; idempotent (releasing a
-  // gone entry is a no-op).
+  // gone entry is a no-op). SIBLING-GUARDED: an entry any Badge row still
+  // references must NOT be freed — the interim backend enforces this
+  // atomically inside the release statement itself (see interim.ts), because
+  // a caller-side check-then-release is a proven dedup-bypass TOCTOU. The
+  // Phase 3 signet backend cannot see Minister's Badge table, so the flip
+  // MUST re-establish equivalent release atomicity across the split (build
+  // plan Phase 3) — callers' correctness rests on it.
   release(input: { entryRef: string; ownerHandle: string }): Promise<void>;
 
   // Re-tag an EXPLICIT list of entries from one owner handle to another (account

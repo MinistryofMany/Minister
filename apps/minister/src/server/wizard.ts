@@ -275,7 +275,13 @@ async function issueBadgesAndComplete(args: {
   // compensating release on a mid-batch abort. Never includes an
   // `already_yours` entry that predates the batch. Within a batch every badge
   // has a distinct type, so registerDedup keys (anchor, type) never collide —
-  // no two refs here are shared, and releasing them can free no live sibling.
+  // but that guarantee is INTRA-BATCH ONLY: a concurrent same-user batch can
+  // get `already_yours` against one of these fresh registrations and mint a
+  // live badge pointing at it, so an unconditional release here could free an
+  // entry that badge references (W-1). The releases in compensateBatch go
+  // through nullifierService.release, whose interim implementation deletes
+  // atomically only when NO Badge row references the entry — the sibling
+  // guard lives in the release statement itself, not in this bookkeeping.
   const freshRegs: Array<{ ref: string; handle: string }> = [];
 
   // Undo a partially-applied batch on abort: delete the badges already minted
@@ -365,20 +371,27 @@ async function issueBadgesAndComplete(args: {
     // registerDedup above may return `already_yours` (ref E already exists),
     // but this badge's INSERT lags behind the Ed25519 signing step inside
     // issueBadge. A concurrent deleteBadge of the LAST sibling can, in that
-    // window, see a sibling count of 0 and release E — leaving this just-minted,
-    // signed badge pointing at a dangling ref while the credential is free for a
-    // DIFFERENT account to register: two live signed VCs for one credential, a
-    // dedup bypass. The count→release guard in deleteBadge alone does NOT close
-    // this (its count runs before this INSERT is visible).
+    // window, decide to release E — leaving this just-minted, signed badge
+    // pointing at a dangling ref while the credential is free for a DIFFERENT
+    // account to register: two live signed VCs for one credential, a dedup
+    // bypass.
     //
-    // Close it here: now that the badge row exists, re-check the ledger entry
-    // survived and is still ours. If it is GONE (a concurrent release won the
-    // race), the raw anchor is still in memory — re-register it (self-heal) and
-    // re-point the badge. A fresh `registered` re-anchors the credential to this
-    // account; `already_yours` means a concurrent re-issue of ours already
-    // re-created it; `taken` means another account grabbed the freed credential
-    // in the gap, so compensate and fail closed. This makes the race
-    // self-correct instead of silently bypassing dedup.
+    // This probe is ONE HALF of the fix, and covers exactly ONE ordering: a
+    // release that COMMITS BEFORE this badge's INSERT commits is visible here
+    // as a gone entry → self-heal below. It cannot guard a release that fires
+    // AFTER it returns true (a one-shot read has no forward reach — two prior
+    // fix attempts died on that). That ordering is closed on the RELEASE side:
+    // the interim backend's release deletes the entry atomically only when no
+    // Badge row references it (lib/nullifier/interim.ts), and this badge's row
+    // is already committed by the time this probe runs, so any later release
+    // no-ops on it. The two mechanisms COMPOSE — keep both.
+    //
+    // Self-heal: if the entry is GONE, the raw anchor is still in memory —
+    // re-register it and re-point the badge. A fresh `registered` re-anchors
+    // the credential to this account; `already_yours` means a concurrent
+    // re-issue of ours already re-created it; `taken` means another account
+    // grabbed the freed credential in the gap, so compensate and fail closed.
+    // This makes the race self-correct instead of silently bypassing dedup.
     if (anchor !== null && nullifierRef !== null && ownerHandle) {
       const present = await nullifierService.entryExistsForOwner({
         entryRef: nullifierRef,
