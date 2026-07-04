@@ -114,9 +114,18 @@ export async function deleteBadge(input: z.infer<typeof DeleteInput>) {
   // references it would be a dedup bypass — the freed entry lets a DIFFERENT
   // account register the same credential while this user still holds a live,
   // signed sibling badge. So release ONLY when no other Badge row references the
-  // entry after this delete. A concurrent re-mint that inserts a sibling between
-  // this count and a release would strand the entry (dangling ref, fails closed
-  // at disclosure) — the documented conservative failure mode, never a bypass.
+  // entry after this delete.
+  //
+  // This count is NOT sufficient on its own: a concurrent re-issue whose badge
+  // INSERT lags behind its Ed25519 signing step is invisible to this count, so
+  // we can release an entry that the lagging insert is about to point at —
+  // stranding it AND, worse, freeing the credential for another account (a
+  // genuine bypass, not merely a conservative strand). That window is closed on
+  // the MINT side: issueBadgesAndComplete re-validates each freshly persisted
+  // nullifierRef and re-registers if the entry was released underneath it
+  // (server/wizard.ts, Finding 1). The two guards compose — this count avoids
+  // releasing a live sibling's entry; mint-side re-validation self-heals the
+  // narrow release-vs-lagging-insert race this count cannot see.
   if (badge.nullifierRef && owner?.dedupHandle) {
     const ref = badge.nullifierRef;
     const ownerHandle = owner.dedupHandle;

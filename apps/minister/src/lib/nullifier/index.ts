@@ -60,6 +60,16 @@ export interface NullifierService {
     clientId: string;
   }): Promise<MinisterGatingNullifier>;
 
+  // Confirm a ledger entry still exists AND is owned by `ownerHandle`. Used for
+  // MINT-SIDE RE-VALIDATION (§2.6): after a badge is persisted with its
+  // nullifierRef, the runtime re-checks the entry survived, closing the
+  // delete-vs-reissue TOCTOU where a concurrent release frees an entry between
+  // registerDedup and the lagging badge INSERT. Owner-checked lookup, never a
+  // throw — a gone or mis-owned entry returns `false` so the caller can
+  // self-heal by re-registering. The Phase 3 Signet backend implements the same
+  // owner-checked ref existence check.
+  entryExistsForOwner(input: { entryRef: string; ownerHandle: string }): Promise<boolean>;
+
   // Release an entry so the credential is free to be re-registered from another
   // account (account/badge deletion). Owner-checked; idempotent (releasing a
   // gone entry is a no-op).

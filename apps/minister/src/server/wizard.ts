@@ -25,6 +25,26 @@ function nowPlusMinutes(min: number): Date {
   return new Date(Date.now() + min * 60_000);
 }
 
+// Does the raw Sybil anchor appear as a VALUE anywhere in `node`? Walk the
+// object/array tree and compare STRING-typed leaves for equality to the anchor,
+// rather than substring-scanning JSON.stringify (Finding 5). The anchor is
+// always a string (`sybilAnchor: String(facts.id)`), so a genuine leak copies
+// it as a string leaf; a substring scan false-refused a legit user whose
+// numeric claim merely shared digits with the id (github id "60" is a substring
+// of the serialized `"olderThanMonths":60`). Numbers are DELIBERATELY not
+// stringified for the compare: a numeric claim (olderThanMonths, followersAtLeast)
+// can legitimately equal the id's digits, and flagging it would refuse a real
+// credential — the badge types that carry numbers are exactly the ones that
+// collide. Fail-closed on a real string match.
+function anchorAppearsAsValue(node: unknown, anchor: string): boolean {
+  if (typeof node === "string") return node === anchor;
+  if (Array.isArray(node)) return node.some((v) => anchorAppearsAsValue(v, anchor));
+  if (node !== null && typeof node === "object") {
+    return Object.values(node).some((v) => anchorAppearsAsValue(v, anchor));
+  }
+  return false;
+}
+
 // Wizard-state is persisted as JSON, but only the `currentStep` and
 // `data` fields need to survive — userId and pluginId are stored as
 // dedicated columns. Strip back to the minimum for round-trips.
@@ -281,21 +301,26 @@ async function issueBadgesAndComplete(args: {
     }
   };
 
+  // The one-credential-one-account error, raised from two places (the initial
+  // registerDedup and the mint-side re-validation re-register). Concrete copy
+  // for the only anchor-emitting plugin today (github); generic wiring.
+  const takenError = () =>
+    new SybilTakenError("This GitHub account is already linked to another Minister account.");
+
   for (const badge of issued) {
     let nullifierRef: string | null = null;
+    const anchor = typeof badge.sybilAnchor === "string" ? badge.sybilAnchor : null;
 
-    if (typeof badge.sybilAnchor === "string") {
-      const anchor = badge.sybilAnchor;
-
+    if (anchor !== null) {
       // Value-based discard discipline (not just field-based): issueBadge signs
       // schema-parsed claims and persists `attributes` VERBATIM, so a future
       // anchor-emitting plugin that copied the raw anchor into either would leak
       // it at rest despite this central discard point stripping the `sybilAnchor`
       // FIELD. Refuse issuance outright if the anchor VALUE appears in the badge
-      // it is meant to have been discarded from — fail closed.
+      // it is meant to have been discarded from — fail closed (Finding 5).
       if (
-        JSON.stringify(badge.attributes).includes(anchor) ||
-        JSON.stringify(badge.claims).includes(anchor)
+        anchorAppearsAsValue(badge.attributes, anchor) ||
+        anchorAppearsAsValue(badge.claims, anchor)
       ) {
         await compensateBatch();
         throw new Error(
@@ -310,12 +335,8 @@ async function issueBadgesAndComplete(args: {
         ownerHandle,
       });
       if (reg.status === "taken") {
-        // One-credential-one-account. Message is intentionally concrete for the
-        // only anchor-emitting plugin today (github); generic wiring, specific copy.
         await compensateBatch();
-        throw new SybilTakenError(
-          "This GitHub account is already linked to another Minister account.",
-        );
+        throw takenError();
       }
       nullifierRef = reg.entryRef;
       if (reg.status === "registered") freshRegs.push({ ref: reg.entryRef, handle: ownerHandle });
@@ -324,8 +345,9 @@ async function issueBadgesAndComplete(args: {
     // Shared mint path — see src/server/issue-badge.ts. `badge` is an
     // IssuedBadge; issueBadge reads only BadgeToIssue fields, so `sybilAnchor`
     // is structurally dropped and never persisted.
+    let createdId: string;
     try {
-      createdIds.push(await issueBadge({ userId, pluginId, badge, nullifierRef }));
+      createdId = await issueBadge({ userId, pluginId, badge, nullifierRef });
     } catch (err) {
       // A mid-batch mint failure strands the just-registered entry AND leaves any
       // earlier badges in this batch minted (partial success presented as an
@@ -335,6 +357,52 @@ async function issueBadgesAndComplete(args: {
         throw new Error(`Plugin ${pluginId} produced an ${err.message.toLowerCase()}`);
       }
       throw err;
+    }
+    createdIds.push(createdId);
+
+    // MINT-SIDE RE-VALIDATION (Finding 1 — the delete-vs-reissue TOCTOU).
+    //
+    // registerDedup above may return `already_yours` (ref E already exists),
+    // but this badge's INSERT lags behind the Ed25519 signing step inside
+    // issueBadge. A concurrent deleteBadge of the LAST sibling can, in that
+    // window, see a sibling count of 0 and release E — leaving this just-minted,
+    // signed badge pointing at a dangling ref while the credential is free for a
+    // DIFFERENT account to register: two live signed VCs for one credential, a
+    // dedup bypass. The count→release guard in deleteBadge alone does NOT close
+    // this (its count runs before this INSERT is visible).
+    //
+    // Close it here: now that the badge row exists, re-check the ledger entry
+    // survived and is still ours. If it is GONE (a concurrent release won the
+    // race), the raw anchor is still in memory — re-register it (self-heal) and
+    // re-point the badge. A fresh `registered` re-anchors the credential to this
+    // account; `already_yours` means a concurrent re-issue of ours already
+    // re-created it; `taken` means another account grabbed the freed credential
+    // in the gap, so compensate and fail closed. This makes the race
+    // self-correct instead of silently bypassing dedup.
+    if (anchor !== null && nullifierRef !== null && ownerHandle) {
+      const present = await nullifierService.entryExistsForOwner({
+        entryRef: nullifierRef,
+        ownerHandle,
+      });
+      if (!present) {
+        const reReg = await nullifierService.registerDedup({
+          anchor,
+          badgeType: badge.type,
+          ownerHandle,
+        });
+        if (reReg.status === "taken") {
+          await compensateBatch();
+          throw takenError();
+        }
+        await prisma.badge.update({
+          where: { id: createdId },
+          data: { nullifierRef: reReg.entryRef },
+        });
+        nullifierRef = reReg.entryRef;
+        if (reReg.status === "registered") {
+          freshRegs.push({ ref: reReg.entryRef, handle: ownerHandle });
+        }
+      }
     }
   }
 

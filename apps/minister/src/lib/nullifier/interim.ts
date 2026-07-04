@@ -78,6 +78,17 @@ export const interimBackend: NullifierService = {
     return deriveDisclosedNullifier(value, clientId) as MinisterGatingNullifier;
   },
 
+  async entryExistsForOwner({ entryRef, ownerHandle }): Promise<boolean> {
+    // Owner-checked existence probe for mint-side re-validation. Returns false
+    // (never throws) when the entry is gone (a concurrent release) or is owned
+    // by someone else, so the caller can self-heal by re-registering.
+    const entry = await prisma.nullifierEntry.findUnique({
+      where: { id: entryRef },
+      select: { ownerHandle: true },
+    });
+    return entry !== null && entry.ownerHandle === ownerHandle;
+  },
+
   async release({ entryRef, ownerHandle }): Promise<void> {
     // Owner-checked, idempotent. deleteMany (not delete) so releasing an
     // already-gone or non-owned entry is a silent no-op, not a throw.

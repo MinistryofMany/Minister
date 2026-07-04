@@ -340,6 +340,29 @@ describe("interimBackend", () => {
     expect(reclaim.status).toBe("registered");
   });
 
+  it("entryExistsForOwner: true only for a present, owner-matched entry (mint-side re-validation)", async () => {
+    const reg = await interimBackend.registerDedup({
+      anchor: "gh_probe",
+      badgeType: "oauth-account",
+      ownerHandle: "owner_A",
+    });
+    const entryRef = (reg as { entryRef: string }).entryRef;
+
+    // Present + owner-matched → true.
+    expect(await interimBackend.entryExistsForOwner({ entryRef, ownerHandle: "owner_A" })).toBe(
+      true,
+    );
+    // Present but a DIFFERENT owner → false (never throws).
+    expect(await interimBackend.entryExistsForOwner({ entryRef, ownerHandle: "owner_B" })).toBe(
+      false,
+    );
+    // Gone (a concurrent release) → false, which is what triggers the self-heal.
+    await interimBackend.release({ entryRef, ownerHandle: "owner_A" });
+    expect(await interimBackend.entryExistsForOwner({ entryRef, ownerHandle: "owner_A" })).toBe(
+      false,
+    );
+  });
+
   it("reassignOwner re-tags exactly the listed refs, owner-checked per ref", async () => {
     const r1 = await interimBackend.registerDedup({
       anchor: "a",

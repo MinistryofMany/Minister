@@ -125,6 +125,7 @@ vi.mock("@/lib/mailer", () => ({ sendMail: vi.fn().mockResolvedValue(undefined) 
 vi.mock("@/plugins/registry", () => ({ getPlugin: vi.fn() }));
 
 import { getIssuer } from "@/lib/issuer";
+import { nullifierService } from "@/lib/nullifier";
 import { getPlugin } from "@/plugins/registry";
 import { submitStep } from "@/server/wizard";
 
@@ -224,6 +225,10 @@ describe("wizard runtime — Sybil-anchor discard + scrub", () => {
     // would be vacuous — the encoded form hides the substring).
     expect(JSON.stringify(badge.attributes)).not.toContain(ANCHOR); // attributes (plain JSON)
     expect(decodedJwtPayload(badge.vcJwt)).not.toContain(ANCHOR); // DECODED signed VC payload
+    // Positive control (S-1): the REVEALED handle DOES ride the signed payload,
+    // so the `not.toContain(ANCHOR)` above is a real check on a populated VC —
+    // a broken mock that emitted an empty/unsigned payload would fail here.
+    expect(decodedJwtPayload(badge.vcJwt)).toContain("octocat");
     expect(JSON.stringify(h.tables.auditLog)).not.toContain(ANCHOR); // audit metadata
     const session = h.tables.wizardSession[0]!;
     expect(JSON.stringify(session.state)).not.toContain(ANCHOR); // scrubbed state.data
@@ -275,5 +280,111 @@ describe("wizard runtime — Sybil-anchor discard + scrub", () => {
     // Two badges, both pointing at the SAME ref.
     expect(h.tables.badge).toHaveLength(2);
     expect(h.tables.badge[0]!.nullifierRef).toBe(h.tables.badge[1]!.nullifierRef);
+  });
+
+  // Finding 5 — the value-based leak scan must not substring-false-positive.
+  it("issues a legit account-age badge whose numeric claim shares the id's digits", async () => {
+    // github id "60" collides with the account-age bucket olderThanMonths:60 as
+    // a SUBSTRING of the serialized JSON — the old scan false-refused this user.
+    const accountAgeBadge: IssuedBadge = {
+      type: "account-age",
+      attributes: { provider: "github", olderThanMonths: 60 },
+      claims: { provider: "github", olderThanMonths: 60 },
+      sybilAnchor: "60",
+    };
+    vi.mocked(getPlugin).mockReturnValue(fakePlugin([accountAgeBadge]));
+    seedSession("ws5");
+
+    const result = await submitStep("ws5", USER, "http://localhost:3000", { code: "x" });
+    // Issues fine — the numeric claim 60 is not the string anchor "60".
+    expect(result.kind).toBe("complete");
+    expect(h.tables.badge).toHaveLength(1);
+    expect(h.tables.badge[0]!.nullifierRef).toBe(h.tables.nullifierEntry[0]!.id);
+  });
+
+  it("still refuses when the raw anchor VALUE really is copied into attributes", async () => {
+    // A real leak: the anchor string appears verbatim as an attribute value.
+    const leakyBadge: IssuedBadge = {
+      type: "oauth-account",
+      attributes: { provider: "github", handle: "octocat", leaked: "60" },
+      claims: { provider: "github", handle: "octocat" },
+      sybilAnchor: "60",
+    };
+    vi.mocked(getPlugin).mockReturnValue(fakePlugin([leakyBadge]));
+    seedSession("ws6");
+
+    await expect(submitStep("ws6", USER, "http://localhost:3000", { code: "x" })).rejects.toThrow(
+      /leaked a Sybil anchor/,
+    );
+    // Fail-closed: nothing minted, nothing left in the ledger.
+    expect(h.tables.badge).toHaveLength(0);
+    expect(h.tables.nullifierEntry).toHaveLength(0);
+  });
+
+  // Finding 1 — the delete-vs-reissue TOCTOU. Mint-side re-validation must
+  // self-heal when a concurrent deleteBadge of the last sibling releases the
+  // entry in the window between this re-issue's `already_yours` and its lagging
+  // INSERT — never leaving two live entries (or a bypass) for one credential.
+  it("self-heals when a concurrent delete releases the entry after the re-issue insert", async () => {
+    // Deterministic owner handle so the interleaving is legible.
+    h.tables.user[0]!.dedupHandle = "handle_A";
+
+    // Account A already holds a sibling badge for this credential → entry E.
+    const { interimBackend } = await import("@/lib/nullifier/interim");
+    const first = await interimBackend.registerDedup({
+      anchor: ANCHOR,
+      badgeType: "oauth-account",
+      ownerHandle: "handle_A",
+    });
+    if (first.status !== "registered") throw new Error("setup: expected a fresh registration");
+    const eRef = first.entryRef;
+    h.tables.badge.push({
+      id: "badge_sibling_B1",
+      userId: USER,
+      type: "oauth-account",
+      nullifierRef: eRef,
+      vcJwt: "sibling",
+      completedAt: null,
+    });
+
+    // Model the concurrent deleteBadge(B1): in the window between B2's INSERT
+    // and this mint-side re-validation, the delete sees a sibling count of 0
+    // (B2 not yet visible), deletes B1, and RELEASES E. Fire it exactly once,
+    // at the re-validation probe for this badge.
+    const spy = vi
+      .spyOn(nullifierService, "entryExistsForOwner")
+      .mockImplementationOnce(async () => {
+        h.tables.badge = h.tables.badge.filter((b) => b.id !== "badge_sibling_B1");
+        h.tables.nullifierEntry = h.tables.nullifierEntry.filter((e) => e.id !== eRef);
+        return false; // E is gone underneath us
+      });
+
+    try {
+      vi.mocked(getPlugin).mockReturnValue(fakePlugin([githubBadge()]));
+      seedSession("ws7");
+      const result = await submitStep("ws7", USER, "http://localhost:3000", { code: "x" });
+      expect(result.kind).toBe("complete");
+    } finally {
+      spy.mockRestore();
+    }
+
+    // Self-healed: EXACTLY ONE ledger entry (the re-registered E'), owned by A —
+    // never two live entries for one credential, never zero.
+    expect(h.tables.nullifierEntry).toHaveLength(1);
+    const healed = h.tables.nullifierEntry[0]!;
+    expect(healed.ownerHandle).toBe("handle_A");
+    // The freshly minted badge points at the healed entry, not the dangling ref.
+    const mintedBadge = h.tables.badge.find((b) => b.id !== "badge_sibling_B1");
+    expect(mintedBadge!.nullifierRef).toBe(healed.id);
+    expect(mintedBadge!.nullifierRef).not.toBe(eRef);
+
+    // No bypass: a DIFFERENT account cannot now register the same credential —
+    // the healed entry still holds it.
+    const other = await interimBackend.registerDedup({
+      anchor: ANCHOR,
+      badgeType: "oauth-account",
+      ownerHandle: "handle_C",
+    });
+    expect(other.status).toBe("taken");
   });
 });
