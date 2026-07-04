@@ -21,6 +21,7 @@
 import { parseArgs } from "node:util";
 
 import { PrismaClient } from "../src/generated/prisma/index.js";
+import { validateClientId } from "../src/lib/oidc-client-admin.js";
 import {
   generateClientId,
   generateClientSecret,
@@ -54,6 +55,16 @@ if (!name || redirectUris.length === 0) {
 if (fixedClientSecret && !fixedClientId) {
   console.error("--client-secret requires --client-id");
   process.exit(2);
+}
+// Charset guard on the operator-chosen id (build plan §2.1): a delimiter inside
+// a clientId would collide the legacy colon-joined pairwise-HMAC inputs. Random
+// ids from generateClientId always pass; only --client-id can smuggle one in.
+if (fixedClientId) {
+  const check = validateClientId(fixedClientId);
+  if (!check.ok) {
+    console.error(check.error);
+    process.exit(2);
+  }
 }
 
 const prisma = new PrismaClient();
