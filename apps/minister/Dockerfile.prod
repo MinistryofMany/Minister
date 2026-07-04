@@ -52,4 +52,9 @@ EXPOSE 3000
 # so schema sync is still `prisma db push` - same mechanism as dev, run against
 # the prod DB at boot. Replace with `prisma migrate deploy` once the schema is
 # baselined into committed migrations.
-CMD ["sh", "-c", "pnpm prisma db push --skip-generate && pnpm start"]
+#
+# `boot:migrate` loads SSM secrets into the environment BEFORE `prisma db push`
+# so the push sees DATABASE_URL (which lives only in SSM in prod); `pnpm start`
+# then self-loads SSM again via the Next.js instrumentation hook. See
+# scripts/boot-migrate.ts. This is why no compose `command:` override is needed.
+CMD ["sh", "-c", "pnpm boot:migrate && pnpm start"]
