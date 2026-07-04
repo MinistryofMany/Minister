@@ -1,5 +1,6 @@
 import { buildPairwiseUserDid, reMintVc } from "@minister/vc";
 
+import { audit } from "@/lib/audit";
 import { sanitizeDisclosedClaims } from "@/lib/disclosure-claims";
 import { getIssuer } from "@/lib/issuer";
 import { ACCESS_TOKEN_TTL, pairwiseJti } from "@/lib/oidc-tokens";
@@ -137,17 +138,34 @@ export async function loadApprovedBadgeJwts(
 
   const subjectId = buildPairwiseUserDid(issuer.domain, sub);
 
-  return Promise.all(
-    rows.map((row) =>
-      reMintVc(issuer, row.vcJwt, {
-        subjectId,
-        jti: pairwiseJti(row.id, clientId),
-        maxExpiresAt: row.expiresAt,
-        disclosureTtlSeconds: BADGE_DISCLOSURE_TTL_SECONDS,
-        // Strip any legacy claim the current schema has since removed (e.g. the
-        // pre-Phase-1 oauth-account Sybil anchor) before re-signing.
-        sanitizeClaims: sanitizeDisclosedClaims,
-      }),
-    ),
+  // Per-badge FAIL-CLOSED OMIT (ADR M5): a re-mint / sanitize throw on ONE badge
+  // (a stored VC the current schema now rejects, a signature check failure, an
+  // issuer drift) must omit only THAT badge — never fail the whole token /
+  // userinfo request and 500 the login. A bare Promise.all would reject on the
+  // first throw and take every other badge (and the sign-in) down with it. The
+  // omitted badge is audit-logged so a systematic drift is visible rather than
+  // silently swallowed.
+  const minted = await Promise.all(
+    rows.map(async (row) => {
+      try {
+        return await reMintVc(issuer, row.vcJwt, {
+          subjectId,
+          jti: pairwiseJti(row.id, clientId),
+          maxExpiresAt: row.expiresAt,
+          disclosureTtlSeconds: BADGE_DISCLOSURE_TTL_SECONDS,
+          // Strip any legacy claim the current schema has since removed (e.g. the
+          // pre-Phase-1 oauth-account Sybil anchor) before re-signing.
+          sanitizeClaims: sanitizeDisclosedClaims,
+        });
+      } catch (err) {
+        await audit(userId, "oidc.badge_disclosure_omitted", {
+          badgeId: row.id,
+          clientId,
+          reason: err instanceof Error ? err.message : String(err),
+        });
+        return null;
+      }
+    }),
   );
+  return minted.filter((jwt): jwt is string => jwt !== null);
 }

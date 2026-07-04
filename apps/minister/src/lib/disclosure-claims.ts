@@ -26,9 +26,13 @@ const SCHEMA_BY_CREDENTIAL_TYPE = new Map(
 // Re-parse `claims` (already stripped of `id`/`issuanceMonth` by reMintVc)
 // through the current schema for the VC's type. An unknown type passes through
 // unchanged (a foreign/future type this deploy cannot parse is never silently
-// mangled). A parse failure propagates: the disclosure call sites treat a
-// reMint throw as "do not disclose this badge", which is the fail-closed posture
-// we want for a claim set the current schema rejects.
+// mangled — the map lookup fails OPEN, disclosing the stored claims as-is).
+// A parse failure PROPAGATES as a throw out of reMintVc; the disclosure call
+// sites (oidc-claims.ts `loadApprovedBadgeJwts`, share-links.ts
+// `loadShareLinkByToken`) catch it PER BADGE and OMIT that one badge from the
+// disclosure — audit-logged, login/page unaffected — never failing the whole
+// token / userinfo / share request. That per-badge catch is what makes this
+// throw the fail-closed-OMIT posture for a claim set the current schema rejects.
 export function sanitizeDisclosedClaims(
   claims: Record<string, unknown>,
   vcType: string[],

@@ -3,6 +3,7 @@ import { createHmac, randomBytes } from "node:crypto";
 import { BADGE_TYPES } from "@minister/shared";
 import { buildPairwiseUserDid, reMintVc } from "@minister/vc";
 
+import { audit } from "@/lib/audit";
 import { sanitizeDisclosedClaims } from "@/lib/disclosure-claims";
 import { getIssuer } from "@/lib/issuer";
 import { prisma } from "@/lib/prisma";
@@ -132,6 +133,30 @@ export async function loadShareLinkByToken(token: string): Promise<{
       // Unknown badge type: nothing to render — skip BEFORE signing; we
       // never re-sign an artifact we won't serve.
       if (!meta) return null;
+      // Per-badge FAIL-CLOSED OMIT (ADR M5), same posture as the OIDC disclosure
+      // path: a re-mint / sanitize throw on ONE badge (a stored VC the current
+      // schema now rejects, a signature failure) omits only THAT badge from the
+      // share page — it must never 500 the whole page and kill every other badge
+      // on the link. Audit-logged so a systematic drift stays visible.
+      let vcJwt: string;
+      try {
+        vcJwt = await reMintVc(issuer, b.vcJwt, {
+          subjectId,
+          jti: shareLinkPairwiseJti(b.id, row.id),
+          maxExpiresAt:
+            b.expiresAt !== null && b.expiresAt < row.expiresAt ? b.expiresAt : row.expiresAt,
+          // Strip any legacy claim the current schema has since removed (e.g. the
+          // pre-Phase-1 oauth-account Sybil anchor) before re-signing.
+          sanitizeClaims: sanitizeDisclosedClaims,
+        });
+      } catch (err) {
+        await audit(row.userId, "sharelink.badge_disclosure_omitted", {
+          badgeId: b.id,
+          shareLinkId: row.id,
+          reason: err instanceof Error ? err.message : String(err),
+        });
+        return null;
+      }
       return {
         // The per-link jti, not the raw badge id: this shape is a disclosure
         // payload ("any future API"), and the stored id is the correlator the
@@ -142,15 +167,7 @@ export async function loadShareLinkByToken(token: string): Promise<{
         description: meta.description,
         iconKey: meta.iconKey,
         attributes: b.attributes as Record<string, unknown>,
-        vcJwt: await reMintVc(issuer, b.vcJwt, {
-          subjectId,
-          jti: shareLinkPairwiseJti(b.id, row.id),
-          maxExpiresAt:
-            b.expiresAt !== null && b.expiresAt < row.expiresAt ? b.expiresAt : row.expiresAt,
-          // Strip any legacy claim the current schema has since removed (e.g. the
-          // pre-Phase-1 oauth-account Sybil anchor) before re-signing.
-          sanitizeClaims: sanitizeDisclosedClaims,
-        }),
+        vcJwt,
       };
     }),
   );
