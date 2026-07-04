@@ -32,8 +32,12 @@ export async function issueBadge(args: {
   // duplicate insert fails with P2002 instead of minting a second badge; the
   // caller decides whether that is benign (see auto-issue-email-domain).
   dedupeKey?: string | null;
+  // Opaque handle into the Sybil-dedup nullifier ledger, set by the wizard
+  // runtime AFTER it has registered the anchor and DISCARDED it. null for
+  // badges with no nullifier. Persisted on Badge.nullifierRef.
+  nullifierRef?: string | null;
 }): Promise<string> {
-  const { userId, pluginId, badge, dedupeKey } = args;
+  const { userId, pluginId, badge, dedupeKey, nullifierRef } = args;
 
   const meta = BADGE_TYPES[badge.type];
   if (!meta) {
@@ -56,6 +60,7 @@ export async function issueBadge(args: {
         expiresAt: badge.expiresAt ?? null,
         pluginId,
         dedupeKey: dedupeKey ?? null,
+        nullifierRef: nullifierRef ?? null,
       },
     });
 

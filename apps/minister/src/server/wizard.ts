@@ -3,10 +3,21 @@ import type { IssuedBadge, PluginContext, WizardState } from "@minister/plugin-s
 import type { Prisma } from "@/generated/prisma";
 import { audit } from "@/lib/audit";
 import { sendMail } from "@/lib/mailer";
+import { ensureDedupHandle, nullifierService, runPostCommit } from "@/lib/nullifier";
 import { prisma } from "@/lib/prisma";
 import { getPlugin } from "@/plugins/registry";
 import { issueBadge } from "@/server/issue-badge";
 import { pendingTokenFor } from "@/server/wizard-helpers";
+
+// Thrown when a Sybil-anchored badge's credential is already linked to another
+// account (registerDedup → `taken`). Surfaced to the wizard UI as an error, not
+// a 500.
+export class SybilTakenError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "SybilTakenError";
+  }
+}
 
 const SESSION_TTL_MINUTES = 60;
 
@@ -142,13 +153,22 @@ export async function submitStep(
       return { kind: "continue", state: result.state };
     }
     case "complete": {
-      const badgeIds = await issueBadgesAndComplete({
-        sessionId,
-        userId,
-        pluginId: row.pluginId,
-        issued: result.badges,
-      });
-      return { kind: "complete", badgeIds };
+      try {
+        const badgeIds = await issueBadgesAndComplete({
+          sessionId,
+          userId,
+          pluginId: row.pluginId,
+          issued: result.badges,
+        });
+        return { kind: "complete", badgeIds };
+      } catch (err) {
+        // A Sybil-dedup collision is a user-facing outcome (this credential is
+        // already linked elsewhere), not a server fault — surface its message.
+        if (err instanceof SybilTakenError) {
+          return { kind: "error", message: err.message };
+        }
+        throw err;
+      }
     }
     case "error":
       return { kind: "error", message: result.message };
@@ -204,6 +224,20 @@ export async function resumeViaPendingToken(args: {
 // Helpers
 // ---------------------------------------------------------------------------
 
+// THE central Sybil-anchor discard point. Any plugin that emits an
+// `IssuedBadge.sybilAnchor` gets the SAME treatment here — nowhere else:
+//   1. nullify the anchor (registerDedup) BEFORE minting, refusing a `taken`
+//      credential;
+//   2. persist only the opaque Badge.nullifierRef;
+//   3. DISCARD the raw anchor (it is never passed to issueBadge, so it never
+//      reaches Badge.attributes/claims or the VC);
+//   4. SCRUB the wizard-session state on completion so no anchor a plugin
+//      stashed in `state.data` across a round trip survives at rest.
+//
+// ⚠ registerDedup performs network I/O in the Phase 3 backend: it runs here,
+// OUTSIDE any transaction (issueBadge opens its own per-badge tx). A fresh
+// `registered` entry is released if the subsequent mint fails, so a signing
+// error never strands the credential.
 async function issueBadgesAndComplete(args: {
   sessionId: string;
   userId: string;
@@ -212,13 +246,50 @@ async function issueBadgesAndComplete(args: {
 }): Promise<string[]> {
   const { sessionId, userId, pluginId, issued } = args;
 
+  const anchorSeen = issued.some((b) => typeof b.sybilAnchor === "string");
+  // Minted once, lazily, only if this batch actually nullifies something.
+  let ownerHandle: string | null = null;
+
   const createdIds: string[] = [];
   for (const badge of issued) {
-    // Shared mint path — see src/server/issue-badge.ts. Unknown badge types
-    // throw there; surface which plugin produced it.
+    let nullifierRef: string | null = null;
+    let freshlyRegistered = false;
+
+    if (typeof badge.sybilAnchor === "string") {
+      if (!ownerHandle) ownerHandle = await ensureDedupHandle(userId);
+      const reg = await nullifierService.registerDedup({
+        anchor: badge.sybilAnchor,
+        badgeType: badge.type,
+        ownerHandle,
+      });
+      if (reg.status === "taken") {
+        // One-credential-one-account. Message is intentionally concrete for the
+        // only anchor-emitting plugin today (github); generic wiring, specific copy.
+        throw new SybilTakenError(
+          "This GitHub account is already linked to another Minister account.",
+        );
+      }
+      nullifierRef = reg.entryRef;
+      freshlyRegistered = reg.status === "registered";
+    }
+
+    // Shared mint path — see src/server/issue-badge.ts. `badge` is an
+    // IssuedBadge; issueBadge reads only BadgeToIssue fields, so `sybilAnchor`
+    // is structurally dropped and never persisted.
     try {
-      createdIds.push(await issueBadge({ userId, pluginId, badge }));
+      createdIds.push(await issueBadge({ userId, pluginId, badge, nullifierRef }));
     } catch (err) {
+      // Compensate: a just-created ledger entry with no badge would strand the
+      // credential. Release ONLY a fresh registration (never an `already_yours`
+      // entry that predates this issuance).
+      if (freshlyRegistered && nullifierRef && ownerHandle) {
+        const handle = ownerHandle;
+        const ref = nullifierRef;
+        await runPostCommit(
+          () => nullifierService.release({ entryRef: ref, ownerHandle: handle }),
+          "release-after-mint-failure",
+        );
+      }
       if (err instanceof Error && err.message.startsWith("Unknown badge type:")) {
         throw new Error(`Plugin ${pluginId} produced an ${err.message.toLowerCase()}`);
       }
@@ -228,7 +299,14 @@ async function issueBadgesAndComplete(args: {
 
   await prisma.wizardSession.update({
     where: { id: sessionId },
-    data: { completedAt: new Date(), pendingToken: null },
+    data: {
+      completedAt: new Date(),
+      pendingToken: null,
+      // Scrub-on-completion: once an anchor has been nullified, overwrite the
+      // persisted state so nothing a plugin stashed across the round trip
+      // (github: none; email-domain in Phase 5: the address) survives at rest.
+      ...(anchorSeen ? { state: { scrubbed: true } as Prisma.InputJsonValue } : {}),
+    },
   });
 
   return createdIds;
