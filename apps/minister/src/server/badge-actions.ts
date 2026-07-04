@@ -107,13 +107,26 @@ export async function deleteBadge(input: z.infer<typeof DeleteInput>) {
 
   // Post-commit release (§2.6): the badge is gone; release with retry. A
   // release failure strands the credential (conservative), never bypasses dedup.
+  //
+  // Sibling-ref guard: re-issuing a credential from the same account yields a
+  // SECOND Badge row pointing at the SAME nullifierRef (registerDedup →
+  // `already_yours`). Releasing the ledger entry while a sibling badge still
+  // references it would be a dedup bypass — the freed entry lets a DIFFERENT
+  // account register the same credential while this user still holds a live,
+  // signed sibling badge. So release ONLY when no other Badge row references the
+  // entry after this delete. A concurrent re-mint that inserts a sibling between
+  // this count and a release would strand the entry (dangling ref, fails closed
+  // at disclosure) — the documented conservative failure mode, never a bypass.
   if (badge.nullifierRef && owner?.dedupHandle) {
     const ref = badge.nullifierRef;
     const ownerHandle = owner.dedupHandle;
-    await runPostCommit(
-      () => nullifierService.release({ entryRef: ref, ownerHandle }),
-      "release-on-badge-delete",
-    );
+    const siblingsSharingRef = await prisma.badge.count({ where: { nullifierRef: ref } });
+    if (siblingsSharingRef === 0) {
+      await runPostCommit(
+        () => nullifierService.release({ entryRef: ref, ownerHandle }),
+        "release-on-badge-delete",
+      );
+    }
   }
 
   await audit(userId, "badge.deleted", { badgeId });
