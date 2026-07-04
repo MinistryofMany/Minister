@@ -22,9 +22,13 @@ import { submitStepAction } from "@/server/wizard-actions";
 interface Props {
   sessionId: string;
   initialState: WizardState;
+  // When false, the magic-link step shows the dev hint that the link is
+  // printed to the server console. The server resolves this from the mailer
+  // (a real SMTP/Resend transport ⇒ true), so the hint never renders in prod.
+  mailConfigured: boolean;
 }
 
-export function WizardClient({ sessionId, initialState }: Props) {
+export function WizardClient({ sessionId, initialState, mailConfigured }: Props) {
   const router = useRouter();
   const [state, setState] = useState<WizardState>(initialState);
   const [error, setError] = useState<string | null>(null);
@@ -58,7 +62,7 @@ export function WizardClient({ sessionId, initialState }: Props) {
       case "form":
         return <FormStep payload={step.payload} pending={pending} onSubmit={handleSubmit} />;
       case "magic-link":
-        return <MagicLinkStep payload={step.payload} />;
+        return <MagicLinkStep payload={step.payload} mailConfigured={mailConfigured} />;
       case "redirect":
         return <RedirectStep payload={step.payload} />;
       case "extension-action":
@@ -192,7 +196,13 @@ function ExtensionActionStep({ payload }: { payload: ExtensionActionStepPayload 
   );
 }
 
-function MagicLinkStep({ payload }: { payload: MagicLinkStepPayload }) {
+function MagicLinkStep({
+  payload,
+  mailConfigured,
+}: {
+  payload: MagicLinkStepPayload;
+  mailConfigured: boolean;
+}) {
   return (
     <>
       <CardHeader>
@@ -204,10 +214,12 @@ function MagicLinkStep({ payload }: { payload: MagicLinkStepPayload }) {
       </CardHeader>
       <CardContent className="space-y-3 text-sm text-neutral-600 dark:text-neutral-400">
         {payload.description ? <p>{payload.description}</p> : null}
-        <p className="text-xs text-neutral-500">
-          In dev, the link is printed to the server console — look for
-          <code className="ml-1">[minister:mailer]</code>.
-        </p>
+        {mailConfigured ? null : (
+          <p className="text-xs text-neutral-500">
+            In dev, the link is printed to the server console — look for
+            <code className="ml-1">[minister:mailer]</code>.
+          </p>
+        )}
       </CardContent>
     </>
   );

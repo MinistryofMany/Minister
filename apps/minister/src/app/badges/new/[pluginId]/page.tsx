@@ -2,6 +2,7 @@ import { headers } from "next/headers";
 import { notFound, redirect } from "next/navigation";
 
 import { WizardClient } from "@/components/wizard-client";
+import { mailTransportConfigured } from "@/lib/mailer";
 import { getCurrentSession } from "@/lib/session";
 import { getPlugin, isPluginConfigured } from "@/plugins/registry";
 import { loadWizard, startWizard } from "@/server/wizard";
@@ -53,7 +54,11 @@ export default async function PluginWizardPage({ params, searchParams }: PagePro
         </p>
       </header>
 
-      <WizardClient sessionId={wsid} initialState={state} />
+      <WizardClient
+        sessionId={wsid}
+        initialState={state}
+        mailConfigured={mailTransportConfigured()}
+      />
     </div>
   );
 }
