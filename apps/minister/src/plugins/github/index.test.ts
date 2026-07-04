@@ -129,6 +129,30 @@ describe("githubPlugin.handleStep — code exchange + /user fetch", () => {
     expect((userInit?.headers as Record<string, string>).Authorization).toBe("Bearer gho_test");
   });
 
+  it("audits the verified event with ONLY the handle + issued types — never the numeric id", async () => {
+    // The numeric github id is the raw Sybil anchor. It must be nullified and
+    // discarded, and the AuditLog is one of the at-rest stores it must never
+    // reach — this call USED to log { accountId }. Pin the exact metadata shape
+    // so re-adding the id (or any other key) fails the typecheck-free way here.
+    fetchSpy
+      .mockResolvedValueOnce(mockOk({ access_token: "gho_test" }))
+      .mockResolvedValueOnce(mockOk({ id: 998877665544, login: "octocat" }));
+
+    const c = ctx();
+    const result = await githubPlugin.handleStep(authState(), { code: "GH_CODE" }, c);
+    expect(result.kind).toBe("complete");
+
+    // Exact-object match: any extra key (a re-added accountId) breaks it.
+    expect(c.audit.log).toHaveBeenCalledWith("plugin.github.verified", {
+      handle: "octocat",
+      issuedTypes: ["oauth-account"],
+    });
+    // Belt-and-suspenders: the numeric id appears in NO serialized audit call.
+    for (const call of vi.mocked(c.audit.log).mock.calls) {
+      expect(JSON.stringify(call)).not.toContain("998877665544");
+    }
+  });
+
   it("derives account-age and social-following from a full /user response", async () => {
     // created_at ~11 years before now, 1500 followers.
     fetchSpy.mockResolvedValueOnce(mockOk({ access_token: "gho_test" })).mockResolvedValueOnce(
