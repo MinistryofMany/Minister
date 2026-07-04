@@ -251,26 +251,74 @@ async function issueBadgesAndComplete(args: {
   let ownerHandle: string | null = null;
 
   const createdIds: string[] = [];
+  // Fresh (first-sighting) ledger registrations from THIS batch, for
+  // compensating release on a mid-batch abort. Never includes an
+  // `already_yours` entry that predates the batch. Within a batch every badge
+  // has a distinct type, so registerDedup keys (anchor, type) never collide —
+  // no two refs here are shared, and releasing them can free no live sibling.
+  const freshRegs: Array<{ ref: string; handle: string }> = [];
+
+  // Undo a partially-applied batch on abort: delete the badges already minted
+  // in this call and release only this batch's fresh registrations, leaving the
+  // account exactly as before the attempt (no orphan badge, no stranded entry).
+  // Scrubs the session state too when the batch carried an anchor, so a
+  // plugin-stashed anchor never rides the dead session's TTL at rest.
+  const compensateBatch = async (): Promise<void> => {
+    if (createdIds.length > 0) {
+      await prisma.badge.deleteMany({ where: { id: { in: createdIds }, userId } });
+    }
+    for (const { ref, handle } of freshRegs) {
+      await runPostCommit(
+        () => nullifierService.release({ entryRef: ref, ownerHandle: handle }),
+        "release-on-batch-abort",
+      );
+    }
+    if (anchorSeen) {
+      await prisma.wizardSession.update({
+        where: { id: sessionId },
+        data: { state: { scrubbed: true } as Prisma.InputJsonValue },
+      });
+    }
+  };
+
   for (const badge of issued) {
     let nullifierRef: string | null = null;
-    let freshlyRegistered = false;
 
     if (typeof badge.sybilAnchor === "string") {
+      const anchor = badge.sybilAnchor;
+
+      // Value-based discard discipline (not just field-based): issueBadge signs
+      // schema-parsed claims and persists `attributes` VERBATIM, so a future
+      // anchor-emitting plugin that copied the raw anchor into either would leak
+      // it at rest despite this central discard point stripping the `sybilAnchor`
+      // FIELD. Refuse issuance outright if the anchor VALUE appears in the badge
+      // it is meant to have been discarded from — fail closed.
+      if (
+        JSON.stringify(badge.attributes).includes(anchor) ||
+        JSON.stringify(badge.claims).includes(anchor)
+      ) {
+        await compensateBatch();
+        throw new Error(
+          `Plugin ${pluginId} leaked a Sybil anchor into badge attributes/claims — refusing to issue`,
+        );
+      }
+
       if (!ownerHandle) ownerHandle = await ensureDedupHandle(userId);
       const reg = await nullifierService.registerDedup({
-        anchor: badge.sybilAnchor,
+        anchor,
         badgeType: badge.type,
         ownerHandle,
       });
       if (reg.status === "taken") {
         // One-credential-one-account. Message is intentionally concrete for the
         // only anchor-emitting plugin today (github); generic wiring, specific copy.
+        await compensateBatch();
         throw new SybilTakenError(
           "This GitHub account is already linked to another Minister account.",
         );
       }
       nullifierRef = reg.entryRef;
-      freshlyRegistered = reg.status === "registered";
+      if (reg.status === "registered") freshRegs.push({ ref: reg.entryRef, handle: ownerHandle });
     }
 
     // Shared mint path — see src/server/issue-badge.ts. `badge` is an
@@ -279,17 +327,10 @@ async function issueBadgesAndComplete(args: {
     try {
       createdIds.push(await issueBadge({ userId, pluginId, badge, nullifierRef }));
     } catch (err) {
-      // Compensate: a just-created ledger entry with no badge would strand the
-      // credential. Release ONLY a fresh registration (never an `already_yours`
-      // entry that predates this issuance).
-      if (freshlyRegistered && nullifierRef && ownerHandle) {
-        const handle = ownerHandle;
-        const ref = nullifierRef;
-        await runPostCommit(
-          () => nullifierService.release({ entryRef: ref, ownerHandle: handle }),
-          "release-after-mint-failure",
-        );
-      }
+      // A mid-batch mint failure strands the just-registered entry AND leaves any
+      // earlier badges in this batch minted (partial success presented as an
+      // error). Roll the whole batch back before surfacing the fault.
+      await compensateBatch();
       if (err instanceof Error && err.message.startsWith("Unknown badge type:")) {
         throw new Error(`Plugin ${pluginId} produced an ${err.message.toLowerCase()}`);
       }
@@ -302,10 +343,11 @@ async function issueBadgesAndComplete(args: {
     data: {
       completedAt: new Date(),
       pendingToken: null,
-      // Scrub-on-completion: once an anchor has been nullified, overwrite the
-      // persisted state so nothing a plugin stashed across the round trip
-      // (github: none; email-domain in Phase 5: the address) survives at rest.
-      ...(anchorSeen ? { state: { scrubbed: true } as Prisma.InputJsonValue } : {}),
+      // Scrub-on-completion (unconditional): nothing reads a completed session's
+      // state again, so overwrite it so no anchor a plugin stashed across a round
+      // trip (github: none; email-domain in Phase 5: the address) survives at
+      // rest — independent of whether THIS batch carried an anchor.
+      state: { scrubbed: true } as Prisma.InputJsonValue,
     },
   });
 

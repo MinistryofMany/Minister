@@ -131,6 +131,17 @@ import { submitStep } from "@/server/wizard";
 const ANCHOR = "998877665544"; // a distinctive github numeric id to scan for
 const USER = "user_wiz";
 
+// A signed VC is a JWT whose payload is base64url — a raw substring scan of the
+// compact JWT would NEVER see the anchor even if it leaked (the encoded form of
+// "998877665544" is not that substring). Decode the payload segment before
+// scanning, so the "covers the signed vcJwt" claim is real and not vacuous.
+function decodedJwtPayload(jwt: unknown): string {
+  if (typeof jwt !== "string") return "";
+  const parts = jwt.split(".");
+  if (parts.length < 2) return "";
+  return Buffer.from(parts[1]!, "base64url").toString("utf8");
+}
+
 let tmpDir: string;
 let issuer: Issuer;
 
@@ -208,7 +219,11 @@ describe("wizard runtime — Sybil-anchor discard + scrub", () => {
     expect(badge.nullifierRef).toBe(h.tables.nullifierEntry[0]!.id);
 
     // STRING-SCAN every at-rest surface for the raw anchor — it must appear in NONE.
-    expect(JSON.stringify(badge)).not.toContain(ANCHOR); // attributes + signed vcJwt
+    // Badge.attributes is plain JSON; the signed vcJwt is base64url, so decode its
+    // payload before scanning (a raw JSON.stringify(badge) scan of the JWT column
+    // would be vacuous — the encoded form hides the substring).
+    expect(JSON.stringify(badge.attributes)).not.toContain(ANCHOR); // attributes (plain JSON)
+    expect(decodedJwtPayload(badge.vcJwt)).not.toContain(ANCHOR); // DECODED signed VC payload
     expect(JSON.stringify(h.tables.auditLog)).not.toContain(ANCHOR); // audit metadata
     const session = h.tables.wizardSession[0]!;
     expect(JSON.stringify(session.state)).not.toContain(ANCHOR); // scrubbed state.data
