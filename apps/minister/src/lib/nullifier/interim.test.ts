@@ -139,6 +139,39 @@ describe("length-prefix encoding", () => {
 });
 
 // ===========================================================================
+// §2.1 per-field byte caps — interim must reject what Signet (Phase 3) rejects
+// ===========================================================================
+describe("§2.1 per-field caps", () => {
+  const CAP_SECRET = "field-cap-test-secret-at-least-32-chars!!";
+  const savedCap = process.env.OIDC_PAIRWISE_SECRET;
+  beforeEach(() => {
+    process.env.OIDC_PAIRWISE_SECRET = CAP_SECRET;
+  });
+  afterAll(() => {
+    if (savedCap === undefined) delete process.env.OIDC_PAIRWISE_SECRET;
+    else process.env.OIDC_PAIRWISE_SECRET = savedCap;
+  });
+
+  it("accepts fields at the cap and rejects one byte over", () => {
+    // anchor cap 512
+    expect(() => deriveDedupValue("a".repeat(512), "oauth-account")).not.toThrow();
+    expect(() => deriveDedupValue("a".repeat(513), "oauth-account")).toThrow(/anchor too long/);
+    // badge_type cap 64
+    expect(() => deriveDedupValue("gh_1", "t".repeat(64))).not.toThrow();
+    expect(() => deriveDedupValue("gh_1", "t".repeat(65))).toThrow(/badge_type too long/);
+    // clientId cap 256
+    const value = deriveDedupValue("gh_1", "oauth-account");
+    expect(() => deriveDisclosedNullifier(value, "c".repeat(256))).not.toThrow();
+    expect(() => deriveDisclosedNullifier(value, "c".repeat(257))).toThrow(/clientId too long/);
+  });
+
+  it("measures the cap in BYTES, not code points (multi-byte UTF-8)", () => {
+    // A 4-byte emoji × 129 = 516 bytes > 512, though only 129 code points.
+    expect(() => deriveDedupValue("😀".repeat(129), "oauth-account")).toThrow(/anchor too long/);
+  });
+});
+
+// ===========================================================================
 // FROZEN-BUT-NON-FOREVER golden vectors (interim backend, Phases 1-3 ONLY)
 //
 // ⚠ These pin the INTERIM HMAC construction. Unlike the pairwise vectors, they

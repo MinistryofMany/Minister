@@ -9,6 +9,23 @@ import { createHmac, hkdfSync } from "node:crypto";
 // Fields are capped so the 2-byte length can always hold them.
 const MAX_FIELD_BYTES = 0xffff;
 
+// §2.1 frozen per-field byte caps. The LP structure alone prevents collisions,
+// but the frozen spec bounds each input field individually and the Phase 3
+// Signet backend WILL enforce these — so the interim backend must reject the
+// SAME inputs, or a long anchor that passes here would only fail at the backend
+// flip. Enforced at the call sites below (not inside lp/lpStr, which also encode
+// fixed-length internal fields like the stored 32-byte HMAC value).
+const MAX_ANCHOR_BYTES = 512;
+const MAX_BADGE_TYPE_BYTES = 64;
+const MAX_CLIENT_ID_BYTES = 256;
+
+function capField(value: string, maxBytes: number, field: string): void {
+  const len = Buffer.byteLength(value, "utf8");
+  if (len > maxBytes) {
+    throw new Error(`nullifier field ${field} too long: ${len} > ${maxBytes} bytes`);
+  }
+}
+
 // Length-prefix an already-binary field (e.g. a stored HMAC value).
 export function lp(bytes: Buffer): Buffer {
   if (bytes.length > MAX_FIELD_BYTES) {
@@ -53,6 +70,8 @@ function interimKey(): Buffer {
 // Returned as raw bytes (stored as Prisma Bytes) so the UNIQUE comparison is
 // exact byte equality with no encoding ambiguity.
 export function deriveDedupValue(anchor: string, badgeType: string): Buffer {
+  capField(anchor, MAX_ANCHOR_BYTES, "anchor");
+  capField(badgeType, MAX_BADGE_TYPE_BYTES, "badge_type");
   const msg = Buffer.concat([lpStr("dedup"), lpStr(anchor), lpStr(badgeType)]);
   return createHmac("sha256", interimKey()).update(msg).digest();
 }
@@ -64,6 +83,7 @@ export function deriveDedupValue(anchor: string, badgeType: string): Buffer {
 // (value, clientId): same credential ⇒ same per-RP nullifier, across accounts
 // and across account delete/re-create.
 export function deriveDisclosedNullifier(value: Buffer, clientId: string): string {
+  capField(clientId, MAX_CLIENT_ID_BYTES, "clientId");
   const msg = Buffer.concat([lpStr("rp"), lp(value), lpStr(clientId)]);
   const mac = createHmac("sha256", interimKey()).update(msg).digest("base64url");
   return `mnv1:${mac}`;
