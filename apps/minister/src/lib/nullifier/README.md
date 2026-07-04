@@ -41,6 +41,22 @@ are **replaced**, and every interim badge is reissued (free at zero users). The
 The interim golden vectors (`interim.test.ts`) are therefore **NON-forever** — unlike
 the pairwise golden vectors, a value change here is not a permanent wire break.
 
+### `users == 0` deploy gate
+
+Every Phase 1–5 deploy asserts the window's precondition with
+`pnpm --filter @minister/app users:count` (`scripts/count-users.ts`): it counts real
+user rows — **excluding** operator accounts (`isAdmin`), tombstoned merge donors
+(`mergedIntoUserId != null`), and an explicit email allowlist
+(`--exclude-email <addr>` / `COUNT_USERS_EXCLUDE_EMAILS`) — and **exits non-zero if any
+remain**, so a pipeline gates on it:
+
+```sh
+pnpm --filter @minister/app users:count && ./deploy.sh
+```
+
+A non-zero exit means real users have arrived: STOP and re-plan the interim window
+(build plan risk #2), do not deploy an interim-backend build over live user data.
+
 ## ⚠ Two nullifier primitives — non-interchangeable (M3)
 
 |                | `@ministryofmany/nullifier`  | Minister gating nullifier (this dir)             |
