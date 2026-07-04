@@ -104,6 +104,35 @@ describe("reMintVc", () => {
     expect(claims).toEqual({ provider: "github", accountId: "gh_123", handle: "octocat" });
   });
 
+  it("applies the sanitizeClaims hook to strip a legacy claim before re-signing", async () => {
+    // A pre-Phase-1 oauth-account VC carrying the raw Sybil anchor.
+    const original = await signOriginal(issuer, {
+      claims: { provider: "github", accountId: "998877665544", handle: "octocat" },
+      credentialType: "MinisterOauthAccountCredential",
+    });
+    const pairwise = buildPairwiseUserDid(issuer.domain, "PAIRWISE_SANITIZE");
+
+    // Hook re-parses through a "current" schema that no longer has accountId.
+    const jwt = await reMintVc(issuer, original, {
+      subjectId: pairwise,
+      jti: "jti-sanitized",
+      sanitizeClaims: (claims) => {
+        const { accountId: _dropped, ...rest } = claims;
+        return rest;
+      },
+    });
+    const v = await verifyVc(issuer, jwt);
+
+    const { id, issuanceMonth, ...claims } = v.vc.credentialSubject;
+    expect(id).toBe(pairwise);
+    expect(issuanceMonth).toMatch(/^\d{4}-\d{2}$/);
+    // The anchor is gone from the claims AND from the encoded JWT payload.
+    expect(claims).toEqual({ provider: "github", handle: "octocat" });
+    expect("accountId" in claims).toBe(false);
+    const payload = decodeJwt(jwt);
+    expect(JSON.stringify(payload)).not.toContain("998877665544");
+  });
+
   it("sets the provided per-RP jti and never carries the raw badge id through", async () => {
     const original = await signOriginal(issuer, { jti: "badge_cuid_original" });
     const pairwise = buildPairwiseUserDid(issuer.domain, "S");

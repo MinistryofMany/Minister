@@ -1,5 +1,6 @@
 import { buildPairwiseUserDid, reMintVc } from "@minister/vc";
 
+import { sanitizeDisclosedClaims } from "@/lib/disclosure-claims";
 import { getIssuer } from "@/lib/issuer";
 import { ACCESS_TOKEN_TTL, pairwiseJti } from "@/lib/oidc-tokens";
 import { prisma } from "@/lib/prisma";
@@ -143,6 +144,9 @@ export async function loadApprovedBadgeJwts(
         jti: pairwiseJti(row.id, clientId),
         maxExpiresAt: row.expiresAt,
         disclosureTtlSeconds: BADGE_DISCLOSURE_TTL_SECONDS,
+        // Strip any legacy claim the current schema has since removed (e.g. the
+        // pre-Phase-1 oauth-account Sybil anchor) before re-signing.
+        sanitizeClaims: sanitizeDisclosedClaims,
       }),
     ),
   );

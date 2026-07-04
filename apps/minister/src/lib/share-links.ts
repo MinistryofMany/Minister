@@ -3,6 +3,7 @@ import { createHmac, randomBytes } from "node:crypto";
 import { BADGE_TYPES } from "@minister/shared";
 import { buildPairwiseUserDid, reMintVc } from "@minister/vc";
 
+import { sanitizeDisclosedClaims } from "@/lib/disclosure-claims";
 import { getIssuer } from "@/lib/issuer";
 import { prisma } from "@/lib/prisma";
 
@@ -146,6 +147,9 @@ export async function loadShareLinkByToken(token: string): Promise<{
           jti: shareLinkPairwiseJti(b.id, row.id),
           maxExpiresAt:
             b.expiresAt !== null && b.expiresAt < row.expiresAt ? b.expiresAt : row.expiresAt,
+          // Strip any legacy claim the current schema has since removed (e.g. the
+          // pre-Phase-1 oauth-account Sybil anchor) before re-signing.
+          sanitizeClaims: sanitizeDisclosedClaims,
         }),
       };
     }),
