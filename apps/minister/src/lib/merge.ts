@@ -1,5 +1,6 @@
 import type { Prisma } from "@/generated/prisma";
 import { MERGE_REVERSAL_DAYS } from "@/lib/assurance";
+import { ensureDedupHandle, nullifierService, runPostCommit } from "@/lib/nullifier";
 import { pairwiseSub } from "@/lib/oidc-tokens";
 import { prisma } from "@/lib/prisma";
 
@@ -95,6 +96,10 @@ export interface MergeSnapshot {
   // one primary. Reversal re-promotes them (they're re-pointed back to the donor
   // on un-merge, but restoring isPrimary makes the donor whole).
   demotedPrimaryEmailIds: string[];
+  // Sybil-dedup ledger entry refs the donor held, re-tagged to the survivor's
+  // owner handle POST-COMMIT. reverseMerge re-tags EXACTLY these back to the
+  // donor. Optional for backward compatibility with pre-Phase-1 snapshots.
+  dedupReassigned?: string[];
 }
 
 export interface MergeSummary {
@@ -123,10 +128,30 @@ export async function mergeAccounts(
 
   const now = new Date();
 
-  return prisma.$transaction(async (tx) => {
+  // §2.6: the donor-sub derivations (pairwiseSub today; a Signet mTLS round-trip
+  // from Phase 7) are PRE-COMPUTED here, BEFORE the transaction opens. No PRF /
+  // nullifier network call may run inside an open prisma.$transaction. Collect
+  // the donor's token clientIds, resolve their subs, then transact.
+  const donorTokenClients = await prisma.oidcAccessToken.findMany({
+    where: { userId: donorUserId },
+    select: { clientId: true },
+    distinct: ["clientId"],
+  });
+  const donorSubByClient = new Map<string, string>(
+    donorTokenClients.map((r) => [r.clientId, pairwiseSub(donorUserId, r.clientId)]),
+  );
+
+  const txResult = await prisma.$transaction(async (tx) => {
     const survivor = await tx.user.findUnique({
       where: { id: survivorUserId },
-      select: { id: true, isBanned: true, isAdmin: true, sessionGeneration: true, email: true },
+      select: {
+        id: true,
+        isBanned: true,
+        isAdmin: true,
+        sessionGeneration: true,
+        email: true,
+        dedupHandle: true,
+      },
     });
     const donor = await tx.user.findUnique({
       where: { id: donorUserId },
@@ -136,6 +161,7 @@ export async function mergeAccounts(
         isAdmin: true,
         sessionGeneration: true,
         mergedIntoUserId: true,
+        dedupHandle: true,
       },
     });
     if (!survivor) throw new Error(`Survivor account ${survivorUserId} not found`);
@@ -144,16 +170,35 @@ export async function mergeAccounts(
       throw new Error(`Donor account ${donorUserId} is already merged (tombstoned)`);
     }
 
-    // -----------------------------------------------------------------------
-    // (b-pre) Capture the subject-override seam inputs BEFORE re-pointing the
-    // OidcAccessToken rows — re-pointing fuses the donor's and survivor's token
-    // history and would erase the donor-only/shared distinction.
-    // -----------------------------------------------------------------------
-    const donorTokenClients = await tx.oidcAccessToken.findMany({
+    // Finding 7 — donor-sub precompute drift. `donorSubByClient` was resolved
+    // BEFORE the transaction (§2.6: no PRF/nullifier network call inside an open
+    // tx). A donor token minted for a NEW clientId in that gap would be
+    // re-pointed to the survivor below with NO SubjectOverride / stranded record
+    // and no precomputed sub — the survivor would silently present an
+    // un-preserved sub to that RP. Re-read the donor's distinct token clients
+    // inside the tx and abort on ANY drift; the merge is safe to retry.
+    const donorTokenClientsInTx = await tx.oidcAccessToken.findMany({
       where: { userId: donorUserId },
       select: { clientId: true },
       distinct: ["clientId"],
     });
+    const precomputedClientIds = new Set(donorTokenClients.map((r) => r.clientId));
+    const currentClientIds = donorTokenClientsInTx.map((r) => r.clientId);
+    if (
+      currentClientIds.length !== precomputedClientIds.size ||
+      currentClientIds.some((c) => !precomputedClientIds.has(c))
+    ) {
+      throw new Error(
+        "merge: donor OIDC token clients changed between sub precompute and transaction — aborting (safe to retry)",
+      );
+    }
+
+    // -----------------------------------------------------------------------
+    // (b-pre) Capture the subject-override seam inputs BEFORE re-pointing the
+    // OidcAccessToken rows — re-pointing fuses the donor's and survivor's token
+    // history and would erase the donor-only/shared distinction. The donor
+    // clientIds + their subs were resolved BEFORE the transaction (§2.6).
+    // -----------------------------------------------------------------------
     const survivorTokenClients = await tx.oidcAccessToken.findMany({
       where: { userId: survivorUserId },
       select: { clientId: true },
@@ -173,7 +218,8 @@ export async function mergeAccounts(
     const overridesCreated: MergeSnapshot["overridesCreated"] = [];
     const strandedClients: MergeSnapshot["strandedClients"] = [];
     for (const { clientId } of donorTokenClients) {
-      const donorSub = pairwiseSub(donorUserId, clientId);
+      // Pre-computed before the transaction (§2.6) — never derived in-tx.
+      const donorSub = donorSubByClient.get(clientId)!;
       if (survivorUsedClients.has(clientId)) {
         // Shared RP: the survivor already presents a sub here; the donor's is
         // irreducibly stranded (one login → one sub).
@@ -204,7 +250,10 @@ export async function mergeAccounts(
       donorOwnOverrides,
       donorOwnedClients,
     ] = await Promise.all([
-      tx.badge.findMany({ where: { userId: donorUserId }, select: { id: true } }),
+      tx.badge.findMany({
+        where: { userId: donorUserId },
+        select: { id: true, nullifierRef: true },
+      }),
       tx.shareLink.findMany({ where: { userId: donorUserId }, select: { id: true } }),
       tx.oidcAccessToken.findMany({ where: { userId: donorUserId }, select: { jti: true } }),
       tx.wizardSession.findMany({ where: { userId: donorUserId }, select: { id: true } }),
@@ -506,6 +555,12 @@ export async function mergeAccounts(
       oidcClientOwned: donorOwnedClients.map((r) => r.id),
     };
 
+    // Sybil-dedup refs the donor holds — re-tagged to the survivor POST-COMMIT
+    // (§2.6), recorded so reverseMerge can re-tag exactly these back.
+    const dedupReassigned = donorBadges
+      .map((b) => b.nullifierRef)
+      .filter((r): r is string => typeof r === "string");
+
     const snapshot: MergeSnapshot = {
       version: 1,
       survivorUserId,
@@ -525,6 +580,7 @@ export async function mergeAccounts(
         sessionGeneration: donor.sessionGeneration,
       },
       demotedPrimaryEmailIds,
+      dedupReassigned,
     };
 
     const record = await tx.mergeRecord.create({
@@ -558,12 +614,42 @@ export async function mergeAccounts(
     };
 
     return {
-      mergeRecordId: record.id,
-      moved: movedCounts,
-      overridesCreated: overridesCreated.length,
-      strandedClients: strandedClients.map((c) => c.clientId),
+      summary: {
+        mergeRecordId: record.id,
+        moved: movedCounts,
+        overridesCreated: overridesCreated.length,
+        strandedClients: strandedClients.map((c) => c.clientId),
+      },
+      // Post-commit reassign inputs. donorHandle is non-null whenever the donor
+      // registered any of these refs; survivorHandle may be null (minted below).
+      reassign: {
+        entryRefs: dedupReassigned,
+        donorHandle: donor.dedupHandle,
+      },
     };
   });
+
+  // §2.6 post-commit: re-tag the donor's dedup ledger entries to the survivor.
+  // Runs AFTER the transaction commits, with idempotent retry; a failure leaves
+  // entries under the donor handle (conservative — never a dedup bypass) for
+  // admin reconcile, and never fails the merge.
+  const { entryRefs, donorHandle } = txResult.reassign;
+  if (entryRefs.length > 0 && donorHandle) {
+    await runPostCommit(async () => {
+      // Mint the survivor's receiving handle INSIDE the post-commit op: the
+      // merge transaction has already committed, so a mint failure here must be
+      // retried/swallowed like the reassign itself — never allowed to reject a
+      // completed merge (which would tell the caller a committed merge failed).
+      const survivorHandle = await ensureDedupHandle(survivorUserId);
+      await nullifierService.reassignOwner({
+        entryRefs,
+        fromOwnerHandle: donorHandle,
+        toOwnerHandle: survivorHandle,
+      });
+    }, "reassign-on-merge");
+  }
+
+  return txResult.summary;
 }
 
 // ---------------------------------------------------------------------------
@@ -638,20 +724,28 @@ export async function reverseMerge(mergeRecordId: string): Promise<ReverseResult
   }
 
   const { survivorUserId, donorUserId } = snap;
+  const dedupReassigned = snap.dedupReassigned ?? [];
 
-  return prisma.$transaction(async (tx) => {
+  const txResult = await prisma.$transaction(async (tx) => {
     // Guard: the donor must still be tombstoned INTO this survivor. If something
     // else changed the donor in the meantime, refuse rather than corrupt state.
     const donor = await tx.user.findUnique({
       where: { id: donorUserId },
-      select: { mergedIntoUserId: true },
+      select: { mergedIntoUserId: true, dedupHandle: true },
     });
     if (!donor || donor.mergedIntoUserId !== survivorUserId) {
       return {
-        ok: false,
-        error: "Donor account is no longer in the merged state this record describes",
+        result: {
+          ok: false as const,
+          error: "Donor account is no longer in the merged state this record describes",
+        },
+        reassign: null,
       };
     }
+    const survivor = await tx.user.findUnique({
+      where: { id: survivorUserId },
+      select: { dedupHandle: true },
+    });
 
     let restoredRows = 0;
     const m = snap.moved;
@@ -851,6 +945,32 @@ export async function reverseMerge(mergeRecordId: string): Promise<ReverseResult
       data: { reversedAt: new Date() },
     });
 
-    return { ok: true, restoredRows, recreatedDeleted };
+    return {
+      result: { ok: true as const, restoredRows, recreatedDeleted },
+      reassign: {
+        entryRefs: dedupReassigned,
+        fromHandle: survivor?.dedupHandle ?? null,
+        toHandle: donor.dedupHandle,
+      },
+    };
   });
+
+  // §2.6 post-commit: re-tag EXACTLY the merge's reassigned refs back to the
+  // donor handle. Idempotent retry; conservative on failure (entries stay under
+  // the survivor handle for admin reconcile), never fails the reversal.
+  const r = txResult.reassign;
+  if (r && r.entryRefs.length > 0 && r.fromHandle && r.toHandle) {
+    const { entryRefs, fromHandle, toHandle } = r;
+    await runPostCommit(
+      () =>
+        nullifierService.reassignOwner({
+          entryRefs,
+          fromOwnerHandle: fromHandle,
+          toOwnerHandle: toHandle,
+        }),
+      "reassign-on-reverse-merge",
+    );
+  }
+
+  return txResult.result;
 }

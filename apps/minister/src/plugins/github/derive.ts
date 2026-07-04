@@ -38,12 +38,19 @@ export function highestBucket(value: number, buckets: readonly number[]): number
 // includes oauth-account; appends account-age / social-following only when the
 // source data supports a threshold. `now` is injected for tests.
 export function buildGithubBadges(facts: GithubUserFacts, now: Date): IssuedBadge[] {
-  const accountId = String(facts.id);
+  // The permanent, renumber-proof github numeric id is the Sybil anchor. It is
+  // NEVER a claim or attribute (that was the live raw-anchor leak this fixes);
+  // the wizard runtime nullifies it into an opaque Badge.nullifierRef and
+  // discards it. Only the renameable `login` (handle) is revealed. account-age
+  // and social-following are Sybil-gateable FACTS about the same scarce account,
+  // so they carry the same anchor under their own badge_type.
+  const sybilAnchor = String(facts.id);
   const badges: IssuedBadge[] = [
     {
       type: "oauth-account",
-      attributes: { provider: PROVIDER, accountId, handle: facts.login },
-      claims: { provider: PROVIDER, accountId, handle: facts.login },
+      attributes: { provider: PROVIDER, handle: facts.login },
+      claims: { provider: PROVIDER, handle: facts.login },
+      sybilAnchor,
     },
   ];
 
@@ -56,6 +63,7 @@ export function buildGithubBadges(facts: GithubUserFacts, now: Date): IssuedBadg
           type: "account-age",
           attributes: { provider: PROVIDER, olderThanMonths: bucket },
           claims: { provider: PROVIDER, olderThanMonths: bucket },
+          sybilAnchor,
         });
       }
     }
@@ -68,6 +76,7 @@ export function buildGithubBadges(facts: GithubUserFacts, now: Date): IssuedBadg
         type: "social-following",
         attributes: { provider: PROVIDER, followersAtLeast: bucket },
         claims: { provider: PROVIDER, followersAtLeast: bucket },
+        sybilAnchor,
       });
     }
   }

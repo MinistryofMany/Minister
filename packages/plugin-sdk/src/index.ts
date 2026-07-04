@@ -120,6 +120,15 @@ export interface IssuedBadge {
   // satisfy the badge type's Zod schema (the issuance runtime validates
   // before signing).
   claims: Record<string, unknown>;
+  // IN-MEMORY ONLY, NEVER SERIALIZED. The raw Sybil anchor (a scarce
+  // credential identifier — e.g. a github numeric account id) the wizard
+  // runtime feeds to the nullifier service at issuance. The runtime registers
+  // the dedup entry, writes the resulting opaque Badge.nullifierRef, and
+  // DISCARDS this value: it must never reach Badge.attributes, the VC claims,
+  // wizard-session state, or the AuditLog. A plugin normalizes the anchor
+  // before setting it (normalization is the plugin's job); emitting it opts the
+  // badge into one-credential-one-account dedup. See src/lib/nullifier/.
+  sybilAnchor?: string;
   expiresAt?: Date;
   eligibilities?: Array<{
     badgeType: string;

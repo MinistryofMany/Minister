@@ -197,7 +197,6 @@ export const githubPlugin: Plugin = {
       };
     }
     const ghUser = userParse.data;
-    const accountId = String(ghUser.id);
 
     const badges = buildGithubBadges(
       {
@@ -209,10 +208,11 @@ export const githubPlugin: Plugin = {
       new Date(),
     );
 
-    // Audit the derived badge TYPES only — never the raw counts/date, per the
-    // no-PII rule. accountId + handle are already the oauth-account claim.
+    // Audit the derived badge TYPES + the revealed handle only. The numeric
+    // github id (the Sybil anchor) is DELIBERATELY NOT logged: it is a raw
+    // anchor that must be discarded after nullification, and the AuditLog is one
+    // of the at-rest stores it must never land in (this used to leak it).
     await ctx.audit.log("plugin.github.verified", {
-      accountId,
       handle: ghUser.login,
       issuedTypes: badges.map((b) => b.type),
     });

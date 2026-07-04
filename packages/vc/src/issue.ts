@@ -120,6 +120,14 @@ export interface ReMintOptions {
   maxExpiresAt?: Date | null;
   // `nbf`; defaults to now. `iat` is always re-stamped to now.
   notBefore?: Date;
+  // Optional claims sanitizer, applied to the preserved claim set (after `id`
+  // and the reserved `issuanceMonth` are stripped, before re-signing). The
+  // disclosure paths pass a hook that re-parses claims through the CURRENT
+  // badge-type schema, so a legacy stored VC whose schema has since dropped a
+  // field (e.g. the oauth-account Sybil anchor) re-discloses the CURRENT shape,
+  // not the stale one — making retroactivity code-enforced, not runbook-only.
+  // Omitted = claims preserved verbatim (the default, historical behavior).
+  sanitizeClaims?: (claims: Record<string, unknown>, vcType: string[]) => Record<string, unknown>;
   // Presentation lifetime (seconds from now) of the disclosed copy. The
   // disclosed `exp` is PRESENTATION-SHAPED: it reflects disclosure time (which
   // already varies per disclosure, like `iat`), never the issuance instant.
@@ -218,9 +226,15 @@ export async function reMintVc(
     [ISSUANCE_MONTH_CLAIM]: _storedIssuanceMonth,
     ...claims
   } = original.credentialSubject;
+  // Re-parse through the caller's current-schema hook (if any) BEFORE re-signing,
+  // so a stale field in a legacy stored VC is dropped rather than laundered into
+  // a fresh disclosure. `original.type` was validated as a non-empty string[].
+  const sanitizedClaims = options.sanitizeClaims
+    ? options.sanitizeClaims(claims, original.type)
+    : claims;
   const credentialSubject: CredentialSubject = {
     id: options.subjectId,
-    ...claims,
+    ...sanitizedClaims,
     [ISSUANCE_MONTH_CLAIM]: issuanceMonthOf(decoded.iat),
   };
   const vc: VerifiableCredentialClaim = {

@@ -21,7 +21,14 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 // (buildPairwiseUserDid, reMintVc, pairwiseJti) is the REAL code path, so this
 // exercises the actual disclosure transformation an RP receives.
 vi.mock("@/lib/issuer", () => ({ getIssuer: vi.fn() }));
-vi.mock("@/lib/prisma", () => ({ prisma: { badge: { findMany: vi.fn() } } }));
+vi.mock("@/lib/prisma", () => ({
+  prisma: {
+    badge: { findMany: vi.fn() },
+    // A per-badge disclosure omission (fail-closed omit, ADR M5) audit-logs
+    // instead of failing the whole token/userinfo request.
+    auditLog: { create: vi.fn().mockResolvedValue(undefined) },
+  },
+}));
 
 import { getIssuer } from "@/lib/issuer";
 import { loadApprovedBadgeJwts } from "@/lib/oidc-claims";
@@ -75,6 +82,7 @@ afterAll(async () => {
 
 beforeEach(() => {
   vi.mocked(prisma.badge.findMany).mockReset();
+  vi.mocked(prisma.auditLog.create).mockClear();
 });
 
 // Disclose the same stored badge to a given RP with the sub Minister would
@@ -290,7 +298,10 @@ describe("loadApprovedBadgeJwts — pairwise disclosure (MIN-1)", () => {
   // Signing-oracle defense (defense-in-depth behind the issuer scoping): a row
   // whose vcJwt Minister's key did not sign — a DB-write attacker's forgery —
   // must never be laundered through disclosure into a Minister-signed VC.
-  it("refuses to disclose a stored row whose vcJwt is not signed by Minister's key", async () => {
+  // reMintVc throws on the signature check; the disclosure path OMITS that badge
+  // (fail-closed) and audit-logs — it neither serves the forged badge nor 500s
+  // the whole token/userinfo request (Finding 2).
+  it("omits (never re-signs, never 500s) a stored row whose vcJwt is not signed by Minister's key", async () => {
     const forgedTmp = await mkdtemp(join(tmpdir(), "minister-forged-key-"));
     try {
       _resetIssuerCache();
@@ -309,9 +320,17 @@ describe("loadApprovedBadgeJwts — pairwise disclosure (MIN-1)", () => {
       vi.mocked(prisma.badge.findMany).mockResolvedValue([
         { id: BADGE_ID, vcJwt: forgedVcJwt, expiresAt: null },
       ] as never);
-      await expect(
-        loadApprovedBadgeJwts(USER, CLIENT_A, pairwiseSub(USER, CLIENT_A), [BADGE_ID]),
-      ).rejects.toThrow(/refusing to re-sign/);
+      const out = await loadApprovedBadgeJwts(USER, CLIENT_A, pairwiseSub(USER, CLIENT_A), [
+        BADGE_ID,
+      ]);
+      // The forged badge is omitted (not served), the request does not throw.
+      expect(out).toEqual([]);
+      // The omission is alerted, not silently swallowed.
+      expect(prisma.auditLog.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ action: "oidc.badge_disclosure_omitted" }),
+        }),
+      );
     } finally {
       await rm(forgedTmp, { recursive: true, force: true });
     }

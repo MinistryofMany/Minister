@@ -338,10 +338,17 @@ function reproofErrorMessage(reason: string): string {
 // throw rather than fake a proof — wiring them is a follow-on.
 
 // oauth-account (github): re-run the GitHub OAuth dance with `state` == the
-// attempt nonce, fetch /user, confirm the GitHub account id matches the
-// `accountId` attribute of a held non-public oauth-account badge, then
-// recordReProof(attemptId, "oauth-account", { provenance: "github",
-// proofRef: accountId }). NOT WIRED.
+// attempt nonce, fetch /user, then bind the freshly proven account to a held
+// badge THROUGH THE NULLIFIER LEDGER — the raw `accountId` attribute no longer
+// exists (crypto-core Phase 1 discards the anchor). Derive the dedup value from
+// the fresh github id (deriveDedupValue(String(id), "oauth-account")) and
+// confirm it resolves to the ledger entry behind a held non-public
+// oauth-account badge's `nullifierRef`, owner-checked against the target user's
+// dedupHandle (registerDedup → `already_yours` under that handle is the
+// equivalent test). NEVER match on the renameable `handle`: github handles can
+// be released and re-claimed, so a squatted handle would satisfy the re-proof.
+// Then recordReProof(attemptId, "oauth-account", { provenance: "github" }).
+// NOT WIRED.
 export async function completeOauthAccountReProof(
   _attemptId: string,
   _provider: string,

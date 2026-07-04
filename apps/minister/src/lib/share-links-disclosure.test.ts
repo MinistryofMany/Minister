@@ -24,6 +24,9 @@ vi.mock("@/lib/prisma", () => ({
   prisma: {
     shareLink: { findUnique: vi.fn() },
     badge: { findMany: vi.fn() },
+    // The disclosure paths audit-log a per-badge omission (fail-closed omit,
+    // ADR M5) instead of failing the whole request.
+    auditLog: { create: vi.fn().mockResolvedValue(undefined) },
   },
 }));
 
@@ -51,6 +54,7 @@ let storedVcJwt: string;
 
 const shareFindUnique = vi.mocked(prisma.shareLink.findUnique);
 const badgeFindMany = vi.mocked(prisma.badge.findMany);
+const auditCreate = vi.mocked(prisma.auditLog.create);
 
 function linkRow(overrides: Partial<Record<string, unknown>> = {}) {
   return {
@@ -117,6 +121,7 @@ afterAll(async () => {
 beforeEach(() => {
   shareFindUnique.mockReset();
   badgeFindMany.mockReset();
+  auditCreate.mockClear();
 });
 
 describe("shareLinkPairwiseSub / shareLinkPairwiseJti", () => {
@@ -313,8 +318,10 @@ describe("loadShareLinkByToken — pairwise disclosure re-mint (MIN-1)", () => {
   // Signing-oracle defense, same as the OIDC path: a stored row whose vcJwt
   // Minister's key did not sign (DB-write forgery with the issuer column
   // spoofed to Minister's DID) must never be laundered into a fresh
-  // Minister-signed credential.
-  it("refuses to serve a stored row whose vcJwt is not signed by Minister's key", async () => {
+  // Minister-signed credential. reMintVc throws on the signature check; the
+  // share page OMITS that badge (fail-closed) and audit-logs — it does NOT
+  // serve the forged badge, and it does NOT 500 the whole page (Finding 2).
+  it("omits (never re-signs) a stored row whose vcJwt is not signed by Minister's key", async () => {
     const forgedTmp = await mkdtemp(join(tmpdir(), "minister-share-forged-"));
     try {
       _resetIssuerCache();
@@ -332,7 +339,51 @@ describe("loadShareLinkByToken — pairwise disclosure re-mint (MIN-1)", () => {
       );
       shareFindUnique.mockResolvedValueOnce(linkRow() as never);
       badgeFindMany.mockResolvedValueOnce([badgeRow({ vcJwt: forgedVcJwt })] as never);
-      await expect(loadShareLinkByToken("tok")).rejects.toThrow(/refusing to re-sign/);
+      const result = await loadShareLinkByToken("tok");
+      // The forged badge is omitted, not served — and the page still renders.
+      expect(result).not.toBeNull();
+      expect(result!.badges).toEqual([]);
+      // The omission is alerted, not silently swallowed.
+      expect(auditCreate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ action: "sharelink.badge_disclosure_omitted" }),
+        }),
+      );
+    } finally {
+      await rm(forgedTmp, { recursive: true, force: true });
+    }
+  });
+
+  // Fail-closed OMIT is PER BADGE: one un-re-mintable badge on a link must not
+  // take the other badges (or the page) down with it.
+  it("omits only the failing badge and still discloses the healthy ones", async () => {
+    const forgedTmp = await mkdtemp(join(tmpdir(), "minister-share-mixed-"));
+    try {
+      _resetIssuerCache();
+      const attackerIssuer = await loadIssuer({
+        domain: "ministry.test",
+        devKeyPath: join(forgedTmp, "attacker.jwk"),
+      });
+      _resetIssuerCache();
+      const BAD_ID = "badge_cuid_share_bad00";
+      const forgedVcJwt = await issueVc(
+        attackerIssuer,
+        "email-domain",
+        buildUserDid("ministry.test", USER),
+        { domain: "forged.example" },
+        { jti: BAD_ID, expiresIn: "1y" },
+      );
+      const link = await viewLink(linkRow({ badgeIds: [BADGE_ID, BAD_ID] }), [
+        badgeRow(),
+        badgeRow({ id: BAD_ID, vcJwt: forgedVcJwt }),
+      ]);
+      expect(link).not.toBeNull();
+      // Exactly the healthy badge survives; the forged one is omitted.
+      expect(link!.badges).toHaveLength(1);
+      expect(link!.badges[0]!.type).toBe("email-domain");
+      const verified = await verifyVc(issuer, link!.badges[0]!.vcJwt);
+      expect(verified.vc.credentialSubject.domain).toBe("example.com");
+      expect(auditCreate).toHaveBeenCalledTimes(1);
     } finally {
       await rm(forgedTmp, { recursive: true, force: true });
     }
@@ -342,5 +393,54 @@ describe("loadShareLinkByToken — pairwise disclosure re-mint (MIN-1)", () => {
     const link = await viewLink(linkRow(), [badgeRow({ type: "not-a-real-type" })]);
     expect(link).not.toBeNull();
     expect(link!.badges).toEqual([]);
+  });
+});
+
+describe("loadApprovedBadgeJwts — per-badge fail-closed omit (Finding 2)", () => {
+  const BAD_ID = "badge_cuid_oidc_bad001";
+
+  // A stored account-age VC whose claim the CURRENT schema rejects
+  // (olderThanMonths must be one of 12|24|36|60). sanitizeDisclosedClaims
+  // re-parses through that schema at disclosure, so re-mint THROWS on this one.
+  async function staleAccountAgeVc(): Promise<string> {
+    return issueVc(
+      issuer,
+      "account-age",
+      buildUserDid(issuer.domain, USER),
+      { provider: "github", olderThanMonths: 7 },
+      { jti: BAD_ID, expiresIn: "1y" },
+    );
+  }
+
+  it("omits the one badge whose sanitize throws, discloses the rest, never throws", async () => {
+    const badVc = await staleAccountAgeVc();
+    // Two approved badges: a healthy email-domain VC and the un-sanitizable one.
+    badgeFindMany.mockResolvedValueOnce([
+      { id: BADGE_ID, vcJwt: storedVcJwt, expiresAt: null },
+      { id: BAD_ID, vcJwt: badVc, expiresAt: null },
+    ] as never);
+
+    const jwts = await loadApprovedBadgeJwts(USER, CLIENT, pairwiseSub(USER, CLIENT), [
+      BADGE_ID,
+      BAD_ID,
+    ]);
+
+    // The whole request survived (login is unaffected): exactly the healthy
+    // badge is disclosed, the un-sanitizable one omitted.
+    expect(jwts).toHaveLength(1);
+    const verified = await verifyVc(issuer, jwts[0]!);
+    expect(verified.vc.type).toContain("MinisterEmailDomainCredential");
+    expect(verified.vc.credentialSubject.domain).toBe("example.com");
+
+    // The omission is alerted for the one bad badge only.
+    expect(auditCreate).toHaveBeenCalledTimes(1);
+    expect(auditCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          action: "oidc.badge_disclosure_omitted",
+          metadata: expect.objectContaining({ badgeId: BAD_ID, clientId: CLIENT }),
+        }),
+      }),
+    );
   });
 });
