@@ -29,6 +29,7 @@ interface Tables {
   inviteRedemption: Record<string, unknown>[];
   oidcClient: Record<string, unknown>[];
   mergeRecord: Record<string, unknown>[];
+  nullifierEntry: Record<string, unknown>[];
 }
 
 const h = vi.hoisted(() => {
@@ -50,12 +51,17 @@ const h = vi.hoisted(() => {
     inviteRedemption: [],
     oidcClient: [],
     mergeRecord: [],
+    nullifierEntry: [],
   };
   let idSeq = 1;
 
   // Match a row against a Prisma-style `where`. Supports equality, `{ in: [...] }`,
   // `{ not: null }`, `{ gt: Date }`, and `OR: [...]`.
   function matchValue(rowVal: unknown, cond: unknown): boolean {
+    // Bytes equality (NullifierEntry.value) — compare by content, not reference.
+    if (cond instanceof Uint8Array) {
+      return rowVal instanceof Uint8Array && Buffer.from(rowVal).equals(Buffer.from(cond));
+    }
     if (cond !== null && typeof cond === "object" && !(cond instanceof Date)) {
       const c = cond as Record<string, unknown>;
       if ("in" in c) return (c.in as unknown[]).some((v) => v === rowVal);
@@ -109,7 +115,12 @@ const h = vi.hoisted(() => {
         // Composite-key wheres arrive as { a_b: { a, b } }; flatten them.
         const flat: Record<string, unknown> = {};
         for (const [k, v] of Object.entries(args.where)) {
-          if (v !== null && typeof v === "object" && !(v instanceof Date)) {
+          if (
+            v !== null &&
+            typeof v === "object" &&
+            !(v instanceof Date) &&
+            !(v instanceof Uint8Array)
+          ) {
             Object.assign(flat, v as Record<string, unknown>);
           } else {
             flat[k] = v;
@@ -140,7 +151,12 @@ const h = vi.hoisted(() => {
         async (args: { where: Record<string, unknown>; data: Record<string, unknown> }) => {
           const flat: Record<string, unknown> = {};
           for (const [k, v] of Object.entries(args.where)) {
-            if (v !== null && typeof v === "object" && !(v instanceof Date)) {
+            if (
+              v !== null &&
+              typeof v === "object" &&
+              !(v instanceof Date) &&
+              !(v instanceof Uint8Array)
+            ) {
               Object.assign(flat, v as Record<string, unknown>);
             } else {
               flat[k] = v;
@@ -170,6 +186,12 @@ const h = vi.hoisted(() => {
       create: vi.fn(
         async (args: { data: Record<string, unknown>; select?: Record<string, true> }) => {
           const row = { ...args.data };
+          // NullifierEntry.value is UNIQUE — throw P2002 on a duplicate so the
+          // record-first dedup path is exercised through the merge store too.
+          if (name === "nullifierEntry" && row.value instanceof Uint8Array) {
+            const dup = rows().some((r) => matchValue(r.value, row.value));
+            if (dup) throw Object.assign(new Error("Unique constraint failed"), { code: "P2002" });
+          }
           if (row.id === undefined) row.id = `gen_${idSeq++}`;
           // Mirror the schema's nullable defaults Prisma would supply, so reads see
           // the same shape (a not-yet-reversed MergeRecord has reversedAt === null).
@@ -194,6 +216,8 @@ const h = vi.hoisted(() => {
 vi.mock("@/lib/prisma", () => ({ prisma: h.prisma }));
 
 import { mergeAccounts, reverseMerge, type MergeSnapshot } from "./merge";
+import { deriveDedupValue } from "./nullifier/encoding";
+import { interimBackend } from "./nullifier/interim";
 import { pairwiseSub } from "./oidc-tokens";
 
 const SECRET = "merge-test-secret-which-is-32-chars!!";
@@ -702,5 +726,75 @@ describe("reverseMerge", () => {
     const result = await reverseMerge("nope");
     expect(result.ok).toBe(false);
     expect(result.error).toMatch(/not found/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Sybil-dedup ledger lifecycle across merge (crypto-core Phase 1, item 6/10)
+// ---------------------------------------------------------------------------
+describe("mergeAccounts / reverseMerge — dedup ledger reassignment", () => {
+  const ANCHOR = "gh_merge_anchor_42";
+  const ORIGINAL_PAIRWISE = process.env.OIDC_PAIRWISE_SECRET;
+
+  beforeEach(() => {
+    resetTables();
+    process.env.OIDC_PAIRWISE_SECRET = SECRET;
+  });
+
+  afterAll(() => restoreEnv(ORIGINAL_PAIRWISE, process.env.AUTH_SECRET));
+
+  it("re-tags donor entries to the survivor on merge, and exactly back on reverse", async () => {
+    // Donor holds a github credential; survivor holds none yet.
+    seedUsers({ dedupHandle: null }, { dedupHandle: "donor_handle" });
+    const v = deriveDedupValue(ANCHOR, "oauth-account");
+    h.tables.nullifierEntry.push({
+      id: "entry_donor",
+      value: Uint8Array.from(v),
+      ownerHandle: "donor_handle",
+      badgeType: "oauth-account",
+      createdAt: new Date(),
+    });
+    // The donor's badge references that entry.
+    h.tables.badge.push({
+      id: "badge_donor",
+      userId: DONOR,
+      type: "oauth-account",
+      nullifierRef: "entry_donor",
+    });
+
+    const summary = await mergeAccounts(SURVIVOR, DONOR);
+
+    // Survivor got a handle minted; the entry now belongs to it.
+    const survivor = h.tables.user.find((u) => u.id === SURVIVOR)!;
+    expect(survivor.dedupHandle).toEqual(expect.any(String));
+    const entryAfterMerge = h.tables.nullifierEntry.find((e) => e.id === "entry_donor")!;
+    expect(entryAfterMerge.ownerHandle).toBe(survivor.dedupHandle);
+
+    // The snapshot recorded exactly this ref for the reverse path.
+    const record = h.tables.mergeRecord.find((r) => r.id === summary.mergeRecordId)!;
+    const snap = record.snapshot as MergeSnapshot;
+    expect(snap.dedupReassigned).toEqual(["entry_donor"]);
+
+    // A THIRD account cannot claim the credential while it lives (still one entry).
+    const takenDuring = await interimBackend.registerDedup({
+      anchor: ANCHOR,
+      badgeType: "oauth-account",
+      ownerHandle: "third_party",
+    });
+    expect(takenDuring.status).toBe("taken");
+
+    // Reverse the merge: the entry re-tags EXACTLY back to the donor handle.
+    const reversed = await reverseMerge(summary.mergeRecordId);
+    expect(reversed.ok).toBe(true);
+    const entryAfterReverse = h.tables.nullifierEntry.find((e) => e.id === "entry_donor")!;
+    expect(entryAfterReverse.ownerHandle).toBe("donor_handle");
+
+    // Donor-re-register now succeeds as `already_yours` (it owns the entry again).
+    const donorReRegister = await interimBackend.registerDedup({
+      anchor: ANCHOR,
+      badgeType: "oauth-account",
+      ownerHandle: "donor_handle",
+    });
+    expect(donorReRegister).toEqual({ status: "already_yours", entryRef: "entry_donor" });
   });
 });

@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
 import { audit } from "@/lib/audit";
+import { nullifierService, runPostCommit } from "@/lib/nullifier";
 import { prisma } from "@/lib/prisma";
 import { getCurrentSession } from "@/lib/session";
 
@@ -82,12 +83,37 @@ export async function deleteBadge(input: z.infer<typeof DeleteInput>) {
   const { badgeId } = DeleteInput.parse(input);
   const userId = await requireUserId();
 
+  // Capture the nullifier ref + owner handle BEFORE the delete so the ledger
+  // entry can be released post-delete (a revoked credential must be free to be
+  // re-registered from another account — otherwise it is permanently burned).
+  const badge = await prisma.badge.findFirst({
+    where: { id: badgeId, userId },
+    select: { nullifierRef: true },
+  });
+  if (!badge) {
+    return { ok: false as const, error: "Badge not found" };
+  }
+  const owner = badge.nullifierRef
+    ? await prisma.user.findUnique({ where: { id: userId }, select: { dedupHandle: true } })
+    : null;
+
   const result = await prisma.badge.deleteMany({
     where: { id: badgeId, userId },
   });
 
   if (result.count === 0) {
     return { ok: false as const, error: "Badge not found" };
+  }
+
+  // Post-commit release (§2.6): the badge is gone; release with retry. A
+  // release failure strands the credential (conservative), never bypasses dedup.
+  if (badge.nullifierRef && owner?.dedupHandle) {
+    const ref = badge.nullifierRef;
+    const ownerHandle = owner.dedupHandle;
+    await runPostCommit(
+      () => nullifierService.release({ entryRef: ref, ownerHandle }),
+      "release-on-badge-delete",
+    );
   }
 
   await audit(userId, "badge.deleted", { badgeId });
