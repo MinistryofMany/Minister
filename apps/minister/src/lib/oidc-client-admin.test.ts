@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { allOidcScopes, parseRedirectUris, validateClientScopes } from "./oidc-client-admin";
+import {
+  allOidcScopes,
+  isValidClientId,
+  parseRedirectUris,
+  validateClientId,
+  validateClientScopes,
+} from "./oidc-client-admin";
 
 describe("parseRedirectUris", () => {
   it("accepts one https URI per line and dedupes", () => {
@@ -70,5 +76,36 @@ describe("validateClientScopes", () => {
     expect(scopes).toContain("badge:email-domain");
     expect(scopes).toContain("badge:invite-code");
     expect(scopes).toContain("badge:age-over-21");
+  });
+});
+
+describe("validateClientId (frozen charset guard)", () => {
+  it("accepts a Minister-generated mc_ + base64url id", () => {
+    expect(isValidClientId("mc_abcDEF123_-")).toBe(true);
+    const r = validateClientId("mc_abcDEF123_-");
+    expect(r).toEqual({ ok: true, clientId: "mc_abcDEF123_-" });
+  });
+
+  it("rejects a colon-bearing clientId (the frozen-encoding delimiter risk)", () => {
+    // A colon would collide the legacy `${userId}:${clientId}` pairwise input.
+    const r = validateClientId("mc_evil:injected");
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toContain("^mc_[A-Za-z0-9_-]+$");
+    expect(isValidClientId("mc_evil:injected")).toBe(false);
+  });
+
+  it("rejects ids without the mc_ prefix and other delimiters", () => {
+    expect(isValidClientId("plain_client")).toBe(false);
+    expect(isValidClientId("mc_")).toBe(false); // prefix only, no body
+    expect(isValidClientId("mc_has space")).toBe(false);
+    expect(isValidClientId("mc_has/slash")).toBe(false);
+    expect(isValidClientId("mc_has.dot")).toBe(false);
+  });
+
+  it("allows the legacy demo_client id as an exact-match exception", () => {
+    expect(isValidClientId("demo_client")).toBe(true);
+    // but not a lookalike that merely contains it
+    expect(isValidClientId("demo_client_2")).toBe(false);
+    expect(isValidClientId("xdemo_client")).toBe(false);
   });
 });

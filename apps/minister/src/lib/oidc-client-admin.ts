@@ -5,6 +5,40 @@ import { badgeScopes } from "@/lib/oidc-config";
 
 export const BASE_SCOPES = ["openid", "profile"] as const;
 
+// Frozen clientId charset. Minister-generated ids are `mc_` + base64url
+// (`generateClientId`), so a colon — or any delimiter — can never occur. The
+// pairwise-sub / jti / share-link derivations use a legacy colon-joined input
+// encoding (`${userId}:${clientId}`, `jti:${badgeId}:${clientId}`, etc.); a
+// delimiter inside a clientId would let two distinct (id, clientId) tuples
+// collide into one HMAC input. Admin creation always uses generateClientId, so
+// the only path an operator can smuggle a delimiter through is
+// `scripts/seed-client.ts --client-id`; guard both against it. The value is
+// frozen forever (Signet's /prf/pairwise oracle relies on the encoding), so a
+// re-encode is off the table — a charset guard is the fix (build plan §2.1).
+const CLIENT_ID_RE = /^mc_[A-Za-z0-9_-]+$/;
+
+// The docker-compose demo client (`DEMO_CLIENT_ID`, default `demo_client`)
+// predates the `mc_` convention and the guard. It contains no delimiter, so it
+// is safe; allow its exact id as a legacy exception rather than break the
+// existing bootstrap.
+const LEGACY_CLIENT_IDS = new Set<string>(["demo_client"]);
+
+export function isValidClientId(clientId: string): boolean {
+  return LEGACY_CLIENT_IDS.has(clientId) || CLIENT_ID_RE.test(clientId);
+}
+
+export type ClientIdResult = { ok: true; clientId: string } | { ok: false; error: string };
+
+export function validateClientId(clientId: string): ClientIdResult {
+  if (!isValidClientId(clientId)) {
+    return {
+      ok: false,
+      error: `Invalid client_id "${clientId}": must match ^mc_[A-Za-z0-9_-]+$`,
+    };
+  }
+  return { ok: true, clientId };
+}
+
 export function allOidcScopes(): string[] {
   return [...BASE_SCOPES, ...badgeScopes()];
 }
