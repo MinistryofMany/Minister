@@ -612,17 +612,18 @@ export async function mergeAccounts(
   // admin reconcile, and never fails the merge.
   const { entryRefs, donorHandle } = txResult.reassign;
   if (entryRefs.length > 0 && donorHandle) {
-    // The survivor must own a handle to receive the entries; mint lazily.
-    const survivorHandle = await ensureDedupHandle(survivorUserId);
-    await runPostCommit(
-      () =>
-        nullifierService.reassignOwner({
-          entryRefs,
-          fromOwnerHandle: donorHandle,
-          toOwnerHandle: survivorHandle,
-        }),
-      "reassign-on-merge",
-    );
+    await runPostCommit(async () => {
+      // Mint the survivor's receiving handle INSIDE the post-commit op: the
+      // merge transaction has already committed, so a mint failure here must be
+      // retried/swallowed like the reassign itself — never allowed to reject a
+      // completed merge (which would tell the caller a committed merge failed).
+      const survivorHandle = await ensureDedupHandle(survivorUserId);
+      await nullifierService.reassignOwner({
+        entryRefs,
+        fromOwnerHandle: donorHandle,
+        toOwnerHandle: survivorHandle,
+      });
+    }, "reassign-on-merge");
   }
 
   return txResult.summary;
