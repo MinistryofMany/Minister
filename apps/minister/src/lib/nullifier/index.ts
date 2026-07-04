@@ -138,6 +138,21 @@ export async function ensureDedupHandle(userId: string): Promise<string> {
 // conservative failure mode (never a dedup bypass), reconciled by an admin
 // runbook. NEVER let a release/reassign failure fail the user-facing action —
 // the DB mutation it follows has already committed.
+//
+// Retries use jittered exponential backoff: the interim backend fails rarely
+// (local Prisma), but the Phase 3 Signet backend's expected failure is a
+// transient mTLS/network blip, where immediate retries are worst-case. On
+// terminal failure it routes an AuditLog row (best-effort) plus a console alert
+// so the admin reconcile runbook has a durable record — not just a log line.
+// (Phase 3 follow-up: thread the affected entryRefs into the op signature so the
+// audit row can carry them for a targeted reconcile.)
+const POSTCOMMIT_BASE_DELAY_MS = 50;
+
+function jitteredBackoffMs(attemptIndex: number): number {
+  const base = POSTCOMMIT_BASE_DELAY_MS * 2 ** attemptIndex;
+  return base + Math.floor(Math.random() * base);
+}
+
 export async function runPostCommit(
   op: () => Promise<unknown>,
   context: string,
@@ -150,11 +165,28 @@ export async function runPostCommit(
       return;
     } catch (err) {
       lastErr = err;
+      // Backoff before the next attempt only (never after the last).
+      if (i < attempts - 1) {
+        await new Promise((resolve) => setTimeout(resolve, jitteredBackoffMs(i)));
+      }
     }
   }
+  const message = lastErr instanceof Error ? lastErr.message : String(lastErr);
   // Operational alert; the op is a credential-ledger reconcile, not user data,
   // and carries no secret.
   console.error(`[nullifier] post-commit ${context} failed after ${attempts} attempts:`, lastErr);
+  // Durable alert for the admin reconcile runbook. Best-effort: if the DB is the
+  // very thing that failed, fall back to the console line already emitted above.
+  try {
+    await prisma.auditLog.create({
+      data: {
+        action: "nullifier.postcommit_failed",
+        metadata: { context, attempts, error: message },
+      },
+    });
+  } catch (auditErr) {
+    console.error(`[nullifier] failed to record post-commit failure for ${context}:`, auditErr);
+  }
 }
 
 // Capture every ledger ref an account holds, for release on account deletion.
