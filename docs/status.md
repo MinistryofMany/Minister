@@ -462,6 +462,20 @@ origin, input})` is the generic callback path.
 
 ---
 
+## Deploy notes
+
+- **Crypto-core Phase 4 — `NullifierRpCheck` table (additive).** M5 adds the
+  salted stage-2 drift cache `NullifierRpCheck` (`@@unique([entryRef, clientId])`,
+  per-row random `salt`, `check = SHA-256(salt || N_rp)`). It is additive and
+  starts EMPTY, so the existing `prisma db push` on container start creates it
+  with zero data risk — no data backfill, no destructive change. Migrations are
+  still manual (#47): if a prod deploy uses `prisma migrate deploy` instead of
+  `db push`, generate the migration from this schema and apply it in the same
+  boot step. A missing table only means drift detection is inert (first
+  disclosure inserts); it never blocks a login.
+
+---
+
 ## Process notes (so we keep the bar where it is)
 
 - Each feature in its own worktree branched off main; merged with

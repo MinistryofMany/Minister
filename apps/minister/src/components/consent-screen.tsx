@@ -11,6 +11,10 @@ interface BadgeChoice {
   id: string;
   label: string;
   summary: string;
+  // True ⇒ disclosing this badge also discloses a per-RP Sybil nullifier
+  // (crypto-core M5): an anonymous, per-site, persistent credential tag. Drives
+  // the per-badge marker and the one-time notice below.
+  carriesNullifier: boolean;
 }
 
 interface BadgeChoiceGroup {
@@ -87,6 +91,26 @@ export function ConsentScreen({
   });
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
+
+  // crypto-core M5: which badge ids carry a per-RP Sybil nullifier, across
+  // every place a badge can be shown (flat groups, the already-proven locked
+  // section, and the structured-policy picker). The one-time notice appears
+  // when any SELECTED badge carries one.
+  const nullifierBadgeIds = useMemo(() => {
+    const m = new Set<string>();
+    for (const g of badgeChoices) for (const b of g.badges) if (b.carriesNullifier) m.add(b.id);
+    for (const g of alreadyGranted) for (const b of g.badges) if (b.carriesNullifier) m.add(b.id);
+    if (policyView) {
+      for (const leaf of policyView.group.leaves)
+        for (const o of leaf.options) if (o.carriesNullifier) m.add(o.id);
+    }
+    return m;
+  }, [badgeChoices, alreadyGranted, policyView]);
+
+  const anySelectedCarriesNullifier = useMemo(
+    () => Object.entries(selectedBadges).some(([id, on]) => on && nullifierBadgeIds.has(id)),
+    [selectedBadges, nullifierBadgeIds],
+  );
 
   function toggleBadge(id: string) {
     if (lockedIds.has(id)) return; // locked: cannot uncheck
@@ -246,6 +270,7 @@ export function ConsentScreen({
                               {b.summary}
                             </span>
                           ) : null}
+                          {b.carriesNullifier ? <NullifierMarker /> : null}
                         </label>
                       </li>
                     ))}
@@ -302,6 +327,7 @@ export function ConsentScreen({
                             {b.summary}
                           </span>
                         ) : null}
+                        {b.carriesNullifier ? <NullifierMarker /> : null}
                       </label>
                     </li>
                   ))}
@@ -311,6 +337,8 @@ export function ConsentScreen({
           </Card>
         ))
       )}
+
+      {anySelectedCarriesNullifier ? <NullifierNotice clientName={clientName} /> : null}
 
       <div className="flex justify-end gap-2 pt-2">
         <Button type="button" variant="outline" disabled={pending} onClick={submitDeny}>
@@ -324,6 +352,39 @@ export function ConsentScreen({
       <p className="text-xs text-neutral-500">
         Only the badges you tick will be disclosed. Declining a scope sends nothing for it — the
         relying party gets whatever you approve, no more.
+      </p>
+    </div>
+  );
+}
+
+// Per-badge inline marker: this badge discloses a persistent per-site tag.
+function NullifierMarker() {
+  return (
+    <span
+      className="mt-1 block text-xs text-amber-700 dark:text-amber-400"
+      data-nullifier-marker="true"
+    >
+      Includes an anonymous, per-site tag for this credential.
+    </span>
+  );
+}
+
+// The one-time §2.5 notice, shown when any SELECTED badge carries a nullifier.
+// Honest framing: one credential, not one person; per-site and unlinkable
+// across sites; persists across account delete/re-create.
+function NullifierNotice({ clientName }: { clientName: string }) {
+  return (
+    <div
+      className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-200"
+      data-nullifier-notice="true"
+    >
+      <p className="font-medium">This includes an anonymous credential tag</p>
+      <p className="mt-1 text-amber-800 dark:text-amber-300">
+        {clientName} receives an anonymous, per-site tag derived from the credential behind the
+        badge(s) you&apos;re sharing — not your identity. The same tag appears if any account proves
+        the same credential to {clientName}, and it persists even if you delete and re-create your
+        Minister account, so {clientName} can recognize the credential as one it has seen before.
+        Other sites receive a different, unlinkable tag. It proves one credential, not one person.
       </p>
     </div>
   );
@@ -417,6 +478,7 @@ function PolicyChoice({
                             {o.summary}
                           </span>
                         ) : null}
+                        {o.carriesNullifier ? <NullifierMarker /> : null}
                       </label>
                     </li>
                   ))}
