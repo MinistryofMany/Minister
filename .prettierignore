@@ -8,3 +8,5 @@ coverage/
 pnpm-lock.yaml
 **/generated/
 .claude/
+signet-e2e/fixture/target/
+signet-e2e/.stack/

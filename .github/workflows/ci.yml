@@ -43,3 +43,99 @@ jobs:
 
       - name: Test
         run: pnpm test
+
+  # Cross-language PRF fixture job (crypto-core Phase 3, build plan §2.1
+  # "golden vectors"): boots the REAL Signet — sealed with the FROZEN test
+  # master seed — and asserts Minister's pinned VOPRF client stack
+  # (@cloudflare/voprf-ts + noble, from this lockfile) byte-agrees with the
+  # Rust `voprf` crate over the real mTLS wire on the frozen ecosystem
+  # vectors. The Minister half of the "both CIs" interop commitment (the
+  # Signet half runs interop/prf.mjs in Signet CI).
+  #
+  # Requires the SIGNET_READ_TOKEN secret (read access to the private
+  # MinistryofMany/Signet repo) for the second checkout.
+  signet-interop:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: minister
+          POSTGRES_PASSWORD: minister
+          POSTGRES_DB: minister_fixture
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U minister"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://minister:minister@localhost:5432/minister_fixture?schema=public
+    steps:
+      # Recreate the MinistryOfMany workspace layout (Signet as a sibling of
+      # Minister) — the fixture crate's path dependency expects it.
+      - name: Checkout Minister
+        uses: actions/checkout@v4
+        with:
+          path: Minister
+
+      - name: Checkout Signet
+        uses: actions/checkout@v4
+        with:
+          repository: MinistryofMany/Signet
+          path: Signet
+
+      # The frozen vectors are committed to BOTH repos; byte-inequality here
+      # is the cross-repo drift alarm.
+      - name: Frozen-vector drift check (byte equality across repos)
+        run: cmp Minister/apps/minister/src/lib/nullifier/prf-vectors.json Signet/interop/prf-vectors.json
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust build cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            Signet
+            Minister/signet-e2e/fixture
+
+      # Builds Signet + the fixture tool, generates certs + the frozen-seed
+      # keystore into signet-e2e/.stack, boots Signet on 127.0.0.1:9443 over
+      # mTLS, and waits for readiness.
+      - name: Stand up the Signet fixture stack
+        run: Minister/signet-e2e/up.sh
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.12.0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+          cache-dependency-path: Minister/pnpm-lock.yaml
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+        working-directory: Minister
+
+      - name: Push schema into the fixture database
+        run: pnpm --filter @minister/app exec prisma db push --skip-generate
+        working-directory: Minister
+
+      - name: Live fixture suite (frozen vectors over real mTLS)
+        run: |
+          set -a
+          source signet-e2e/.stack/minister.env
+          set +a
+          MINISTER_SIGNET_FIXTURE=1 pnpm --filter @minister/app exec \
+            vitest run src/lib/nullifier/signet-live.fixture.test.ts
+        working-directory: Minister
+
+      - name: Signet log on failure
+        if: failure()
+        run: tail -50 Minister/signet-e2e/.stack/signet.log || true

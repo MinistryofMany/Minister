@@ -137,6 +137,10 @@ export const interimBackend: NullifierService = {
 
   async reassignOwner({ entryRefs, fromOwnerHandle, toOwnerHandle }): Promise<number> {
     if (entryRefs.length === 0) return 0;
+    // Frozen-contract parity with the signet backend (and Signet's own
+    // handler, which 400s equal handles): from === to is a no-op reporting 0
+    // moved, never a matched-row count dressed up as a move count.
+    if (fromOwnerHandle === toOwnerHandle) return 0;
     const res = await prisma.nullifierEntry.updateMany({
       where: { id: { in: entryRefs }, ownerHandle: fromOwnerHandle },
       data: { ownerHandle: toOwnerHandle },

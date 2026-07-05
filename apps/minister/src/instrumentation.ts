@@ -17,4 +17,23 @@ export async function register(): Promise<void> {
 
   const { validateTlsnVerifierConfig } = await import("@/lib/tlsn-verifier");
   validateTlsnVerifierConfig();
+
+  // Crypto-core Phase 3: when the signet nullifier backend is selected,
+  // fetch-and-verify the pinned VOPRF public key against the live Signet at
+  // boot, fail-closed (the build plan's "mirrors the KMS JWK pattern"). A
+  // mis-pinned deploy, wrong MINISTER_SIGNET_URL, or bad mTLS material dies
+  // HERE, legibly, instead of on the first user's badge mint. Runs after the
+  // SSM load above (the pin and cert material may come from SSM).
+  //
+  // The explicit NEXT_RUNTIME guard (redundant with the early return above at
+  // runtime) is FOR WEBPACK: instrumentation is compiled for the edge bundle
+  // too, where node:https/node:fs cannot resolve — the statically-false
+  // branch makes webpack drop this import from the edge compile entirely.
+  if (
+    process.env.NEXT_RUNTIME === "nodejs" &&
+    process.env.MINISTER_NULLIFIER_BACKEND === "signet"
+  ) {
+    const { signetBackend } = await import("@/lib/nullifier/signet-backend");
+    await signetBackend.verifyPin();
+  }
 }
