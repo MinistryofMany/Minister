@@ -1,6 +1,7 @@
 import type { Plugin } from "@minister/plugin-sdk";
 
 import { emailDomainPlugin } from "./email-domain";
+import { emailExactPlugin } from "./email-exact";
 import { githubPlugin } from "./github";
 import { inviteCodePlugin } from "./invite-code";
 import { tlsnAttestationPlugin } from "./tlsn-attestation";
@@ -9,6 +10,7 @@ import { tlsnAttestationPlugin } from "./tlsn-attestation";
 // Add a plugin by importing it and appending here.
 const PLUGINS: Plugin[] = [
   emailDomainPlugin,
+  emailExactPlugin,
   githubPlugin,
   inviteCodePlugin,
   tlsnAttestationPlugin,
