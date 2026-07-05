@@ -215,10 +215,13 @@ const h = vi.hoisted(() => {
 
 vi.mock("@/lib/prisma", () => ({ prisma: h.prisma }));
 
+import { createHmac } from "node:crypto";
+
 import { mergeAccounts, reverseMerge, type MergeSnapshot } from "./merge";
 import { deriveDedupValue } from "./nullifier/encoding";
 import { interimBackend } from "./nullifier/interim";
 import { pairwiseSub } from "./oidc-tokens";
+import { _setPairwiseTransportForTests } from "./pairwise-backend";
 
 const SECRET = "merge-test-secret-which-is-32-chars!!";
 
@@ -295,6 +298,52 @@ describe("mergeAccounts", () => {
   });
 
   afterAll(() => restoreEnv(ORIGINAL_PAIRWISE, ORIGINAL_AUTH));
+
+  // §2.6 / Phase 7: donor-sub derivations route through the pairwise seam, which
+  // is a Signet mTLS round-trip under the shadow/signet-fallback/signet backends.
+  // They MUST be pre-computed BEFORE prisma.$transaction opens — no PRF/pairwise
+  // network call may run inside an open transaction. Drive the seam through
+  // `signet` so each derivation is an AWAITED round trip we can order against the
+  // transaction open.
+  it("pre-computes every donor sub through the pairwise seam BEFORE opening the merge transaction", async () => {
+    seedUsers();
+    // Donor has token history with two RPs → two pairwise-sub derivations.
+    h.tables.oidcAccessToken.push({ jti: "t1", userId: DONOR, clientId: "mc_rp_one" });
+    h.tables.oidcAccessToken.push({ jti: "t2", userId: DONOR, clientId: "mc_rp_two" });
+
+    process.env.MINISTER_SUB_BACKEND = "signet";
+    const order: string[] = [];
+    _setPairwiseTransportForTests((_method, _path, body) => {
+      order.push("prf");
+      const input = (body as { input: string }).input;
+      const output = createHmac("sha256", process.env.OIDC_PAIRWISE_SECRET as string)
+        .update(input)
+        .digest("base64url");
+      return Promise.resolve({ status: 200, json: { output } });
+    });
+    const origTx = h.prisma.$transaction as (
+      fn: (tx: unknown) => Promise<unknown>,
+    ) => Promise<unknown>;
+    (h.prisma as Record<string, unknown>).$transaction = (
+      fn: (tx: unknown) => Promise<unknown>,
+    ) => {
+      order.push("tx-open");
+      return origTx(fn);
+    };
+
+    try {
+      await mergeAccounts(SURVIVOR, DONOR);
+    } finally {
+      (h.prisma as Record<string, unknown>).$transaction = origTx;
+      _setPairwiseTransportForTests(null);
+      delete process.env.MINISTER_SUB_BACKEND;
+    }
+
+    // Both PRF derivations completed before the transaction ever opened.
+    expect(order).toEqual(["prf", "prf", "tx-open"]);
+    // The seam values were used: a donor-only SubjectOverride per donor RP.
+    expect(h.tables.subjectOverride.filter((o) => o.userId === SURVIVOR)).toHaveLength(2);
+  });
 
   it("re-points the simple userId-FK models from donor to survivor", async () => {
     seedUsers();

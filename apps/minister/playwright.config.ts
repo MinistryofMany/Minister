@@ -43,7 +43,10 @@ export default defineConfig({
       AUTH_URL: BASE_URL,
       AUTH_TRUST_HOST: "true",
       MINISTER_ISSUER_DOMAIN: "minister.local",
-      OIDC_PAIRWISE_SECRET: "e2e-only-pairwise-secret",
+      // >= 32 chars: env.ts (activated at boot via instrumentation.register) now
+      // enforces the OIDC_PAIRWISE_SECRET min-32 refine, so a shorter value would
+      // fail the dev-server boot this suite starts.
+      OIDC_PAIRWISE_SECRET: "e2e-only-pairwise-secret-0123456789abcdef",
       MINISTER_MAIL_CAPTURE_FILE: MAIL_FILE,
       // The suite drives sign-in and OIDC endpoints far harder than a
       // human would; raise the caps so rate limiting (unit-tested

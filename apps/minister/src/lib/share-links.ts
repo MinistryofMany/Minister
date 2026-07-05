@@ -1,4 +1,4 @@
-import { createHmac, randomBytes } from "node:crypto";
+import { randomBytes } from "node:crypto";
 
 import { BADGE_TYPES } from "@minister/shared";
 import { buildPairwiseUserDid, reMintVc } from "@minister/vc";
@@ -6,6 +6,13 @@ import { buildPairwiseUserDid, reMintVc } from "@minister/vc";
 import { audit } from "@/lib/audit";
 import { sanitizeDisclosedClaims } from "@/lib/disclosure-claims";
 import { getIssuer } from "@/lib/issuer";
+import {
+  deriveLocalPairwise,
+  deriveShareLinkPairwiseJti,
+  deriveShareLinkPairwiseSub,
+  shareLinkPairwiseJtiInput,
+  shareLinkPairwiseSubInput,
+} from "@/lib/pairwise-backend";
 import { prisma } from "@/lib/prisma";
 
 // Bytes of entropy for share-link tokens. CLAUDE.md asks for ≥128
@@ -17,16 +24,6 @@ export const MAX_SHARE_TTL_DAYS = 90;
 
 export function generateShareToken(): string {
   return randomBytes(SHARE_TOKEN_BYTES).toString("base64url");
-}
-
-function pairwiseSecret(): string {
-  // No AUTH_SECRET fallback: a silent fallback would re-key every share-link
-  // pairwise subject/jti if OIDC_PAIRWISE_SECRET were ever unset. Fail fast.
-  const secret = process.env.OIDC_PAIRWISE_SECRET;
-  if (!secret) {
-    throw new Error("OIDC_PAIRWISE_SECRET must be set");
-  }
-  return secret;
 }
 
 // PER-SHARE-LINK pairwise subject pseudonym for VCs disclosed via a share
@@ -43,10 +40,11 @@ function pairwiseSecret(): string {
 // prefix keeps this input disjoint from both — userIds/badgeIds are cuids and
 // clientIds are `mc_`-prefixed base64url (no colons), so no OIDC input can
 // ever alias a share-link input or vice versa.
+// Synchronous local byte truth (golden-vector-pinned). Runtime share-link
+// rendering routes through `deriveShareLinkPairwiseSub` (async) so it can be
+// staged into Signet; this stays for the cross-repo golden fixtures.
 export function shareLinkPairwiseSub(userId: string, shareLinkId: string): string {
-  return createHmac("sha256", pairwiseSecret())
-    .update(`sharelink:${userId}:${shareLinkId}`)
-    .digest("base64url");
+  return deriveLocalPairwise(shareLinkPairwiseSubInput(userId, shareLinkId));
 }
 
 // Per-(badge, share-link) `jti` for a disclosed VC — never the raw badge id
@@ -54,9 +52,7 @@ export function shareLinkPairwiseSub(userId: string, shareLinkId: string): strin
 // `pairwiseJti` at any OIDC relying party. Deterministic, so it can still
 // serve as a revocation handle for everything served through one link.
 export function shareLinkPairwiseJti(badgeId: string, shareLinkId: string): string {
-  return createHmac("sha256", pairwiseSecret())
-    .update(`jti:sharelink:${badgeId}:${shareLinkId}`)
-    .digest("base64url");
+  return deriveLocalPairwise(shareLinkPairwiseJtiInput(badgeId, shareLinkId));
 }
 
 // Resolve a share token to the rendered shape: the share link's
@@ -125,7 +121,14 @@ export async function loadShareLinkByToken(token: string): Promise<{
   // jti, disclosure-time iat/nbf, a presentation-shaped exp (never past the
   // badge's real lifetime NOR the link's own expiry — an artifact served by a
   // link should die with the link), and the coarse issuanceMonth bucket.
-  const subjectId = buildPairwiseUserDid(issuer.domain, shareLinkPairwiseSub(row.userId, row.id));
+  // Route through the Phase 7 seam (async) so share-link pseudonyms can be
+  // staged into Signet; in the default `local` mode these are byte-identical to
+  // the synchronous shareLinkPairwise* helpers. §2.6: no open prisma.$transaction
+  // is held here.
+  const subjectId = buildPairwiseUserDid(
+    issuer.domain,
+    await deriveShareLinkPairwiseSub(row.userId, row.id),
+  );
 
   const disclosed = await Promise.all(
     badges.map(async (b) => {
@@ -134,15 +137,22 @@ export async function loadShareLinkByToken(token: string): Promise<{
       // never re-sign an artifact we won't serve.
       if (!meta) return null;
       // Per-badge FAIL-CLOSED OMIT (ADR M5), same posture as the OIDC disclosure
-      // path: a re-mint / sanitize throw on ONE badge (a stored VC the current
-      // schema now rejects, a signature failure) omits only THAT badge from the
-      // share page — it must never 500 the whole page and kill every other badge
-      // on the link. Audit-logged so a systematic drift stays visible.
+      // path: a per-badge throw omits only THAT badge from the share page — it
+      // must never 500 the whole page and kill every other badge on the link.
+      // The per-link jti derivation lives INSIDE this try (not before it): once
+      // the pairwise seam is on Signet, a transient per-badge jti-derivation
+      // error must omit just that badge (matching oidc-claims.ts, which derives
+      // the jti inside its own per-badge try), not reject the whole Promise.all
+      // and drop every badge — and it must produce the audit record below.
+      // Audit-logged so a systematic drift stays visible.
       let vcJwt: string;
+      let jti: string;
       try {
+        // One per-link jti per badge, reused for the re-mint and the render key.
+        jti = await deriveShareLinkPairwiseJti(b.id, row.id);
         vcJwt = await reMintVc(issuer, b.vcJwt, {
           subjectId,
-          jti: shareLinkPairwiseJti(b.id, row.id),
+          jti,
           maxExpiresAt:
             b.expiresAt !== null && b.expiresAt < row.expiresAt ? b.expiresAt : row.expiresAt,
           // Strip any legacy claim the current schema has since removed (e.g. the
@@ -161,7 +171,7 @@ export async function loadShareLinkByToken(token: string): Promise<{
         // The per-link jti, not the raw badge id: this shape is a disclosure
         // payload ("any future API"), and the stored id is the correlator the
         // re-mint just removed. The page only needs a per-link-unique key.
-        id: shareLinkPairwiseJti(b.id, row.id),
+        id: jti,
         type: b.type,
         label: meta.label,
         description: meta.description,

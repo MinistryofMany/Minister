@@ -48,7 +48,12 @@ vi.mock("@/lib/issuer", () => ({
 }));
 vi.mock("@/lib/oidc-tokens", () => ({
   ACCESS_TOKEN_TTL: 3600,
-  pairwiseJti: (badgeId: string, clientId: string) => `jti:${badgeId}:${clientId}`,
+}));
+// The per-RP jti now routes through the Phase 7 pairwise seam (async); mock it
+// deterministically, standing in for local mode's byte-identical derivation.
+vi.mock("@/lib/pairwise-backend", () => ({
+  derivePairwiseJti: (badgeId: string, clientId: string) =>
+    Promise.resolve(`jti:${badgeId}:${clientId}`),
 }));
 vi.mock("@/lib/disclosure-claims", () => ({
   sanitizeDisclosedClaims: (claims: Record<string, unknown>) => claims,

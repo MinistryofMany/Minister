@@ -1,10 +1,11 @@
-import { createHash, createHmac, timingSafeEqual } from "node:crypto";
+import { createHash, timingSafeEqual } from "node:crypto";
 
 import { SignJWT } from "jose";
 
 import type { Issuer } from "@minister/vc";
 
 import { oidcIssuerUrl } from "@/lib/oidc-config";
+import { deriveLocalPairwise, pairwiseJtiInput, pairwiseSubInput } from "@/lib/pairwise-backend";
 
 // Token TTLs. CLAUDE.md "Required security" pins auth codes at 60s; the
 // token TTLs are project-level decisions:
@@ -18,16 +19,15 @@ const ACCESS_TOKEN_TTL_SECONDS = 60 * 60;
 // Pairwise pseudonymous `sub` per OIDC Core 1.0 §8.1. Different RPs see
 // different subject identifiers for the same user, so they can't
 // correlate across RPs. Stable per (userId, clientId).
+//
+// This is the SYNCHRONOUS LOCAL derivation — the frozen, golden-vector-pinned
+// byte truth. The Phase 7 seam (lib/pairwise-backend.ts) reuses the SAME
+// tagged-input builder + HMAC helper, so its `local` mode and Signet's
+// /prf/pairwise oracle are byte-identical to this. Runtime callers that must be
+// stageable to Signet route through `derivePairwiseSub` (async) instead; this
+// stays for the cross-repo golden fixtures and any pure/sync caller.
 export function pairwiseSub(userId: string, clientId: string): string {
-  // No AUTH_SECRET fallback: falling back silently re-keys every pairwise `sub`
-  // if OIDC_PAIRWISE_SECRET is ever unset in prod (env.ts requires it at boot;
-  // Phase 7's Signet sub backend relaxes that). Fail fast instead.
-  const secret = process.env.OIDC_PAIRWISE_SECRET;
-  if (!secret) {
-    throw new Error("OIDC_PAIRWISE_SECRET must be set");
-  }
-  const mac = createHmac("sha256", secret).update(`${userId}:${clientId}`).digest();
-  return mac.toString("base64url");
+  return deriveLocalPairwise(pairwiseSubInput(userId, clientId));
 }
 
 // Per-RP `jti` for a badge VC re-minted at disclosure. Deterministic per
@@ -40,13 +40,9 @@ export function pairwiseSub(userId: string, clientId: string): string {
 // tables, so the prefix guarantees a `pairwiseSub(userId, clientId)` can never
 // collide with a `pairwiseJti(badgeId, clientId)`.
 export function pairwiseJti(badgeId: string, clientId: string): string {
-  // No AUTH_SECRET fallback — same fail-fast rationale as pairwiseSub.
-  const secret = process.env.OIDC_PAIRWISE_SECRET;
-  if (!secret) {
-    throw new Error("OIDC_PAIRWISE_SECRET must be set");
-  }
-  const mac = createHmac("sha256", secret).update(`jti:${badgeId}:${clientId}`).digest();
-  return mac.toString("base64url");
+  // Synchronous local byte truth (see pairwiseSub). Runtime disclosure routes
+  // through `derivePairwiseJti` (async) so it can be staged into Signet.
+  return deriveLocalPairwise(pairwiseJtiInput(badgeId, clientId));
 }
 
 // PKCE: verify the code_verifier received on /token matches the

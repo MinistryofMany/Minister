@@ -1,8 +1,24 @@
-import type { Prisma } from "@/generated/prisma";
+import { Prisma } from "@/generated/prisma";
 import { MERGE_REVERSAL_DAYS } from "@/lib/assurance";
 import { ensureDedupHandle, nullifierService, runPostCommit } from "@/lib/nullifier";
-import { pairwiseSub } from "@/lib/oidc-tokens";
+import { derivePairwiseSubForPersistence } from "@/lib/pairwise-backend";
 import { prisma } from "@/lib/prisma";
+
+// Both merge transactions run at RepeatableRead (not the Postgres default READ
+// COMMITTED). Under READ COMMITTED every statement takes a fresh snapshot, so a
+// donor OidcAccessToken minted for a NEW clientId AFTER the finding-7 drift
+// check but before the by-userId re-point (a /token redemption racing the merge)
+// would be silently re-pointed to the survivor with no SubjectOverride and no
+// precomputed sub — the exact un-preserved-sub outcome the drift check exists to
+// abort on. Under RR the drift check and the updateMany share ONE snapshot, so a
+// token committed mid-tx is invisible to both and stays on the tombstoned donor
+// (the already-known, bounded post-commit class). A write-write conflict
+// surfaces as a serialization failure (P2034) the caller retries — consistent
+// with the drift check's own "safe to retry" contract. Passed as a short
+// identifier so the transaction callback keeps its formatting.
+const REPEATABLE_READ: { isolationLevel: Prisma.TransactionIsolationLevel } = {
+  isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead,
+};
 
 // Account merge (slice 5) — the data-reconciliation core. The SECURITY
 // dual-control (survivor at AAL2 + a single-use donor-proof) lives one layer up
@@ -128,19 +144,36 @@ export async function mergeAccounts(
 
   const now = new Date();
 
-  // §2.6: the donor-sub derivations (pairwiseSub today; a Signet mTLS round-trip
-  // from Phase 7) are PRE-COMPUTED here, BEFORE the transaction opens. No PRF /
-  // nullifier network call may run inside an open prisma.$transaction. Collect
-  // the donor's token clientIds, resolve their subs, then transact.
+  // §2.6: the donor-sub derivations route through the Phase 7 pairwise seam,
+  // which is a Signet mTLS round-trip under the shadow/signet-fallback/signet
+  // backends. They are PRE-COMPUTED here, BEFORE the transaction opens — no
+  // PRF/pairwise network call may run inside an open prisma.$transaction.
+  // Collect the donor's token clientIds, resolve their subs (awaiting the seam),
+  // then transact. (Finding 7 below re-reads the client set inside the tx and
+  // aborts on any drift in this gap.)
+  //
+  // `derivePairwiseSubForPersistence` (not the plain seam) because these subs
+  // are FROZEN into SubjectOverride: resolveSub's override short-circuit means a
+  // wrong value could never later self-heal. While the local secret is present
+  // it byte-crosschecks the served sub against the golden truth and throws on
+  // divergence (merge aborts fail-closed, safe to retry) rather than permanently
+  // re-keying the donor's identity at an RP on a transient/compromised Signet.
   const donorTokenClients = await prisma.oidcAccessToken.findMany({
     where: { userId: donorUserId },
     select: { clientId: true },
     distinct: ["clientId"],
   });
   const donorSubByClient = new Map<string, string>(
-    donorTokenClients.map((r) => [r.clientId, pairwiseSub(donorUserId, r.clientId)]),
+    await Promise.all(
+      donorTokenClients.map(
+        async (r) =>
+          [r.clientId, await derivePairwiseSubForPersistence(donorUserId, r.clientId)] as const,
+      ),
+    ),
   );
 
+  // RepeatableRead (see REPEATABLE_READ above) closes the in-tx token-drift
+  // window between the finding-7 check and the by-userId re-point.
   const txResult = await prisma.$transaction(async (tx) => {
     const survivor = await tx.user.findUnique({
       where: { id: survivorUserId },
@@ -627,7 +660,7 @@ export async function mergeAccounts(
         donorHandle: donor.dedupHandle,
       },
     };
-  });
+  }, REPEATABLE_READ);
 
   // §2.6 post-commit: re-tag the donor's dedup ledger entries to the survivor.
   // Runs AFTER the transaction commits, with idempotent retry; a failure leaves
@@ -726,6 +759,10 @@ export async function reverseMerge(mergeRecordId: string): Promise<ReverseResult
   const { survivorUserId, donorUserId } = snap;
   const dedupReassigned = snap.dedupReassigned ?? [];
 
+  // RepeatableRead to match mergeAccounts (see REPEATABLE_READ above): reversal
+  // re-points rows back to the donor by the exact snapshot PK lists under one
+  // snapshot; a serialization failure is a retryable P2034 and reversal is
+  // idempotent-guarded above.
   const txResult = await prisma.$transaction(async (tx) => {
     // Guard: the donor must still be tombstoned INTO this survivor. If something
     // else changed the donor in the meantime, refuse rather than corrupt state.
@@ -953,7 +990,7 @@ export async function reverseMerge(mergeRecordId: string): Promise<ReverseResult
         toHandle: donor.dedupHandle,
       },
     };
-  });
+  }, REPEATABLE_READ);
 
   // §2.6 post-commit: re-tag EXACTLY the merge's reassigned refs back to the
   // donor handle. Idempotent retry; conservative on failure (entries stay under
