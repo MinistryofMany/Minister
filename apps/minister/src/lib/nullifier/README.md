@@ -35,6 +35,36 @@ and the live half of `signet-live.fixture.test.ts`. No Signet-side change is
 required; a Signet-side compare-and-release (refcount/generation token) is a
 possible future hardening if Minister ever runs more than one Postgres.
 
+Mechanism hardening (all in `signet-backend.ts` / `lock-client.ts`):
+
+- **Dedicated lock client.** Lock transactions run on their own PrismaClient
+  with a small pool (4 connections, `pool_timeout` 10s), never the shared
+  pool — holding a lock across a Signet round trip cannot starve app-wide DB
+  access, and a `connection_limit=1` `DATABASE_URL` cannot deadlock the signet
+  path. Contenders past the pool fail fast (P2024) and surface as the wizard's
+  retryable "issuance unavailable" error.
+- **Lock-lifetime proofs.** pg_advisory_xact_lock dies with its transaction,
+  so the guarded code re-proves the transaction is alive (`SELECT 1` on the
+  lock tx — throws once it is gone) immediately before release's unguarded
+  `/dedup/release` POST and after the mint window's probe; release's sibling
+  count runs ON the lock tx for the same reason. Lock queueing is capped with
+  `SET LOCAL lock_timeout = '20s'` and every Signet round trip has an ABSOLUTE
+  transport deadline (`MINISTER_SIGNET_TIMEOUT_MS`, 100–15000ms, default
+  5000), so the guarded window arithmetically cannot outlive the 60s lock
+  transaction.
+- **Self-heal ordering.** The wizard's self-heal (mint probe saw the entry
+  gone → re-register → repoint the badge) performs the repoint + verification
+  inside `serializeMintWindow` on the NEW ref — required for the
+  `already_yours` branch, where the entry belongs to a concurrent re-issue
+  whose deletion-release must be ordered against the repoint — and any
+  failure in the self-heal compensates the whole batch (a signed badge must
+  never survive without a ledger entry).
+- **Boot pin check.** `instrumentation.ts` calls `signetBackend.verifyPin()`
+  at boot when `MINISTER_NULLIFIER_BACKEND=signet`: a mis-pinned deploy,
+  wrong `MINISTER_SIGNET_URL`, or bad mTLS material fails the deploy, not the
+  first user's mint. Responses are size-capped (8 KB) and the transport is
+  https/mTLS-only (checked at boot and in the backend).
+
 ### Testing the signet backend
 
 Offline: `signet-backend.test.ts` + `wizard-signet-race.test.ts` against the

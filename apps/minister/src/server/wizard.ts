@@ -26,6 +26,26 @@ export class SybilTakenError extends Error {
 
 const SESSION_TTL_MINUTES = 60;
 
+// Copy for a mint that failed on issuance INFRASTRUCTURE (Signet down/slow,
+// lock contention, DB pool exhaustion) — retryable, nothing persisted.
+// Exported so tests pin the exact user-facing copy.
+export const ISSUANCE_UNAVAILABLE_MESSAGE =
+  "Badge issuance is temporarily unavailable. Please try again in a moment.";
+
+// Is this mint failure an issuance-infrastructure fault (retryable, expected
+// once the nullifier backend is a network service) rather than a programmer
+// error? Matched fail-open toward throwing: only the two shapes we KNOW are
+// infrastructure — nullifier-backend errors (every error the backends raise
+// is "nullifier:"-prefixed) and Prisma pool/transaction-lifetime faults
+// (P2024 pool timeout, P2028 transaction closed/rolled back) — are mapped to
+// the wizard's error UI; anything else still throws.
+function isIssuanceInfraError(err: unknown): boolean {
+  if (err instanceof Error && err.message.startsWith("nullifier:")) return true;
+  const code =
+    typeof err === "object" && err !== null ? (err as { code?: unknown }).code : undefined;
+  return code === "P2024" || code === "P2028";
+}
+
 function nowPlusMinutes(min: number): Date {
   return new Date(Date.now() + min * 60_000);
 }
@@ -191,6 +211,29 @@ export async function submitStep(
         // already linked elsewhere), not a server fault — surface its message.
         if (err instanceof SybilTakenError) {
           return { kind: "error", message: err.message };
+        }
+        // An issuance-infrastructure fault (Signet outage/timeout, lock or
+        // pool contention) is a RETRYABLE user-facing outcome: the batch was
+        // compensated (no badge, no ledger entry, session not completed), so
+        // surface the wizard's error UI, not a generic server-action 500.
+        // The ops trail stays server-side: console alert + audit row (the
+        // backends' messages carry statuses and opaque refs only).
+        if (isIssuanceInfraError(err)) {
+          const message = err instanceof Error ? err.message : String(err);
+          console.error(
+            `[wizard] issuance infrastructure failure (plugin ${row.pluginId}): ${message}`,
+          );
+          try {
+            await audit(userId, "wizard.issuance_unavailable", {
+              pluginId: row.pluginId,
+              error: message,
+            });
+          } catch (auditErr) {
+            // The audit trail must never turn a mapped, user-retryable
+            // failure back into a 500 — the console line above stands.
+            console.error("[wizard] failed to audit issuance failure:", auditErr);
+          }
+          return { kind: "error", message: ISSUANCE_UNAVAILABLE_MESSAGE };
         }
         throw err;
       }
@@ -392,7 +435,7 @@ async function issueBadgesAndComplete(args: {
       if (nullifierRef !== null && ownerHandle !== null) {
         const ref = nullifierRef;
         const handle = ownerHandle;
-        const minted = await serializeMintWindow(ref, async () => {
+        const minted = await serializeMintWindow(ref, async (assertLockLive) => {
           const id = await issueBadge({ userId, pluginId, badge, nullifierRef: ref });
           // Record immediately: if the probe below throws, compensateBatch
           // must still delete this badge.
@@ -401,6 +444,14 @@ async function issueBadgesAndComplete(args: {
             entryRef: ref,
             ownerHandle: handle,
           });
+          // The probe's answer is only trustworthy if the advisory lock was
+          // held throughout: if the lock transaction died mid-window (e.g. a
+          // stalled signing call ate the budget), a release may have run
+          // unserialized after the probe read `present`. Throws in that case
+          // → the whole batch compensates, fail-closed. Note the badge INSERT
+          // committed BEFORE this point, so a release that takes the lock
+          // after a liveness pass here always sees the sibling and no-ops.
+          await assertLockLive();
           return { id, present };
         });
         createdId = minted.id;
@@ -426,27 +477,65 @@ async function issueBadgesAndComplete(args: {
     // re-issue of ours already re-created it; `taken` means another account
     // grabbed the freed credential in the gap, so compensate and fail closed.
     // This makes the race self-correct instead of silently bypassing dedup.
-    // Runs OUTSIDE the mint window lock: the re-registered entry is fresh and
-    // unreachable by any release (nothing references it and nobody else holds
-    // its ref), and compensateBatch on the `taken` path must be free to take
-    // the release lock.
+    //
+    // The re-registration itself runs outside any lock (compensateBatch on
+    // the `taken` path must be free to take the release lock), but the
+    // REPOINT + verification run INSIDE serializeMintWindow on the NEW ref:
+    // for `registered` the fresh entry is unreachable by any release until
+    // our repoint commits (nobody else holds its ref), but for
+    // `already_yours` the entry belongs to a CONCURRENT re-issue of ours
+    // whose badge could be deleted — its release must be ordered against our
+    // repoint, or it could free the entry between our re-register and our
+    // update. Under the lock, a release either runs first (the in-window
+    // probe sees the entry gone → loop and re-register again) or after our
+    // committed repoint (its fresh sibling count sees our badge → no-op).
+    //
+    // Every failure here — re-register outage, repoint failure, probe
+    // outage, attempts exhausted — compensates the WHOLE batch before
+    // rethrowing: this block runs outside the mint-window try above, and an
+    // uncompensated exit would strand a live signed badge with no ledger
+    // entry (the Phase-1 dedup bypass, reopened). freshRegs records a fresh
+    // re-registration BEFORE the repoint so a repoint failure releases it.
     if (anchor !== null && nullifierRef !== null && ownerHandle && !entryPresent) {
-      const reReg = await nullifierService.registerDedup({
-        anchor,
-        badgeType: badge.type,
-        ownerHandle,
-      });
-      if (reReg.status === "taken") {
+      const handle = ownerHandle;
+      try {
+        let healedRef: string | null = null;
+        for (let attempt = 0; attempt < 3 && healedRef === null; attempt++) {
+          const reReg = await nullifierService.registerDedup({
+            anchor,
+            badgeType: badge.type,
+            ownerHandle: handle,
+          });
+          if (reReg.status === "taken") {
+            throw takenError();
+          }
+          if (reReg.status === "registered") {
+            freshRegs.push({ ref: reReg.entryRef, handle });
+          }
+          const present = await serializeMintWindow(reReg.entryRef, async (assertLockLive) => {
+            await prisma.badge.update({
+              where: { id: createdId },
+              data: { nullifierRef: reReg.entryRef },
+            });
+            const stillThere = await nullifierService.entryExistsForOwner({
+              entryRef: reReg.entryRef,
+              ownerHandle: handle,
+            });
+            await assertLockLive();
+            return stillThere;
+          });
+          if (present) healedRef = reReg.entryRef;
+        }
+        if (healedRef === null) {
+          // Interim backend residual (no lock): a hostile interleaving could
+          // in principle keep winning the repoint race — bounded attempts,
+          // then fail closed. Unreachable under the signet lock ordering.
+          throw new Error("nullifier: mint self-heal could not re-anchor the credential");
+        }
+        nullifierRef = healedRef;
+      } catch (err) {
         await compensateBatch();
-        throw takenError();
-      }
-      await prisma.badge.update({
-        where: { id: createdId },
-        data: { nullifierRef: reReg.entryRef },
-      });
-      nullifierRef = reReg.entryRef;
-      if (reReg.status === "registered") {
-        freshRegs.push({ ref: reReg.entryRef, handle: ownerHandle });
+        throw err;
       }
     }
   }

@@ -460,6 +460,26 @@ describe("interimBackend", () => {
     expect(back).toBe(2);
     expect(h.store.entries.find((e) => e.id === survivorRef)!.ownerHandle).toBe("survivor");
   });
+
+  it("no-ops on from === to, returning 0 (frozen-contract parity with the signet backend)", async () => {
+    const reg = await interimBackend.registerDedup({
+      anchor: "same-handle",
+      badgeType: "oauth-account",
+      ownerHandle: "owner_A",
+    });
+    const ref = (reg as { entryRef: string }).entryRef;
+    // Without the guard this would report the MATCHED row count (1) for a
+    // no-op write — a count-semantics divergence from the signet backend,
+    // which short-circuits to 0 (and whose Signet rejects equal handles).
+    await expect(
+      interimBackend.reassignOwner({
+        entryRefs: [ref],
+        fromOwnerHandle: "owner_A",
+        toOwnerHandle: "owner_A",
+      }),
+    ).resolves.toBe(0);
+    expect(h.store.entries.find((e) => e.id === ref)!.ownerHandle).toBe("owner_A");
+  });
 });
 
 // ===========================================================================

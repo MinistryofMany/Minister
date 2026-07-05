@@ -5,11 +5,15 @@ import { describe, expect, it, vi } from "vitest";
 // release-side half of the Phase 3 atomicity mechanism — all against the
 // scripted in-memory Signet (signet-backend.testutil.ts), no network.
 
-// In-memory prisma stand-in: a Badge table (for the release sibling check)
-// plus an advisory-lock emulation — $transaction hands the callback a tx
-// whose $queryRaw acquires a REAL async mutex keyed by the lock string and
-// releases it when the callback settles (exactly the pg_advisory_xact_lock
-// lifetime), so the race tests exercise true mutual exclusion, not a stub.
+// In-memory LOCK-CLIENT stand-in (the dedicated PrismaClient the backend
+// takes advisory locks on — lock-client.ts): a Badge table (for the release
+// sibling check, which runs ON the lock tx) plus an advisory-lock emulation —
+// $transaction hands the callback a tx whose $queryRaw acquires a REAL async
+// mutex keyed by the lock string and releases it when the callback settles
+// (exactly the pg_advisory_xact_lock lifetime), so the race tests exercise
+// true mutual exclusion, not a stub. Liveness probes (`SELECT 1`) and the
+// `SET LOCAL lock_timeout` statement are recognized and no-op — the fake tx
+// never times out.
 const h = vi.hoisted(() => {
   const badges: Array<{ id: string; nullifierRef: string | null }> = [];
 
@@ -33,19 +37,25 @@ const h = vi.hoisted(() => {
     };
   }
 
+  const badgeModel = {
+    count: vi.fn(async (args: { where: { nullifierRef: string } }) => {
+      return badges.filter((b) => b.nullifierRef === args.where.nullifierRef).length;
+    }),
+  };
+
   const prisma = {
-    badge: {
-      count: vi.fn(async (args: { where: { nullifierRef: string } }) => {
-        return badges.filter((b) => b.nullifierRef === args.where.nullifierRef).length;
-      }),
-    },
+    badge: badgeModel,
     $transaction: vi.fn(
       async (fn: (tx: unknown) => Promise<unknown>, _opts?: Record<string, unknown>) => {
         // Array, not a nullable local: TS cannot see the closure assignment.
         const held: Array<() => void> = [];
         const tx = {
-          $queryRaw: async (_strings: TemplateStringsArray, ...values: unknown[]) => {
-            held.push(await acquire(String(values[0])));
+          badge: badgeModel,
+          $executeRaw: async () => 0,
+          $queryRaw: async (strings: TemplateStringsArray, ...values: unknown[]) => {
+            if (strings.join("").includes("pg_advisory_xact_lock")) {
+              held.push(await acquire(String(values[0])));
+            }
             return [];
           },
         };
@@ -60,13 +70,14 @@ const h = vi.hoisted(() => {
   return { badges, prisma, acquire };
 });
 
-vi.mock("@/lib/prisma", () => ({ prisma: h.prisma }));
+vi.mock("@/lib/nullifier/lock-client", () => ({ getLockClient: () => h.prisma }));
 
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
 import { buildVoprfDedupInput } from "./encoding";
 import {
+  _setSignetTransportForTests,
   createSignetBackend,
   withSignetEntryLock,
   type SignetBackendConfig,
@@ -178,6 +189,35 @@ describe("signet backend — pin + DLEQ fail closed", () => {
     ).rejects.toThrow();
     // The poisoned value never reached the ledger.
     expect(liar.requests.map((r) => r.path)).not.toContain("/dedup/register");
+  });
+
+  it("rejects a tampered DLEQ proof (one flipped byte) before anything reaches the ledger", async () => {
+    // Honest server, honest advertised key — the PROOF BYTES are corrupted in
+    // transit. Pins the proof-deserialization/verification path of THIS
+    // lockfile's voprf-ts stack, independent of the wrong-key case above
+    // (which a future dependency bump could start failing at a different
+    // layer, e.g. deserialization instead of DLEQ verification).
+    const mock = await MockSignet.create(MASTER_SEED);
+    const scripted = mock.transport();
+    const tampering = createSignetBackend(cfg(mock.publicKeyB64), async (m, p, b) => {
+      const res = await scripted(m, p, b);
+      if (p === "/prf/evaluate" && res.status === 200) {
+        const body = res.json as { evaluation_element: string; proof: string };
+        const proof = Buffer.from(body.proof, "base64url");
+        proof[7] = proof[7]! ^ 0x01;
+        return {
+          status: 200,
+          json: { ...body, proof: proof.toString("base64url") },
+        };
+      }
+      return res;
+    });
+    await expect(
+      tampering.registerDedup({ anchor: "gh:1", badgeType: "oauth-account", ownerHandle: "h" }),
+    ).rejects.toThrow();
+    // The tampered evaluation never became a registration.
+    expect(mock.requests.map((r) => r.path)).not.toContain("/dedup/register");
+    expect(mock.entryCount()).toBe(0);
   });
 
   it("Signet-down surfaces a retryable error and registers nothing", async () => {
@@ -461,5 +501,16 @@ describe("signet backend — reassignOwner (per-ref skip semantics)", () => {
       backend.reassignOwner({ entryRefs: ["x"], fromOwnerHandle: "a", toOwnerHandle: "a" }),
     ).resolves.toBe(0);
     expect(mock.requests).toHaveLength(0);
+  });
+});
+
+describe("signet backend — test seams are dev/test-only", () => {
+  it("_setSignetTransportForTests throws under NODE_ENV=production", () => {
+    vi.stubEnv("NODE_ENV", "production");
+    try {
+      expect(() => _setSignetTransportForTests(null)).toThrow(/disabled in production/);
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 });

@@ -117,9 +117,27 @@ export const nullifierService: NullifierService =
 // lock its release() holds across [sibling check -> /dedup/release], so the
 // two windows are totally ordered and the Case-A delete-vs-reissue bypass
 // cannot reopen across the Minister/Signet split.
-export async function serializeMintWindow<T>(entryRef: string, fn: () => Promise<T>): Promise<T> {
-  if (backendKind === "signet") return withSignetEntryLock(entryRef, fn);
-  return fn();
+//
+// The callback receives `assertLockLive`: a cheap probe that THROWS if the
+// serialization guarantee no longer holds (the advisory-lock transaction was
+// rolled back, e.g. on timeout, so the window is running unserialized). Call
+// it after the last read whose answer the lock must vouch for — the wizard
+// calls it after the mint-side probe — so an evaporated lock aborts the mint
+// fail-closed instead of trusting an unguarded probe result. Interim backend:
+// a no-op (there is no lock whose lifetime could be violated).
+export async function serializeMintWindow<T>(
+  entryRef: string,
+  fn: (assertLockLive: () => Promise<void>) => Promise<T>,
+): Promise<T> {
+  if (backendKind === "signet") {
+    return withSignetEntryLock(entryRef, (tx) =>
+      fn(async () => {
+        // Throws (P2028) once the lock transaction is gone.
+        await tx.$queryRaw`SELECT 1`;
+      }),
+    );
+  }
+  return fn(async () => {});
 }
 
 // ---------------------------------------------------------------------------

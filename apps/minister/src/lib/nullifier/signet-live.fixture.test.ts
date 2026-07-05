@@ -62,11 +62,17 @@ function liveConfig(pin?: string) {
 const cleanupUserIds: string[] = [];
 
 afterAll(async () => {
-  if (!LIVE || cleanupUserIds.length === 0) return;
-  const { prisma } = await import("@/lib/prisma");
-  await prisma.badge.deleteMany({ where: { userId: { in: cleanupUserIds } } });
-  await prisma.user.deleteMany({ where: { id: { in: cleanupUserIds } } });
-  await prisma.$disconnect();
+  if (!LIVE) return;
+  if (cleanupUserIds.length > 0) {
+    const { prisma } = await import("@/lib/prisma");
+    await prisma.badge.deleteMany({ where: { userId: { in: cleanupUserIds } } });
+    await prisma.user.deleteMany({ where: { id: { in: cleanupUserIds } } });
+    await prisma.$disconnect();
+  }
+  // The advisory-lock transactions ran on the dedicated lock client — close
+  // its pool too so vitest can exit cleanly.
+  const { getLockClient } = await import("@/lib/nullifier/lock-client");
+  await getLockClient().$disconnect();
 });
 
 describe.skipIf(!LIVE)("signet live fixtures (frozen ecosystem vectors over real mTLS)", () => {

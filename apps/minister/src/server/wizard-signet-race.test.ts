@@ -12,8 +12,10 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 // in signet-backend.ts together close the Case-A delete-vs-reissue dedup
 // bypass ACROSS the Minister/Signet split, exactly as the interim backend's
 // atomic conditional DELETE closes it in-database (wizard-discard.test.ts).
-// Also pins: Signet-down at issuance → wizard error, no reservation leak,
-// retry works.
+// Also pins: Signet-down at issuance → a MAPPED wizard error (retryable, not
+// a thrown 500), no reservation leak, retry works; and the self-heal path —
+// including the compensate-on-re-register-failure regression (a signed badge
+// must never survive without a ledger entry).
 
 const h = vi.hoisted(() => {
   // Select the signet backend BEFORE any module import runs; transport is
@@ -113,8 +115,13 @@ const h = vi.hoisted(() => {
   // A REAL async mutex behind the advisory-lock emulation: $transaction hands
   // out a tx whose $queryRaw acquires the mutex keyed by the interpolated
   // lock string and releases it when the callback settles — the
-  // pg_advisory_xact_lock lifetime. Transactions that never call $queryRaw
-  // (issueBadge's insert-sign-update) just run their callback.
+  // pg_advisory_xact_lock lifetime. Liveness probes (`SELECT 1`) and
+  // `SET LOCAL lock_timeout` are recognized and no-op (the fake tx never
+  // times out). Transactions that never touch the lock (issueBadge's
+  // insert-sign-update) just run their callback. The same fake serves as BOTH
+  // the shared prisma client and the dedicated lock client (lock-client.ts) —
+  // in production those are separate pools, but the lock semantics under test
+  // are identical.
   const locks = new Map<string, Promise<void>>();
   async function acquire(key: string): Promise<() => void> {
     for (;;) {
@@ -139,8 +146,11 @@ const h = vi.hoisted(() => {
       // Array, not a nullable local: TS cannot see the closure assignment.
       const held: Array<() => void> = [];
       const tx = Object.create(prisma) as Record<string, unknown>;
-      tx.$queryRaw = async (_strings: TemplateStringsArray, ...values: unknown[]) => {
-        held.push(await acquire(String(values[0])));
+      tx.$executeRaw = async () => 0;
+      tx.$queryRaw = async (strings: TemplateStringsArray, ...values: unknown[]) => {
+        if (strings.join("").includes("pg_advisory_xact_lock")) {
+          held.push(await acquire(String(values[0])));
+        }
         return [];
       };
       try {
@@ -155,6 +165,7 @@ const h = vi.hoisted(() => {
 });
 
 vi.mock("@/lib/prisma", () => ({ prisma: h.prisma }));
+vi.mock("@/lib/nullifier/lock-client", () => ({ getLockClient: () => h.prisma }));
 vi.mock("@/lib/issuer", () => ({ getIssuer: vi.fn() }));
 vi.mock("@/lib/mailer", () => ({ sendMail: vi.fn().mockResolvedValue(undefined) }));
 vi.mock("@/plugins/registry", () => ({ getPlugin: vi.fn() }));
@@ -164,7 +175,7 @@ import { nullifierService } from "@/lib/nullifier";
 import { _setSignetTransportForTests, type SignetTransport } from "@/lib/nullifier/signet-backend";
 import { MockSignet } from "@/lib/nullifier/signet-backend.testutil";
 import { getPlugin } from "@/plugins/registry";
-import { submitStep } from "@/server/wizard";
+import { ISSUANCE_UNAVAILABLE_MESSAGE as UNAVAILABLE_MESSAGE, submitStep } from "@/server/wizard";
 
 const ANCHOR = "778899001122";
 const USER = "user_signet_race";
@@ -343,17 +354,20 @@ describe("wizard mint path through the REAL signet backend", () => {
     expect(other.status).toBe("taken");
   });
 
-  it("Signet down at issuance: wizard error, nothing persisted, retry succeeds", async () => {
+  it("Signet down at issuance: mapped wizard error (never a thrown 500), nothing persisted, retry succeeds", async () => {
     mock.downStatus = 503;
     vi.mocked(getPlugin).mockReturnValue(fakePlugin([githubBadge()]));
     seedSession("ws4");
-    await expect(submitStep("ws4", USER, "http://localhost:3000", { code: "x" })).rejects.toThrow(
-      /503/,
-    );
-    // No badge, no ledger entry, session not completed.
+    const result = await submitStep("ws4", USER, "http://localhost:3000", { code: "x" });
+    // Surfaced through the wizard's error renderer as a retryable outcome,
+    // not thrown into the generic server-action error boundary.
+    expect(result).toEqual({ kind: "error", message: UNAVAILABLE_MESSAGE });
+    // No badge, no ledger entry, session not completed — and a durable ops
+    // trail for the outage.
     expect(h.tables.badge).toHaveLength(0);
     expect(mock.entryCount()).toBe(0);
     expect(h.tables.wizardSession[0]!.completedAt).toBeNull();
+    expect(h.tables.auditLog.some((r) => r.action === "wizard.issuance_unavailable")).toBe(true);
 
     // Outage over → the retry completes cleanly.
     mock.downStatus = null;
@@ -379,9 +393,8 @@ describe("wizard mint path through the REAL signet backend", () => {
     try {
       vi.mocked(getPlugin).mockReturnValue(fakePlugin([githubBadge()]));
       seedSession("ws6");
-      await expect(submitStep("ws6", USER, "http://localhost:3000", { code: "x" })).rejects.toThrow(
-        /503/,
-      );
+      const result = await submitStep("ws6", USER, "http://localhost:3000", { code: "x" });
+      expect(result).toEqual({ kind: "error", message: UNAVAILABLE_MESSAGE });
       // compensateBatch deleted the badge AND released the fresh
       // registration: no orphan badge, no stranded ledger entry.
       expect(h.tables.badge).toHaveLength(0);
@@ -390,6 +403,102 @@ describe("wizard mint path through the REAL signet backend", () => {
       failProbe = false;
       seedSession("ws7");
       const retry = await submitStep("ws7", USER, "http://localhost:3000", { code: "x" });
+      expect(retry.kind).toBe("complete");
+      expect(h.tables.badge).toHaveLength(1);
+      expect(mock.entryCount()).toBe(1);
+    } finally {
+      _setSignetTransportForTests(mock.transport());
+    }
+  });
+
+  // Self-heal happy path: a concurrent release freed the entry between
+  // registerDedup's `already_yours`/`registered` and the probe. The probe
+  // sees it gone; the runtime re-registers and repoints the badge (under the
+  // per-ref lock on the NEW ref), completing cleanly.
+  it("self-heals when the entry is released before the probe: re-registers and repoints the badge", async () => {
+    const scripted = mock.transport();
+    let vanishOnce = true;
+    const racing: SignetTransport = async (m, p, b) => {
+      if (vanishOnce && p === "/prf/disclose") {
+        vanishOnce = false;
+        // Emulate the concurrent release landing just before the probe: the
+        // entry really is gone from the ledger when the probe looks.
+        const req = b as { entry_ref: string; owner_handle: string };
+        await scripted("POST", "/dedup/release", {
+          entry_ref: req.entry_ref,
+          owner_handle: req.owner_handle,
+        });
+      }
+      return scripted(m, p, b);
+    };
+    _setSignetTransportForTests(racing);
+    try {
+      vi.mocked(getPlugin).mockReturnValue(fakePlugin([githubBadge()]));
+      seedSession("ws8");
+      const result = await submitStep("ws8", USER, "http://localhost:3000", { code: "x" });
+      expect(result.kind).toBe("complete");
+      // Exactly one badge, pointing at the re-registered (live) entry.
+      expect(h.tables.badge).toHaveLength(1);
+      const ref = h.tables.badge[0]!.nullifierRef as string;
+      expect(mock.hasRef(ref)).toBe(true);
+      expect(mock.entryCount()).toBe(1);
+      // Dedup still holds against another account.
+      const other = await nullifierService.registerDedup({
+        anchor: ANCHOR,
+        badgeType: "oauth-account",
+        ownerHandle: "handle_B",
+      });
+      expect(other.status).toBe("taken");
+    } finally {
+      _setSignetTransportForTests(mock.transport());
+    }
+  });
+
+  // The uncompensated-self-heal regression: probe=false (entry gone) and the
+  // self-heal RE-REGISTER then fails (Signet 5xx — the expected outage shape
+  // for a network backend). The whole batch must compensate: a signed badge
+  // must NEVER survive with no ledger entry (that would let a second account
+  // register the same credential — the Phase 1 dedup bypass, reopened).
+  it("probe=false then re-register outage: whole batch compensates, no badge without a ledger entry, retry succeeds", async () => {
+    const scripted = mock.transport();
+    let probeSeen = false;
+    let registerCalls = 0;
+    const flaky: SignetTransport = async (m, p, b) => {
+      if (!probeSeen && p === "/prf/disclose") {
+        probeSeen = true;
+        // The concurrent release freed the entry right before the probe.
+        const req = b as { entry_ref: string; owner_handle: string };
+        await scripted("POST", "/dedup/release", {
+          entry_ref: req.entry_ref,
+          owner_handle: req.owner_handle,
+        });
+        return scripted(m, p, b); // 404 → probe returns false
+      }
+      if (p === "/dedup/register") {
+        registerCalls++;
+        // First register (the mint) succeeds; the self-heal re-register
+        // hits the outage.
+        if (registerCalls >= 2) {
+          return { status: 503, json: { error: "down", message: "scripted outage" } };
+        }
+      }
+      return scripted(m, p, b);
+    };
+    _setSignetTransportForTests(flaky);
+    try {
+      vi.mocked(getPlugin).mockReturnValue(fakePlugin([githubBadge()]));
+      seedSession("ws9");
+      const result = await submitStep("ws9", USER, "http://localhost:3000", { code: "x" });
+      expect(result).toEqual({ kind: "error", message: UNAVAILABLE_MESSAGE });
+      // Fail-closed: no badge, no ledger entry, session retryable.
+      expect(h.tables.badge).toHaveLength(0);
+      expect(mock.entryCount()).toBe(0);
+      expect(h.tables.wizardSession.find((s) => s.id === "ws9")!.completedAt).toBeNull();
+
+      // Outage over → a clean retry issues end-to-end.
+      _setSignetTransportForTests(mock.transport());
+      seedSession("ws10");
+      const retry = await submitStep("ws10", USER, "http://localhost:3000", { code: "x" });
       expect(retry.kind).toBe("complete");
       expect(h.tables.badge).toHaveLength(1);
       expect(mock.entryCount()).toBe(1);

@@ -20,8 +20,8 @@ const ACCESS_TOKEN_TTL_SECONDS = 60 * 60;
 // correlate across RPs. Stable per (userId, clientId).
 export function pairwiseSub(userId: string, clientId: string): string {
   // No AUTH_SECRET fallback: falling back silently re-keys every pairwise `sub`
-  // if OIDC_PAIRWISE_SECRET is ever unset in prod (env.ts requires it at boot
-  // unless MINISTER_SUB_BACKEND=signet). Fail fast instead.
+  // if OIDC_PAIRWISE_SECRET is ever unset in prod (env.ts requires it at boot;
+  // Phase 7's Signet sub backend relaxes that). Fail fast instead.
   const secret = process.env.OIDC_PAIRWISE_SECRET;
   if (!secret) {
     throw new Error("OIDC_PAIRWISE_SECRET must be set");

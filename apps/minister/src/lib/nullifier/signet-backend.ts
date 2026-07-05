@@ -4,10 +4,11 @@ import { Agent, request as httpsRequest } from "node:https";
 import { Evaluation, Oprf, VOPRFClient } from "@cloudflare/voprf-ts";
 import { CryptoNoble } from "@cloudflare/voprf-ts/crypto-noble";
 
-import { prisma } from "@/lib/prisma";
+import type { Prisma } from "@/generated/prisma";
 
 import { buildVoprfDedupInput, capClientId } from "./encoding";
 import type { MinisterGatingNullifier, NullifierService, RegisterDedupResult } from "./index";
+import { getLockClient } from "./lock-client";
 
 // SIGNET Sybil-dedup backend (crypto-core Phase 3).
 //
@@ -28,11 +29,13 @@ import type { MinisterGatingNullifier, NullifierService, RegisterDedupResult } f
 // on the frozen ecosystem vectors (prf-vectors.json, committed to both repos).
 //
 // PINNED PUBLIC KEY (fail-closed, mirrors the ISSUER_KMS_PUBLIC_JWK pattern):
-// MINISTER_SIGNET_DEDUP_PUBKEY holds pkS from `signet init-service-keys`. On
+// MINISTER_SIGNET_DEDUP_PUBKEY holds pkS from `signet init-service-keys`. At
+// BOOT (instrumentation.ts, when the signet backend is selected) and again on
 // first use the backend fetches GET /prf/public-key and refuses to operate on
-// any mismatch; independently, every finalize() DLEQ-verifies the evaluation
-// against the PIN (never the fetched value), so a compromised or forked
-// Signet cannot poison the permanent dedup namespace even mid-process.
+// any mismatch — a mis-pinned deploy dies at boot, not on the first user's
+// mint. Independently, every finalize() DLEQ-verifies the evaluation against
+// the PIN (never the fetched value), so a compromised or forked Signet cannot
+// poison the permanent dedup namespace even mid-process.
 //
 // RELEASE ATOMICITY ACROSS THE SPLIT (build plan Phase 3 item 1): the interim
 // backend closes the delete-vs-reissue dedup bypass with ONE atomic
@@ -57,7 +60,28 @@ import type { MinisterGatingNullifier, NullifierService, RegisterDedupResult } f
 // §2.6 CONTRACT: every method here performs network I/O — NEVER call any of
 // them inside an open prisma.$transaction. The advisory-lock transaction used
 // internally is a dedicated, self-contained serialization primitive, not an
-// exception to the call-site rule.
+// exception to the call-site rule — and it runs on its OWN PrismaClient with
+// a small dedicated pool (lock-client.ts), so holding a lock across a Signet
+// round trip can never pin a shared-pool connection (see lock-client.ts for
+// the bulkhead rationale and sizing).
+//
+// LOCK-LIFETIME ARITHMETIC (why the guarded window cannot outlive the lock):
+// pg_advisory_xact_lock dies with its transaction, so if the lock transaction
+// were rolled back (timeout) while the guarded callback kept running, the
+// critical section would continue WITHOUT mutual exclusion. Three bounds keep
+// that window closed:
+//   * lock acquisition is capped by `SET LOCAL lock_timeout = '20s'`, so a
+//     queued contender can never silently consume the transaction budget;
+//   * every Signet round trip has an ABSOLUTE transport deadline
+//     (requestTimeoutMs, env-capped at MAX_TIMEOUT_MS — not an inactivity
+//     timer, so a slow-dripping response cannot stretch it);
+//   * the guarded code re-proves the lock transaction is alive (a SELECT 1 on
+//     the lock tx, which throws once the tx is gone) immediately before the
+//     unguarded Signet delete in release(), and after the mint-window probe
+//     (wizard.ts) — so an evaporated lock aborts the operation fail-closed
+//     instead of running the critical action outside mutual exclusion.
+// Worst case: lock wait (20s) + sibling count + one capped round trip (≤15s)
+// ≪ the 60s transaction timeout, with >20s of slack for DB stalls.
 //
 // Logging: never log anchors, blinded elements, evaluation outputs, disclosed
 // nullifiers, or PEM material. Errors carry statuses and refs only (refs are
@@ -78,7 +102,17 @@ const PIN_B64URL_LEN = 43; // base64url(32 bytes), no padding
 // mc_ + base64url, charset-guarded — no colon can occur).
 const PROBE_CLIENT_ID = "minister:mint-probe:v1";
 
+// Absolute per-request deadline bounds. The cap matters for the lock-lifetime
+// arithmetic above: a guarded window's Signet call must finish (or die) well
+// inside the lock transaction's 60s budget. env.ts enforces the same range at
+// boot; configFromEnv re-checks because tests inject process.env directly.
 const DEFAULT_TIMEOUT_MS = 5_000;
+const MIN_TIMEOUT_MS = 100;
+const MAX_TIMEOUT_MS = 15_000;
+
+// Largest legitimate Signet response is well under 1 KB; a compromised or
+// broken Signet must not be able to stream unbounded data into the heap.
+const MAX_RESPONSE_BYTES = 8 * 1024;
 
 // The disclosed-value shape, checked fail-closed before anything trusts it.
 const NULLIFIER_RE = /^mnv1:[A-Za-z0-9_-]{43}$/;
@@ -167,7 +201,19 @@ function createHttpsTransport(cfg: {
         },
         (res) => {
           const chunks: Buffer[] = [];
-          res.on("data", (c: Buffer) => chunks.push(c));
+          let received = 0;
+          res.on("data", (c: Buffer) => {
+            received += c.length;
+            if (received > MAX_RESPONSE_BYTES) {
+              // Fail-closed size cap: destroy() surfaces this error via the
+              // request's error handler below.
+              req.destroy(
+                new Error(`nullifier: signet response exceeded ${MAX_RESPONSE_BYTES} bytes`),
+              );
+              return;
+            }
+            chunks.push(c);
+          });
           res.on("end", () => {
             const text = Buffer.concat(chunks).toString("utf8");
             let parsed: unknown = null;
@@ -182,6 +228,15 @@ function createHttpsTransport(cfg: {
           });
         },
       );
+      // ABSOLUTE deadline, distinct from the inactivity timer below: a Signet
+      // that drips one byte per second resets an inactivity timer forever but
+      // cannot outlive this — essential while a mint window or release holds
+      // the advisory lock (see the lock-lifetime arithmetic in the module
+      // doc). Cleared on 'close', which fires on completion and on abort.
+      const deadline = setTimeout(() => {
+        req.destroy(new Error("nullifier: signet request exceeded the absolute deadline"));
+      }, cfg.requestTimeoutMs);
+      req.on("close", () => clearTimeout(deadline));
       req.on("error", reject);
       // A hung Signet must not wedge a request thread (or a mint window that
       // is holding the advisory lock) forever.
@@ -206,15 +261,33 @@ function configFromEnv(): SignetBackendConfig {
     }
     return v;
   };
+  const baseUrl = need("MINISTER_SIGNET_URL");
+  if (!baseUrl.startsWith("https://")) {
+    // The transport is hardwired to node:https (mTLS-only, no plaintext
+    // fallback); reject a non-https URL with a legible error instead of an
+    // opaque TLS handshake failure against a plaintext port.
+    throw new Error("nullifier: MINISTER_SIGNET_URL must be an https:// URL (mTLS-only)");
+  }
+  let requestTimeoutMs: number | undefined;
+  const rawTimeout = process.env.MINISTER_SIGNET_TIMEOUT_MS;
+  if (rawTimeout !== undefined && rawTimeout !== "") {
+    const n = Number(rawTimeout);
+    // Bounded: 0/NaN would disable or corrupt the timers, and anything past
+    // MAX_TIMEOUT_MS breaks the lock-lifetime arithmetic (module doc).
+    if (!Number.isInteger(n) || n < MIN_TIMEOUT_MS || n > MAX_TIMEOUT_MS) {
+      throw new Error(
+        `nullifier: MINISTER_SIGNET_TIMEOUT_MS must be an integer between ${MIN_TIMEOUT_MS} and ${MAX_TIMEOUT_MS}`,
+      );
+    }
+    requestTimeoutMs = n;
+  }
   return {
-    baseUrl: need("MINISTER_SIGNET_URL"),
+    baseUrl,
     clientCert: resolvePem(need("MINISTER_SIGNET_CLIENT_CERT"), "MINISTER_SIGNET_CLIENT_CERT"),
     clientKey: resolvePem(need("MINISTER_SIGNET_CLIENT_KEY"), "MINISTER_SIGNET_CLIENT_KEY"),
     caCert: resolvePem(need("MINISTER_SIGNET_CA_CERT"), "MINISTER_SIGNET_CA_CERT"),
     pinnedPublicKey: need("MINISTER_SIGNET_DEDUP_PUBKEY"),
-    requestTimeoutMs: process.env.MINISTER_SIGNET_TIMEOUT_MS
-      ? Number(process.env.MINISTER_SIGNET_TIMEOUT_MS)
-      : undefined,
+    requestTimeoutMs,
   };
 }
 
@@ -253,28 +326,48 @@ function stringField(body: Record<string, unknown>, key: string): string {
 // Advisory-lock serialization for the mint window and the release critical
 // section (see the module doc). Transaction-scoped (pg_advisory_xact_lock):
 // the lock releases automatically on commit OR abort, so there is no unlock
-// path to miss on a throw. The callback's own Prisma queries run on ordinary
-// pooled connections — the lock transaction exists purely as the mutex
-// holder. Advisory locks are global across the database, so a holder on one
-// connection blocks an acquirer on any other.
+// path to miss on a throw. Runs on the DEDICATED lock client (lock-client.ts)
+// so a held lock never pins a shared-pool connection; the callback receives
+// the lock transaction so it can (a) run reads whose ordering the lock must
+// guarantee (release's sibling count) and (b) re-prove the lock is alive
+// before an unguarded side effect (see the lock-lifetime arithmetic in the
+// module doc). Advisory locks are global across the database, so a holder on
+// one connection blocks an acquirer on any other.
 //
 // Sizing: the guarded windows are one badge INSERT + one Signet round trip
 // (mint) or one sibling count + one Signet round trip (release); the Signet
-// call is bounded by requestTimeoutMs. maxWait bounds how long a contender
-// queues for the lock; timeout bounds the whole held window.
+// call is bounded by the ABSOLUTE transport deadline. lock_timeout (LOCK_WAIT)
+// bounds how long a contender queues for the lock; timeout bounds the whole
+// held window.
 const LOCK_NAMESPACE = "minister:nullifier:entry:";
 
-export async function withSignetEntryLock<T>(entryRef: string, fn: () => Promise<T>): Promise<T> {
+export async function withSignetEntryLock<T>(
+  entryRef: string,
+  fn: (tx: Prisma.TransactionClient) => Promise<T>,
+): Promise<T> {
   const key = LOCK_NAMESPACE + entryRef;
-  return prisma.$transaction(
+  return getLockClient().$transaction(
     async (tx) => {
-      // hashtextextended maps the ref to a stable bigint lock key; the
-      // namespace prefix keeps this lock space disjoint from any other
-      // advisory-lock user. Parameterized — never interpolated. The ::text
-      // cast matters: the lock function returns `void`, which Prisma's
-      // $queryRaw cannot deserialize (caught by the live fixture suite).
-      await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${key}, 0))::text`;
-      return fn();
+      try {
+        // Cap the queue time so a contender cannot silently consume the
+        // transaction budget while blocked on the lock (module doc).
+        await tx.$executeRaw`SET LOCAL lock_timeout = '20s'`;
+        // hashtextextended maps the ref to a stable bigint lock key; the
+        // namespace prefix keeps this lock space disjoint from any other
+        // advisory-lock user. Parameterized — never interpolated. The ::text
+        // cast matters: the lock function returns `void`, which Prisma's
+        // $queryRaw cannot deserialize (caught by the live fixture suite).
+        await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${key}, 0))::text`;
+      } catch (err) {
+        // Nullifier-prefixed so the wizard maps it to a retryable user-facing
+        // error. Refs are opaque; the underlying message carries no secrets.
+        throw new Error(
+          `nullifier: failed to acquire the signet entry lock (${
+            err instanceof Error ? err.message.slice(0, 200) : String(err)
+          })`,
+        );
+      }
+      return fn(tx);
     },
     { maxWait: 10_000, timeout: 60_000 },
   );
@@ -287,6 +380,14 @@ export interface SignetNullifierBackend extends NullifierService {
   // ecosystem vectors. Never used by production callers (the value must not
   // land anywhere in Minister at rest).
   evaluateDedupValue(anchor: string, badgeType: string): Promise<Uint8Array>;
+  // Boot/readiness hook: fetch GET /prf/public-key and verify it against the
+  // pinned MINISTER_SIGNET_DEDUP_PUBKEY, fail-closed. Called from
+  // instrumentation.ts when the signet backend is selected so a mis-pinned
+  // deploy (or wrong URL / bad mTLS material) dies at boot instead of on the
+  // first user's mint. Every operation re-runs the same check lazily (success
+  // memoized, failure not), and every finalize independently DLEQ-verifies
+  // against the pin — this hook is the ops-legible guard, not the only one.
+  verifyPin(): Promise<void>;
 }
 
 export function createSignetBackend(
@@ -410,6 +511,8 @@ export function createSignetBackend(
   return {
     evaluateDedupValue,
 
+    verifyPin: ensurePinVerified,
+
     async registerDedup({ anchor, badgeType, ownerHandle }): Promise<RegisterDedupResult> {
       const nDedup = await evaluateDedupValue(anchor, badgeType);
       const res = await send("POST", "/dedup/register", {
@@ -484,19 +587,28 @@ export function createSignetBackend(
 
     async release({ entryRef, ownerHandle }): Promise<void> {
       await ensurePinVerified();
-      await withSignetEntryLock(entryRef, async () => {
+      await withSignetEntryLock(entryRef, async (tx) => {
         // FRESH sibling check under the lock (never a caller-side count):
         // any badge INSERT that committed before we acquired the lock is
         // visible here, and no mint window can commit one until we release
         // it. This is the split-ledger equivalent of the interim backend's
-        // atomic `AND NOT EXISTS (SELECT 1 FROM "Badge" …)`.
-        const siblings = await prisma.badge.count({ where: { nullifierRef: entryRef } });
+        // atomic `AND NOT EXISTS (SELECT 1 FROM "Badge" …)`. Run ON the lock
+        // transaction (READ COMMITTED — each statement sees fresh committed
+        // data), so the count doubles as a lock-liveness proof: if the lock
+        // transaction has been rolled back, this throws instead of counting.
+        const siblings = await tx.badge.count({ where: { nullifierRef: entryRef } });
         if (siblings > 0) {
           // A live badge still references the entry — the release no-ops and
           // the entry survives (exactly the interim conditional-DELETE
           // outcome in the Case-A ordering).
           return;
         }
+        // Re-prove the lock immediately before the UNGUARDED network delete:
+        // if the lock transaction died (timeout) after the count, a mint
+        // window could already be running — firing the delete now would be
+        // the exact Case-A bypass. A dead transaction throws here (P2028),
+        // aborting fail-closed; runPostCommit retries take a fresh lock.
+        await tx.$queryRaw`SELECT 1`;
         const res = await send("POST", "/dedup/release", {
           entry_ref: entryRef,
           owner_handle: ownerHandle,
@@ -557,6 +669,11 @@ let defaultTransportOverride: SignetTransport | null = null;
 let realTransport: SignetTransport | null = null;
 
 export function _setSignetTransportForTests(t: SignetTransport | null): void {
+  if (process.env.NODE_ENV === "production") {
+    // Zero-cost guard: nothing in production may reroute Signet traffic
+    // through an injected transport.
+    throw new Error("nullifier: _setSignetTransportForTests is disabled in production");
+  }
   defaultTransportOverride = t;
 }
 
