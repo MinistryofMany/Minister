@@ -22,6 +22,7 @@ export {
   ministerCredentialType,
   DEFAULT_DISCLOSURE_TTL_SECONDS,
   ISSUANCE_MONTH_CLAIM,
+  NULLIFIER_CLAIM,
   issuanceMonthOf,
   issuanceMonthStartSeconds,
 } from "./issue";

@@ -3,6 +3,8 @@ import { buildPairwiseUserDid, reMintVc } from "@minister/vc";
 import { audit } from "@/lib/audit";
 import { sanitizeDisclosedClaims } from "@/lib/disclosure-claims";
 import { getIssuer } from "@/lib/issuer";
+import { assertNullifierDriftConsistent, NullifierDriftError } from "@/lib/nullifier/drift-cache";
+import { nullifierService } from "@/lib/nullifier";
 import { ACCESS_TOKEN_TTL, pairwiseJti } from "@/lib/oidc-tokens";
 import { prisma } from "@/lib/prisma";
 
@@ -17,6 +19,24 @@ import { prisma } from "@/lib/prisma";
 // the raw id_token on every gated call (dead at 10 min by its own model) and
 // gates rooms once, at join, against a freshly minted per-room token.
 const BADGE_DISCLOSURE_TTL_SECONDS = ACCESS_TOKEN_TTL;
+
+// audit() is a bare prisma.auditLog.create with no internal error handling. In
+// the fail-closed disclosure catch it MUST NOT be able to reject into the
+// enclosing Promise.all — a degraded-DB audit-write failure there would fail
+// the whole token/userinfo request and break the "login unaffected" invariant.
+// Mirror the runPostCommit pattern: swallow with a console fallback (the record
+// being written is a non-secret ledger/omission note, never user data).
+async function safeAudit(
+  userId: string,
+  action: string,
+  metadata: Record<string, unknown>,
+): Promise<void> {
+  try {
+    await audit(userId, action, metadata);
+  } catch (auditErr) {
+    console.error(`[oidc-claims] failed to write audit ${action}:`, auditErr);
+  }
+}
 
 // The user fields both OIDC claim paths need. Deliberately only the
 // user-curated profile values — the upstream auth identity (`User.name`,
@@ -132,11 +152,30 @@ export async function loadApprovedBadgeJwts(
     // it anyway (signature check), this just keeps that refusal out of the
     // grant's happy path.
     where: { userId, id: { in: badgeIds }, issuer: issuer.did },
-    select: { id: true, vcJwt: true, expiresAt: true },
+    // `nullifierRef` (crypto-core M5): opaque ledger handle for badges anchored
+    // to a scarce credential. Non-null → this badge discloses a per-RP Sybil
+    // nullifier bound under the signature; null → discloses exactly as before.
+    select: { id: true, vcJwt: true, expiresAt: true, nullifierRef: true },
   });
   if (rows.length === 0) return [];
 
   const subjectId = buildPairwiseUserDid(issuer.domain, sub);
+
+  // The user's opaque owner handle, needed to owner-check every nullifier
+  // disclosure. Looked up ONCE, and ONLY when at least one selected badge
+  // actually carries a ledger ref (the common no-nullifier grant does zero
+  // extra work). A ref-bearing badge whose user has no handle is an
+  // inconsistency that fails THAT badge closed below (never a nullifier-less
+  // copy of a nullifier-bearing type).
+  const needsOwnerHandle = rows.some((row) => Boolean(row.nullifierRef));
+  const ownerHandle = needsOwnerHandle
+    ? ((
+        await prisma.user.findUnique({
+          where: { id: userId },
+          select: { dedupHandle: true },
+        })
+      )?.dedupHandle ?? null)
+    : null;
 
   // Per-badge FAIL-CLOSED OMIT (ADR M5): a re-mint / sanitize throw on ONE badge
   // (a stored VC the current schema now rejects, a signature check failure, an
@@ -148,6 +187,29 @@ export async function loadApprovedBadgeJwts(
   const minted = await Promise.all(
     rows.map(async (row) => {
       try {
+        // Ref-bearing badges (crypto-core M5): derive the per-RP Sybil
+        // nullifier and stamp it INSIDE the signed credentialSubject. Any
+        // failure here — a missing owner handle, a Signet/owner-check error, or
+        // a drift-cache mismatch — FAILS CLOSED: this badge is omitted from the
+        // disclosure (login is unaffected) and audited. We NEVER fall back to a
+        // nullifier-less copy of a nullifier-bearing badge type: dropping the
+        // gating tag while still disclosing the fact would silently defeat the
+        // RP's Sybil gate. `disclose` and the drift check run OUTSIDE any
+        // transaction (§2.6 network-I/O rule).
+        let nullifier: string | undefined;
+        if (row.nullifierRef) {
+          if (ownerHandle === null) {
+            throw new Error("badge carries a nullifierRef but the user has no dedupHandle");
+          }
+          const nrp = await nullifierService.disclose({
+            entryRef: row.nullifierRef,
+            ownerHandle,
+            clientId,
+          });
+          await assertNullifierDriftConsistent(row.nullifierRef, clientId, nrp);
+          nullifier = nrp;
+        }
+
         return await reMintVc(issuer, row.vcJwt, {
           subjectId,
           jti: pairwiseJti(row.id, clientId),
@@ -156,12 +218,34 @@ export async function loadApprovedBadgeJwts(
           // Strip any legacy claim the current schema has since removed (e.g. the
           // pre-Phase-1 oauth-account Sybil anchor) before re-signing.
           sanitizeClaims: sanitizeDisclosedClaims,
+          ...(nullifier !== undefined ? { nullifier } : {}),
         });
       } catch (err) {
-        await audit(userId, "oidc.badge_disclosure_omitted", {
+        const reason = err instanceof Error ? err.message : String(err);
+        // A drift throw means Signet returned a different N_rp than first
+        // recorded — a possible integrity failure of the ONLY runtime detector
+        // Minister has (stage 2 carries no DLEQ). Raise a DEDICATED, alertable
+        // signal (console.error + its own audit action), NOT the generic
+        // omission record that also covers benign re-mint/schema failures, so a
+        // lying/compromised Signet is not buried in omission noise.
+        if (err instanceof NullifierDriftError) {
+          console.error(`[nullifier] ${reason}`);
+          await safeAudit(userId, "nullifier.drift_detected", {
+            badgeId: row.id,
+            clientId,
+            reason,
+          });
+        }
+        // Fail-closed omit. audit() is a bare prisma write with no internal
+        // error handling; if it rejected here (DB degraded after the reads
+        // succeeded) the rejection would escape into Promise.all and take down
+        // the whole token/userinfo request — inverting the "login unaffected"
+        // invariant precisely in the degraded conditions this path exists to
+        // survive. Guard it so an audit-write failure can never do that.
+        await safeAudit(userId, "oidc.badge_disclosure_omitted", {
           badgeId: row.id,
           clientId,
-          reason: err instanceof Error ? err.message : String(err),
+          reason,
         });
         return null;
       }

@@ -610,3 +610,31 @@ model NullifierEntry {
 
   @@index([ownerHandle])
 }
+
+// SALTED stage-2 drift-detection cache (crypto-core Phase 4 / build-plan §2.1).
+// Minister trusts Signet for the CORRECTNESS of the per-RP disclosed nullifier
+// (stage 2 carries no DLEQ). To catch a Signet that silently DRIFTS the value
+// for the same credential (ban-evasion), Minister keeps one row per
+// (entryRef, clientId) and, on every disclosure, recomputes SHA-256(salt||N_rp)
+// and compares it to `check`; a mismatch fails closed (the badge is omitted +
+// alerted). New (entryRef, clientId) → a row is inserted.
+//
+// The per-row RANDOM `salt` is the whole point: it makes `check` carry NO
+// cross-row equality structure and no dictionary surface, so this cache does
+// NOT reintroduce the M1 equality oracle the ledger was moved to Signet to
+// avoid — same-row comparison is all drift detection needs. Additive and
+// nullable-safe: absent rows just mean "first disclosure, nothing to compare".
+model NullifierRpCheck {
+  id        String   @id @default(cuid())
+  // Opaque ledger handle (Badge.nullifierRef) — no equality structure.
+  entryRef  String
+  clientId  String
+  // 16 random bytes, minted per row. The de-correlating salt (see model doc).
+  salt      Bytes
+  // SHA-256(salt || utf8(N_rp)). The only value compared, and only ever against
+  // this same row's recomputation — never across rows.
+  check     Bytes
+  createdAt DateTime @default(now())
+
+  @@unique([entryRef, clientId])
+}

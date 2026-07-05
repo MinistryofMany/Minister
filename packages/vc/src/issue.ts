@@ -99,6 +99,20 @@ export function issuanceMonthStartSeconds(instant: number | Date): number {
   return Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1) / 1000;
 }
 
+// Reserved credentialSubject key carrying the per-relying-party Sybil-dedup
+// nullifier of a disclosed badge (crypto-core M5): the `mnv1:...` value the
+// NullifierService derives for (this credential, this clientId). Stamping it
+// INSIDE the signed `credentialSubject` binds it under Minister's badge key to
+// the pairwise subject DID, the per-RP `jti`, the VC type, and the
+// disclosure-shaped `exp` — so it cannot be lifted onto another credential or
+// replayed as another user.
+//
+// Reserved exactly like `issuanceMonth`: it is issuer-derived disclosure
+// metadata, never a per-badge-type claim. A same-named claim smuggled into a
+// stored VC is ALWAYS stripped (whether or not a fresh nullifier is supplied),
+// so a stored row can never inject its own nullifier value into a disclosure.
+export const NULLIFIER_CLAIM = "nullifier";
+
 // Default presentation lifetime for a disclosed (re-minted) VC. One hour =
 // Minister's access-token TTL, the longest-lived artifact of a single OIDC
 // grant: it comfortably covers the id_token TTL (10 min + the SDK's 30s clock
@@ -137,6 +151,13 @@ export interface ReMintOptions {
   // could join on (vc.type, claims, exp) and re-link the user despite the
   // pairwise sub/jti. Defaults to DEFAULT_DISCLOSURE_TTL_SECONDS.
   disclosureTtlSeconds?: number;
+  // Per-RP Sybil-dedup nullifier (`mnv1:...`), stamped as the reserved
+  // NULLIFIER_CLAIM inside the signed credentialSubject. Omitted for badges
+  // that carry no ledger ref (invite-code, age/residency placeholders,
+  // pre-existing rows) — those disclose with NO nullifier claim at all. A
+  // same-named stored claim is stripped regardless of this option, so a stored
+  // VC can never smuggle a nullifier in.
+  nullifier?: string;
 }
 
 // Re-mint a stored Minister VC as a fresh, per-relying-party credential at
@@ -224,6 +245,7 @@ export async function reMintVc(
   const {
     id: _originalId,
     [ISSUANCE_MONTH_CLAIM]: _storedIssuanceMonth,
+    [NULLIFIER_CLAIM]: _storedNullifier,
     ...claims
   } = original.credentialSubject;
   // Re-parse through the caller's current-schema hook (if any) BEFORE re-signing,
@@ -232,10 +254,20 @@ export async function reMintVc(
   const sanitizedClaims = options.sanitizeClaims
     ? options.sanitizeClaims(claims, original.type)
     : claims;
+  // The reserved keys are stamped AFTER the preserved claims so the disclosure
+  // derivation always wins over a same-named stored claim. `id` is a reserved
+  // key too: `credentialSubject.id == id_token sub` is THE RP holder-binding
+  // rule (§2.5), so it is stamped LAST alongside the others — a sanitizer hook
+  // (or a future schema) that returned an `id` field could otherwise override
+  // the pairwise subject and silently break every RP binding check. The
+  // nullifier is added only when supplied; a stored `nullifier` was already
+  // stripped above, so a ref-less badge discloses with no nullifier claim,
+  // never a smuggled one.
   const credentialSubject: CredentialSubject = {
-    id: options.subjectId,
     ...sanitizedClaims,
+    id: options.subjectId,
     [ISSUANCE_MONTH_CLAIM]: issuanceMonthOf(decoded.iat),
+    ...(options.nullifier !== undefined ? { [NULLIFIER_CLAIM]: options.nullifier } : {}),
   };
   const vc: VerifiableCredentialClaim = {
     "@context": original["@context"] ?? [VC_CONTEXT],

@@ -462,6 +462,71 @@ origin, input})` is the generic callback path.
 
 ---
 
+## Deploy notes
+
+- **Crypto-core Phase 4 — `NullifierRpCheck` table (additive).** M5 adds the
+  salted stage-2 drift cache `NullifierRpCheck` (`@@unique([entryRef, clientId])`,
+  per-row random `salt`, `check = SHA-256(salt || N_rp)`). It is additive and
+  starts EMPTY, so the existing `prisma db push` on container start creates it
+  with zero data risk — no data backfill, no destructive change. Migrations are
+  still manual (#47): if a prod deploy uses `prisma migrate deploy` instead of
+  `db push`, generate the migration from this schema and apply it in the same
+  boot step. **The migration is CONSEQUENTIAL, not cosmetic.** With the table
+  absent, `prisma.nullifierRpCheck.findUnique` throws `P2021` inside the
+  per-badge disclosure try, so EVERY nullifier-bearing badge is fail-closed
+  OMITTED from every disclosure (RP badge gating silently goes dark — audit rows
+  only) until the table exists. Logins themselves are unaffected. So: run
+  `db push` / `migrate deploy` BEFORE relying on any nullifier gating; do not
+  deprioritize this step reading it as "drift detection is merely inert."
+
+- **Crypto-core Phase 4 — DEPLOY-ORDERING gate (SDK before Minister).** Phase 1
+  dropped `OAuthAccountClaims.accountId` and Phase 4 strips it from legacy
+  re-disclosures. An RP still on the PRE-branch SDK (whose `OAuthAccountClaims`
+  REQUIRES `accountId`) schema-rejects every disclosed `oauth-account` badge the
+  moment Minister deploys — fail-closed deny on gated joins (login unaffected).
+  Therefore **merge + relink/repin every badge-consuming RP to SDK ≥ the
+  crypto-core commit BEFORE (or atomically with) deploying Minister's
+  crypto-core branch.** Discreetly consumes the SDK via `link:` today so it
+  follows the local checkout; if its CI clones `minister-client` main, merge the
+  SDK branch there first. FreedInk requests no badge scopes, so it is unaffected.
+
+- **Crypto-core Phase 4 — interim→signet backend FLIP runbook.** In the interim
+  window (`MINISTER_NULLIFIER_BACKEND=interim`), disclosed `N_rp` values, every
+  `Badge.nullifierRef`, and every `NullifierRpCheck` row live in the interim
+  namespace and are NOT byte-compatible with the Signet construction (interim
+  uses one global `k_int`; Signet uses per-RP `k_disc(clientId)`). Flipping the
+  backend to `signet` therefore RESETS every RP's gating tags. The flip is only
+  safe under the ADR's enforced `users == 0` gate; if that still holds, the flip
+  is a clean re-key. **Runbook at the flip:** (1) re-register every anchor into
+  Signet's ledger (re-issue the ref-bearing badges); (2) `TRUNCATE
+"NullifierRpCheck"` (its interim baselines are meaningless against Signet
+  values, and a stale baseline would false-positive as drift and fail every
+  affected badge closed); (3) notify RPs that gating tags reset (any bans/dedup
+  state keyed on interim `mnv1:` values must be cleared — they will not match the
+  new values). **Pre-deploy check:** confirm which backend serves disclosure in
+  prod and that `users == 0` still holds; if real users have arrived, freeze the
+  window (ADR risk #2) rather than flipping and burning live RP ban state.
+
+- **Crypto-core Phase 4 — OUTSTANDING pre-sign-off e2e gate (not yet landed).**
+  The build-plan Phase 4 gate requires a compose-staging e2e asserting the
+  nullifier is **present + signed** in the badge-gated OIDC flow, **equal** across
+  two logins of the same user at one RP, **different** across two RPs, and
+  **byte-equal** across the serial-identity path (account A issues from the
+  fixture credential → discloses → A deleted / entry released → account B issues
+  from the SAME credential → discloses → assert equal `N_rp`). No Playwright spec
+  covers this yet — it needs the full compose stack with the REAL Signet service,
+  two registered OIDC clients, the github OAuth fixture, and an account-deletion
+  path (Minister has no self-serve delete today). Compensating UNIT coverage
+  exists and is green (`remint.test.ts` signature binding + per-RP stamping,
+  `oidc-claims.nullifier.test.ts` disclosure seam + fail-closed omission,
+  `share-links-disclosure.test.ts` nullifier absence, `signet-live.fixture.test.ts`
+  frozen `N_dedup`/`N_rp` vectors; cross-account equality holds by construction —
+  `ownerHandle` never enters the derivation). This full-flow spec MUST be landed
+  and green in the compose stack before Phase 4 deploy sign-off; do not treat the
+  passing unit suites as satisfying the gate.
+
+---
+
 ## Process notes (so we keep the bar where it is)
 
 - Each feature in its own worktree branched off main; merged with

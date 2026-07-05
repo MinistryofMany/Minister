@@ -180,6 +180,9 @@ interface BadgeChoiceGroup {
     id: string;
     label: string;
     summary: string;
+    // True ⇒ disclosing this badge also discloses a per-RP Sybil nullifier
+    // (crypto-core M5); the consent screen shows the persistent-tag notice.
+    carriesNullifier: boolean;
   }>;
 }
 
@@ -216,6 +219,7 @@ function buildBadgeChoices(
         label: b.meta.label,
         // Human summary of the badge's key attributes — never raw JSON.
         summary: summarizeAttributes(b.type, b.attributes),
+        carriesNullifier: b.nullifierRef !== null,
       })),
     });
   }

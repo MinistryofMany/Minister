@@ -523,6 +523,102 @@ describe("reMintVc", () => {
     await expect(reMintVc(issuer, notAVc, { subjectId: pairwise, jti: "j" })).rejects.toThrow(/vc/);
   });
 
+  // ---------------------------------------------------------------------------
+  // Per-RP Sybil-dedup nullifier (`credentialSubject.nullifier`) — the M5
+  // binding claim. Reserved exactly like `issuanceMonth`: stamped by the
+  // disclosure derivation, never a pass-through, and a stored same-named claim
+  // is ALWAYS overridden/stripped (a stored VC cannot smuggle one in).
+  // ---------------------------------------------------------------------------
+
+  it("stamps the supplied per-RP nullifier inside the signed credentialSubject", async () => {
+    const original = await signOriginal(issuer, {
+      claims: { provider: "github", handle: "octocat" },
+      credentialType: "MinisterOauthAccountCredential",
+    });
+    const pairwise = buildPairwiseUserDid(issuer.domain, "S");
+    const nullifier = "mnv1:AbC-123_def";
+
+    const jwt = await reMintVc(issuer, original, { subjectId: pairwise, jti: "j", nullifier });
+    const v = await verifyVc(issuer, jwt);
+
+    expect(v.vc.credentialSubject.nullifier).toBe(nullifier);
+    // It is signed (survives the issuer-key verify above) and bound to this
+    // disclosure's subject and jti.
+    expect(v.sub).toBe(pairwise);
+    expect(v.jti).toBe("j");
+    // The claim values are untouched; nullifier + issuanceMonth are the only
+    // reserved additions.
+    const { id, issuanceMonth, nullifier: n, ...claims } = v.vc.credentialSubject;
+    expect(id).toBe(pairwise);
+    expect(n).toBe(nullifier);
+    expect(claims).toEqual({ provider: "github", handle: "octocat" });
+  });
+
+  it("omits the nullifier claim entirely when none is supplied (ref-less badge)", async () => {
+    const original = await signOriginal(issuer);
+    const pairwise = buildPairwiseUserDid(issuer.domain, "S");
+
+    const jwt = await reMintVc(issuer, original, { subjectId: pairwise, jti: "j" });
+    const v = await verifyVc(issuer, jwt);
+
+    expect("nullifier" in v.vc.credentialSubject).toBe(false);
+  });
+
+  it("OVERRIDES a same-named nullifier claim smuggled into the stored VC (reserved key)", async () => {
+    // Adversarial stored row: an authentic-signed VC whose claims carry a
+    // `nullifier` value. When a fresh nullifier is supplied, the disclosure
+    // derivation must win.
+    const original = await signOriginal(issuer, {
+      claims: { domain: "example.com", nullifier: "mnv1:SMUGGLED_evil" },
+    });
+    const pairwise = buildPairwiseUserDid(issuer.domain, "S");
+
+    const jwt = await reMintVc(issuer, original, {
+      subjectId: pairwise,
+      jti: "j",
+      nullifier: "mnv1:LEGIT_value",
+    });
+    const v = await verifyVc(issuer, jwt);
+
+    expect(v.vc.credentialSubject.nullifier).toBe("mnv1:LEGIT_value");
+    expect(v.vc.credentialSubject.nullifier).not.toBe("mnv1:SMUGGLED_evil");
+    expect(jwt).not.toContain("SMUGGLED_evil");
+  });
+
+  it("STRIPS a smuggled stored nullifier even when NO fresh nullifier is supplied", async () => {
+    // A ref-less badge (no nullifier option) whose stored VC nonetheless carries
+    // a `nullifier` claim must disclose with NO nullifier — never the stored one.
+    const original = await signOriginal(issuer, {
+      claims: { domain: "example.com", nullifier: "mnv1:SMUGGLED_evil" },
+    });
+    const pairwise = buildPairwiseUserDid(issuer.domain, "S");
+
+    const jwt = await reMintVc(issuer, original, { subjectId: pairwise, jti: "j" });
+    const v = await verifyVc(issuer, jwt);
+
+    expect("nullifier" in v.vc.credentialSubject).toBe(false);
+    expect(jwt).not.toContain("SMUGGLED_evil");
+  });
+
+  it("gives two RPs different nullifiers while sharing the disclosed fact (per-RP by construction)", async () => {
+    const original = await signOriginal(issuer, { claims: { domain: "example.com" } });
+    const subA = buildPairwiseUserDid(issuer.domain, "PAIRWISE_A");
+    const subB = buildPairwiseUserDid(issuer.domain, "PAIRWISE_B");
+
+    const a = await verifyVc(
+      issuer,
+      await reMintVc(issuer, original, { subjectId: subA, jti: "jA", nullifier: "mnv1:RP_A_val" }),
+    );
+    const b = await verifyVc(
+      issuer,
+      await reMintVc(issuer, original, { subjectId: subB, jti: "jB", nullifier: "mnv1:RP_B_val" }),
+    );
+
+    expect(a.vc.credentialSubject.nullifier).toBe("mnv1:RP_A_val");
+    expect(b.vc.credentialSubject.nullifier).toBe("mnv1:RP_B_val");
+    expect(a.vc.credentialSubject.nullifier).not.toBe(b.vc.credentialSubject.nullifier);
+  });
+
   // Property (cross-RP unlinkability at the primitive level): the SAME original
   // badge re-minted for two relying parties shares only iss/kid and the claim
   // values — sub, credentialSubject.id, and jti all differ.
