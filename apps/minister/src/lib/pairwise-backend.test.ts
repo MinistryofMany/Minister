@@ -7,6 +7,7 @@ import {
   deriveLocalPairwise,
   derivePairwiseJti,
   derivePairwiseSub,
+  derivePairwiseSubForPersistence,
   deriveShareLinkPairwiseJti,
   deriveShareLinkPairwiseSub,
   pairwiseJtiInput,
@@ -107,20 +108,32 @@ function driftTransport(): SignetTransport {
 function capturingObserver(): {
   obs: PairwiseObserver;
   mismatches: PairwiseFamily[];
+  compareOks: PairwiseFamily[];
   shadowErrors: Array<{ family: PairwiseFamily; error: string }>;
+  shadowSkipped: PairwiseFamily[];
+  serveMismatches: PairwiseFamily[];
   fallbacks: Array<{ family: PairwiseFamily; error: string }>;
 } {
   const mismatches: PairwiseFamily[] = [];
+  const compareOks: PairwiseFamily[] = [];
   const shadowErrors: Array<{ family: PairwiseFamily; error: string }> = [];
+  const shadowSkipped: PairwiseFamily[] = [];
+  const serveMismatches: PairwiseFamily[] = [];
   const fallbacks: Array<{ family: PairwiseFamily; error: string }> = [];
   return {
     obs: {
       onShadowMismatch: ({ family }) => mismatches.push(family),
+      onShadowCompareOk: ({ family }) => compareOks.push(family),
       onShadowError: (i) => shadowErrors.push(i),
+      onShadowSkipped: ({ family }) => shadowSkipped.push(family),
+      onServeMismatch: ({ family }) => serveMismatches.push(family),
       onFallback: (i) => fallbacks.push(i),
     },
     mismatches,
+    compareOks,
     shadowErrors,
+    shadowSkipped,
+    serveMismatches,
     fallbacks,
   };
 }
@@ -227,8 +240,8 @@ describe("pairwise-backend — shadow mode (serve local, compare async)", () => 
     process.env.MINISTER_SUB_BACKEND = "shadow";
   });
 
-  it("serves the LOCAL value and reports NO mismatch when Signet agrees", async () => {
-    const { obs, mismatches, shadowErrors } = capturingObserver();
+  it("serves the LOCAL value and reports a SUCCESSFUL compare (not just no mismatch) when Signet agrees", async () => {
+    const { obs, mismatches, compareOks, shadowErrors } = capturingObserver();
     _setPairwiseObserverForTests(obs);
     _setPairwiseTransportForTests(hmacTransport());
 
@@ -238,6 +251,54 @@ describe("pairwise-backend — shadow mode (serve local, compare async)", () => 
     await _flushPairwiseShadowForTests();
     expect(mismatches).toEqual([]);
     expect(shadowErrors).toEqual([]);
+    // The soak exit gate is "successful compares == derivations AND 0
+    // mismatches" — a positive success count, never just absence of mismatches.
+    expect(compareOks.sort()).toEqual(["jti", "sharelink-jti", "sharelink-sub", "sub"]);
+  });
+
+  it("records NO successful compare when every Signet call errors (a vacuous soak is visible)", async () => {
+    const { obs, mismatches, compareOks, shadowErrors } = capturingObserver();
+    _setPairwiseObserverForTests(obs);
+    _setPairwiseTransportForTests(() => Promise.reject(new Error("PRF 403")));
+
+    for (const f of FAMILIES) {
+      expect(await f.call()).toBe(f.golden);
+    }
+    await _flushPairwiseShadowForTests();
+    // Zero mismatches — but ALSO zero successful compares, so counting only the
+    // mismatch signal would falsely read as a passed equivalence proof.
+    expect(mismatches).toEqual([]);
+    expect(compareOks).toEqual([]);
+    expect(shadowErrors).toHaveLength(FAMILIES.length);
+  });
+
+  it("caps in-flight compares: past the cap the compare is SKIPPED and counted, never blocking the served value", async () => {
+    const { obs, shadowSkipped } = capturingObserver();
+    _setPairwiseObserverForTests(obs);
+    // A transport that stays pending keeps every launched compare in-flight, so
+    // the calls past the cap (64) hit it and are skipped. Resolvers are held so
+    // the in-flight set can be drained before the afterEach flush.
+    const resolvers: Array<() => void> = [];
+    _setPairwiseTransportForTests(
+      () =>
+        new Promise<SignetResponse>((resolve) => {
+          resolvers.push(() => resolve({ status: 200, json: { output: "x".repeat(43) } }));
+        }),
+    );
+    // Shadow serves the local value immediately (fire-and-forget compare), so
+    // each call returns without awaiting the pending transport. 64 fill the cap,
+    // the next 20 are skipped.
+    for (let i = 0; i < 84; i++) {
+      const client = `mc_client_${i}`;
+      expect(await derivePairwiseSub(GOLDEN.userId, client)).toBe(
+        deriveLocalPairwise(pairwiseSubInput(GOLDEN.userId, client)),
+      );
+    }
+    expect(shadowSkipped.length).toBe(20);
+    expect(shadowSkipped.every((f) => f === "sub")).toBe(true);
+    // Drain the 64 pending compares so the afterEach flush can settle.
+    for (const r of resolvers) r();
+    await _flushPairwiseShadowForTests();
   });
 
   it("still SERVES the local value when Signet disagrees, and reports the mismatch", async () => {
@@ -276,7 +337,7 @@ describe("pairwise-backend — signet-fallback mode (serve Signet, byte-identica
   });
 
   it("serves the Signet value (byte-equal to local) and does NOT alert when Signet is healthy", async () => {
-    const { obs, fallbacks } = capturingObserver();
+    const { obs, fallbacks, serveMismatches } = capturingObserver();
     _setPairwiseObserverForTests(obs);
     _setPairwiseTransportForTests(hmacTransport());
 
@@ -284,6 +345,26 @@ describe("pairwise-backend — signet-fallback mode (serve Signet, byte-identica
       expect(await f.call()).toBe(f.golden);
     }
     expect(fallbacks).toEqual([]);
+    expect(serveMismatches).toEqual([]);
+  });
+
+  it("serves the LOCAL golden value (never the drift) and fires onServeMismatch when a healthy Signet returns a WRONG value", async () => {
+    const { obs, fallbacks, serveMismatches } = capturingObserver();
+    _setPairwiseObserverForTests(obs);
+    // A well-formed 200 response that DIFFERS from local (a re-keyed / forked
+    // Signet). This is NOT a transport error, so onFallback must stay silent;
+    // the divergence must instead surface as onServeMismatch — the only drift
+    // detector /prf/pairwise (no DLEQ) will ever have — and the served value
+    // must be the byte-identical local golden value, preserving byte-stability.
+    _setPairwiseTransportForTests(driftTransport());
+
+    for (const f of FAMILIES) {
+      const served = await f.call();
+      expect(served).toBe(f.golden);
+      expect(served).toBe(deriveLocalPairwise(f.input));
+    }
+    expect(fallbacks).toEqual([]);
+    expect(serveMismatches.sort()).toEqual(["jti", "sharelink-jti", "sharelink-sub", "sub"]);
   });
 
   it("falls back to the byte-identical LOCAL value and ALERTS on a transport error", async () => {
@@ -315,5 +396,38 @@ describe("pairwise-backend — signet-fallback mode (serve Signet, byte-identica
     expect(served).toBe(GOLDEN_OUTPUTS.sub);
     expect(fallbacks).toHaveLength(1);
     expect(fallbacks[0]?.family).toBe("sub");
+  });
+});
+
+describe("derivePairwiseSubForPersistence — merge-time frozen-value crosscheck", () => {
+  it("returns the golden sub in local mode (byte-equal to the plain seam)", async () => {
+    const served = await derivePairwiseSubForPersistence(GOLDEN.userId, GOLDEN.clientId);
+    expect(served).toBe(GOLDEN_OUTPUTS.sub);
+  });
+
+  it("returns the value in signet mode when Signet AGREES with local", async () => {
+    process.env.MINISTER_SUB_BACKEND = "signet";
+    _setPairwiseTransportForTests(hmacTransport());
+    const served = await derivePairwiseSubForPersistence(GOLDEN.userId, GOLDEN.clientId);
+    expect(served).toBe(GOLDEN_OUTPUTS.sub);
+  });
+
+  it("THROWS in signet mode when a well-formed Signet value DIVERGES from local (never persists a wrong frozen sub)", async () => {
+    process.env.MINISTER_SUB_BACKEND = "signet";
+    _setPairwiseTransportForTests(driftTransport());
+    // A merge that stored this drift would permanently re-key the donor's
+    // identity at that RP; the crosscheck aborts fail-closed (retryable).
+    await expect(derivePairwiseSubForPersistence(GOLDEN.userId, GOLDEN.clientId)).rejects.toThrow(
+      /merge-time sub crosscheck failed/,
+    );
+  });
+
+  it("does NOT throw in signet-fallback drift (the seam already serves the byte-identical local value)", async () => {
+    process.env.MINISTER_SUB_BACKEND = "signet-fallback";
+    _setPairwiseTransportForTests(driftTransport());
+    const served = await derivePairwiseSubForPersistence(GOLDEN.userId, GOLDEN.clientId);
+    // signet-fallback serves local on divergence, so served === local and the
+    // crosscheck is a no-op — the value persisted is the golden truth.
+    expect(served).toBe(GOLDEN_OUTPUTS.sub);
   });
 });

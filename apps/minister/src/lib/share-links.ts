@@ -136,15 +136,20 @@ export async function loadShareLinkByToken(token: string): Promise<{
       // Unknown badge type: nothing to render — skip BEFORE signing; we
       // never re-sign an artifact we won't serve.
       if (!meta) return null;
-      // One per-link jti per badge, reused for the re-mint and the render key.
-      const jti = await deriveShareLinkPairwiseJti(b.id, row.id);
       // Per-badge FAIL-CLOSED OMIT (ADR M5), same posture as the OIDC disclosure
-      // path: a re-mint / sanitize throw on ONE badge (a stored VC the current
-      // schema now rejects, a signature failure) omits only THAT badge from the
-      // share page — it must never 500 the whole page and kill every other badge
-      // on the link. Audit-logged so a systematic drift stays visible.
+      // path: a per-badge throw omits only THAT badge from the share page — it
+      // must never 500 the whole page and kill every other badge on the link.
+      // The per-link jti derivation lives INSIDE this try (not before it): once
+      // the pairwise seam is on Signet, a transient per-badge jti-derivation
+      // error must omit just that badge (matching oidc-claims.ts, which derives
+      // the jti inside its own per-badge try), not reject the whole Promise.all
+      // and drop every badge — and it must produce the audit record below.
+      // Audit-logged so a systematic drift stays visible.
       let vcJwt: string;
+      let jti: string;
       try {
+        // One per-link jti per badge, reused for the re-mint and the render key.
+        jti = await deriveShareLinkPairwiseJti(b.id, row.id);
         vcJwt = await reMintVc(issuer, b.vcJwt, {
           subjectId,
           jti,

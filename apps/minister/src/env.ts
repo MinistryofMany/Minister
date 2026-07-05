@@ -69,6 +69,14 @@ const serverSchema = z
     // 0/garbage would corrupt the transport timers, and anything past 15s
     // breaks the advisory-lock lifetime arithmetic (signet-backend.ts).
     MINISTER_SIGNET_TIMEOUT_MS: z.coerce.number().int().min(100).max(15_000).optional(),
+    // Dedicated per-request Signet deadline for the PAIRWISE seam (Phase 7,
+    // lib/pairwise-backend.ts), DECOUPLED from MINISTER_SIGNET_TIMEOUT_MS (the
+    // nullifier backend's knob, whose 15s cap is sized for the VOPRF
+    // advisory-lock arithmetic). The pairwise path is on the hot token-mint /
+    // userinfo / share-render path; §4 Step 3 wants a tight budget (default
+    // 500ms, bounded 100..2000) so a Signet brownout falls back byte-identically
+    // fast instead of stalling every mint — without squeezing the VOPRF path.
+    MINISTER_SIGNET_PAIRWISE_TIMEOUT_MS: z.coerce.number().int().min(100).max(2_000).optional(),
 
     NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   })
@@ -88,6 +96,34 @@ const serverSchema = z
             code: z.ZodIssueCode.custom,
             path: [key],
             message: `${key} is required when MINISTER_NULLIFIER_BACKEND=signet`,
+          });
+        }
+      }
+    }
+    // The non-local pairwise-sub backends (Phase 7 seam) each perform Signet
+    // mTLS I/O per derivation, reading the transport config lazily at request
+    // time (pairwise-backend.ts pairwiseTransportConfig throws per call). A
+    // half-configured non-local backend therefore boots CLEAN and then fails
+    // only in production traffic: under `signet` a total token-mint outage
+    // surfacing as 500s deep inside /oidc/token and /oidc/userinfo, under
+    // `shadow`/`signet-fallback` a silent degrade to pure shadow-error /
+    // fallback noise (a soak whose zero mismatches are vacuous). This is exactly
+    // the "500s deep inside token minting" failure the enum constraint and the
+    // nullifier-backend precedent below exist to prevent, so mirror that loop.
+    // The DEDUP pubkey PIN is NOT needed — /prf/pairwise is a bare keyed-HMAC
+    // oracle with no DLEQ/pinned-key analogue.
+    if (val.MINISTER_SUB_BACKEND !== undefined && val.MINISTER_SUB_BACKEND !== "local") {
+      for (const key of [
+        "MINISTER_SIGNET_URL",
+        "MINISTER_SIGNET_CLIENT_CERT",
+        "MINISTER_SIGNET_CLIENT_KEY",
+        "MINISTER_SIGNET_CA_CERT",
+      ] as const) {
+        if (!val[key]) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: [key],
+            message: `${key} is required when MINISTER_SUB_BACKEND=${val.MINISTER_SUB_BACKEND}`,
           });
         }
       }

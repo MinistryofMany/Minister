@@ -1,3 +1,4 @@
+import { createHmac } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -31,8 +32,10 @@ vi.mock("@/lib/prisma", () => ({
 }));
 
 import { getIssuer } from "@/lib/issuer";
+import type { SignetResponse, SignetTransport } from "@/lib/nullifier/signet-backend";
 import { loadApprovedBadgeJwts } from "@/lib/oidc-claims";
 import { pairwiseJti, pairwiseSub } from "@/lib/oidc-tokens";
+import { _setPairwiseTransportForTests, shareLinkPairwiseJtiInput } from "@/lib/pairwise-backend";
 import { prisma } from "@/lib/prisma";
 import {
   loadShareLinkByToken,
@@ -423,6 +426,69 @@ describe("loadShareLinkByToken — pairwise disclosure re-mint (MIN-1)", () => {
     // And the smuggled value appears nowhere in the served artifact.
     expect(served).not.toContain("SMUGGLED_tracking_tag");
     expect(JSON.stringify(payload)).not.toContain("mnv1:");
+  });
+});
+
+// A per-badge jti-derivation failure (once the pairwise seam is on Signet, a
+// transient per-badge Signet error) must omit ONLY that badge and audit it —
+// never reject the whole Promise.all and 500 the entire share page. This pins
+// the fix that moved deriveShareLinkPairwiseJti INSIDE the per-badge try.
+describe("loadShareLinkByToken — per-badge jti-derivation failure omits only that badge", () => {
+  const BAD_ID = "badge_cuid_share_jtierr";
+
+  // A signet transport that HMACs every input EXCEPT the bad badge's jti input,
+  // for which it returns a malformed output so signetPairwise throws. The
+  // pre-loop share-link SUB derivation and the healthy badge's jti must succeed.
+  function jtiFailingTransport(badJtiInput: string): SignetTransport {
+    return (_method, _path, body): Promise<SignetResponse> => {
+      const input = (body as { input: string }).input;
+      if (input === badJtiInput) {
+        return Promise.resolve({ status: 200, json: { output: "too-short" } });
+      }
+      const output = createHmac("sha256", process.env.OIDC_PAIRWISE_SECRET as string)
+        .update(input)
+        .digest("base64url");
+      return Promise.resolve({ status: 200, json: { output } });
+    };
+  }
+
+  afterAll(() => {
+    delete process.env.MINISTER_SUB_BACKEND;
+    _setPairwiseTransportForTests(null);
+  });
+
+  it("omits only the badge whose jti derivation throws, discloses the rest, never throws the page", async () => {
+    process.env.MINISTER_SUB_BACKEND = "signet";
+    _setPairwiseTransportForTests(jtiFailingTransport(shareLinkPairwiseJtiInput(BAD_ID, LINK_A)));
+    try {
+      const badVc = await issueVc(
+        issuer,
+        "email-domain",
+        buildUserDid(issuer.domain, USER),
+        { domain: "other.example" },
+        { jti: BAD_ID, expiresIn: "1y" },
+      );
+      const link = await viewLink(linkRow({ badgeIds: [BADGE_ID, BAD_ID] }), [
+        badgeRow(),
+        badgeRow({ id: BAD_ID, vcJwt: badVc }),
+      ]);
+      expect(link).not.toBeNull();
+      // The page rendered; exactly the healthy badge survives.
+      expect(link!.badges).toHaveLength(1);
+      expect(link!.badges[0]!.type).toBe("email-domain");
+      // The jti-failed badge is audit-logged as an omission (not silently lost).
+      expect(auditCreate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            action: "sharelink.badge_disclosure_omitted",
+            metadata: expect.objectContaining({ badgeId: BAD_ID }),
+          }),
+        }),
+      );
+    } finally {
+      delete process.env.MINISTER_SUB_BACKEND;
+      _setPairwiseTransportForTests(null);
+    }
   });
 });
 

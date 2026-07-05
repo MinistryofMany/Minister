@@ -70,8 +70,24 @@ const PAIRWISE_OUTPUT_LEN = 43;
 // admissible domain instead of diverging on a 400 at the backend flip. Real
 // inputs (cuid userId/badgeId + `mc_`-prefixed clientId) are well under this.
 const MAX_PAIRWISE_INPUT_BYTES = 512;
-const DEFAULT_TIMEOUT_MS = 5_000;
+// The pairwise seam runs on the HOT token-mint / userinfo / share-render path;
+// build-plan §4 Step 3 mandates a TIGHT budget so a Signet brownout falls back
+// (byte-identically) fast rather than stalling every mint up to the nullifier
+// backend's multi-second budget. This deadline is DECOUPLED from the nullifier
+// backend's MINISTER_SIGNET_TIMEOUT_MS (whose 15s cap is sized for the VOPRF
+// advisory-lock lifetime arithmetic) so tuning one can never squeeze the other.
+const DEFAULT_PAIRWISE_TIMEOUT_MS = 500;
+const MIN_PAIRWISE_TIMEOUT_MS = 100;
+const MAX_PAIRWISE_TIMEOUT_MS = 2_000;
 const B64URL_RE = /^[A-Za-z0-9_-]+$/;
+// Bound on concurrent in-flight shadow compares. Shadow compares are launched
+// from partially attacker-drivable paths (an unauthenticated share-link render
+// fires 1 sub + N jti compares; every token/userinfo mint fires more), so an
+// uncapped fire-and-forget would open unbounded mTLS sockets and trip Signet's
+// shared PRF rate bucket, turning the soak into error noise and adding pressure
+// on real VOPRF issuance. Over the cap the compare is SKIPPED and counted, never
+// blocking the served (local) value.
+const MAX_INFLIGHT_SHADOW = 64;
 
 // ---------------------------------------------------------------------------
 // Tagged-input builders — the SINGLE source of truth for the frozen encodings.
@@ -126,8 +142,25 @@ export interface PairwiseObserver {
   // shadow: the async Signet value differed from the served local value. This is
   // the load-bearing pre-cutover signal — the equivalence proof (§4).
   onShadowMismatch(info: { family: PairwiseFamily }): void;
+  // shadow: the async Signet value MATCHED the served local value. A SUCCESS
+  // count is required, not just the absence of mismatches: §4 Step 2's exit gate
+  // is "successful compares == derivations across the matrix AND 0 mismatches".
+  // Without it a shadow deploy whose every compare ERRORS (missing transport env,
+  // PRF 403, rate-limit) reports zero mismatches and masquerades as a passed
+  // equivalence proof — a silently vacuous soak.
+  onShadowCompareOk(info: { family: PairwiseFamily }): void;
   // shadow: the async Signet call itself failed (not a value mismatch).
   onShadowError(info: { family: PairwiseFamily; error: string }): void;
+  // shadow: the in-flight cap was reached, so this derivation's compare was
+  // SKIPPED (never launched). Counted so a saturated shadow path is visible and
+  // soak coverage stays measurable rather than a silent hole.
+  onShadowSkipped(info: { family: PairwiseFamily }): void;
+  // signet-fallback: Signet returned a well-formed value that DIFFERED from the
+  // byte-identical local truth. /prf/pairwise carries no DLEQ, so this is the
+  // ONLY drift detector this endpoint will ever have; because Signet is not yet
+  // authoritative (pre-7c) and byte-stability is the cutover-reversibility
+  // invariant, the LOCAL value is served and this fires.
+  onServeMismatch(info: { family: PairwiseFamily }): void;
   // signet-fallback: Signet errored/timed out; the byte-identical local value
   // was served instead. Must alert (§4 Step 3) even though it is invisible.
   onFallback(info: { family: PairwiseFamily; error: string }): void;
@@ -138,8 +171,19 @@ const defaultObserver: PairwiseObserver = {
     console.error(
       `[pairwise] shadow MISMATCH for family ${family}: Signet output differs from the served local value`,
     ),
+  // Success is the common case; default to silent (metrics-only), the runbook
+  // reads the count off a real observer during the soak.
+  onShadowCompareOk: () => {},
   onShadowError: ({ family, error }) =>
     console.warn(`[pairwise] shadow compare error for family ${family}: ${error}`),
+  onShadowSkipped: ({ family }) =>
+    console.warn(
+      `[pairwise] shadow compare SKIPPED for family ${family} (in-flight cap ${MAX_INFLIGHT_SHADOW} reached)`,
+    ),
+  onServeMismatch: ({ family }) =>
+    console.error(
+      `[pairwise] signet-fallback SERVE MISMATCH for family ${family}: Signet output differs from local; serving the byte-identical local value (Signet not authoritative pre-7c)`,
+    ),
   onFallback: ({ family, error }) =>
     console.error(
       `[pairwise] signet-fallback engaged for family ${family} (byte-identical local value served): ${error}`,
@@ -185,13 +229,17 @@ function pairwiseTransportConfig(): {
   if (!baseUrl.startsWith("https://")) {
     throw new Error("pairwise: MINISTER_SIGNET_URL must be an https:// URL (mTLS-only)");
   }
-  let requestTimeoutMs = DEFAULT_TIMEOUT_MS;
-  const raw = process.env.MINISTER_SIGNET_TIMEOUT_MS;
+  // Own deadline knob (MINISTER_SIGNET_PAIRWISE_TIMEOUT_MS), NOT the nullifier
+  // backend's MINISTER_SIGNET_TIMEOUT_MS: the hot pairwise path wants a tight
+  // budget (default 500ms) and must be tunable without disturbing the VOPRF
+  // path's 5-15s advisory-lock arithmetic.
+  let requestTimeoutMs = DEFAULT_PAIRWISE_TIMEOUT_MS;
+  const raw = process.env.MINISTER_SIGNET_PAIRWISE_TIMEOUT_MS;
   if (raw !== undefined && raw !== "") {
     const n = Number(raw);
-    if (!Number.isInteger(n) || n < 100 || n > 15_000) {
+    if (!Number.isInteger(n) || n < MIN_PAIRWISE_TIMEOUT_MS || n > MAX_PAIRWISE_TIMEOUT_MS) {
       throw new Error(
-        "pairwise: MINISTER_SIGNET_TIMEOUT_MS must be an integer between 100 and 15000",
+        `pairwise: MINISTER_SIGNET_PAIRWISE_TIMEOUT_MS must be an integer between ${MIN_PAIRWISE_TIMEOUT_MS} and ${MAX_PAIRWISE_TIMEOUT_MS}`,
       );
     }
     requestTimeoutMs = n;
@@ -239,11 +287,20 @@ async function signetPairwise(input: string): Promise<string> {
 const inFlightShadow = new Set<Promise<void>>();
 
 function startShadowCompare(family: PairwiseFamily, input: string, local: string): void {
+  // Fail-open on saturation: never queue or block the served value. A skipped
+  // compare is counted (soak coverage stays measurable) and the local value the
+  // caller already holds is returned unchanged by derivePairwise.
+  if (inFlightShadow.size >= MAX_INFLIGHT_SHADOW) {
+    observer.onShadowSkipped({ family });
+    return;
+  }
   const run = (async () => {
     try {
       const remote = await signetPairwise(input);
       if (remote !== local) {
         observer.onShadowMismatch({ family });
+      } else {
+        observer.onShadowCompareOk({ family });
       }
     } catch (err) {
       observer.onShadowError({
@@ -288,15 +345,29 @@ async function derivePairwise(family: PairwiseFamily, input: string): Promise<st
   }
 
   if (backend === "signet-fallback") {
+    // Compute the local golden truth up front. The local secret is still present
+    // in this mode (env.ts keeps OIDC_PAIRWISE_SECRET required until 7c), so this
+    // is one cheap in-process HMAC — and it makes the mode measurable AND safe:
+    //   * transport error/timeout → serve local + onFallback (byte-identical);
+    //   * well-formed but DRIFTED Signet value → serve LOCAL + onServeMismatch.
+    // /prf/pairwise has no DLEQ, so compare-to-local is the only drift detector
+    // that can exist here; and since Signet is not authoritative pre-7c, serving
+    // the local value on divergence is what preserves the byte-identical
+    // guarantee the cutover reversibility depends on.
+    const local = deriveLocalPairwise(input);
     try {
-      return await signetPairwise(input);
+      const remote = await signetPairwise(input);
+      if (remote !== local) {
+        observer.onServeMismatch({ family });
+        return local;
+      }
+      return remote;
     } catch (err) {
-      // Byte-identical local fallback + ALERT: invisible to users/RPs.
       observer.onFallback({
         family,
         error: err instanceof Error ? err.message : String(err),
       });
-      return deriveLocalPairwise(input);
+      return local;
     }
   }
 
@@ -307,6 +378,36 @@ async function derivePairwise(family: PairwiseFamily, input: string): Promise<st
 
 export function derivePairwiseSub(userId: string, clientId: string): Promise<string> {
   return derivePairwise("sub", pairwiseSubInput(userId, clientId));
+}
+
+// A pairwise sub PERSISTED at account merge (SubjectOverride) is frozen forever:
+// resolveSub's override short-circuit means no later shadow compare, token mint,
+// or re-derivation ever recomputes it, so a wrong value can never self-heal the
+// way an ordinary per-mint sub does. A transient/compromised Signet returning a
+// well-formed-but-WRONG sub at merge time would therefore permanently re-key the
+// donor's identity at that RP, invisibly. While the local secret is still
+// present (pre-7c) a byte-equal crosscheck against the golden truth is free:
+// derive through the seam, then — only if OIDC_PAIRWISE_SECRET is set — re-derive
+// locally and THROW on any mismatch (the merge aborts fail-closed and is safe to
+// retry). Post-7c the secret is gone; this degrades to the seam value with the
+// documented Signet-trust residual. In shadow / signet-fallback / local modes
+// the seam already returns the local value, so the crosscheck is a no-op; it
+// only bites in pure `signet` mode, which is exactly the residual it closes.
+export async function derivePairwiseSubForPersistence(
+  userId: string,
+  clientId: string,
+): Promise<string> {
+  const input = pairwiseSubInput(userId, clientId);
+  const served = await derivePairwise("sub", input);
+  if (process.env.OIDC_PAIRWISE_SECRET) {
+    const local = deriveLocalPairwise(input);
+    if (served !== local) {
+      throw new Error(
+        "pairwise: merge-time sub crosscheck failed — the backend-served sub diverges from the local golden value; aborting merge (safe to retry)",
+      );
+    }
+  }
+  return served;
 }
 
 export function derivePairwiseJti(badgeId: string, clientId: string): Promise<string> {

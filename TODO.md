@@ -187,6 +187,37 @@ donor's `badgeTypes` / `profileName` / `profileAvatar` into the survivor's
 `(userId, clientId)` row, with collision handling on the
 `@@unique([userId, clientId])`, mirroring how `subjectOverride` is merged.
 
+### Donor auth codes survive a merge and /token ignores the tombstone
+
+**Where:** `apps/minister/src/app/oidc/token/route.ts` and
+`apps/minister/src/lib/merge.ts` (pre-existing; NOT a regression of the Phase 7
+pairwise seam - the same held when donor subs were derived in-txn).
+
+**What:** `mergeAccounts` neither consumes nor re-points `OidcAuthorizationCode`
+rows, and the `/token` user lookup selects only `id/displayName/avatarUrl` with
+no `mergedIntoUserId` check (userinfo likewise). A donor auth code minted just
+before a merge (60s TTL, PKCE held by the donor's own browser) can redeem AFTER
+the merge commits: `resolveSub(donorUserId, clientId)` finds no override (the
+donor's own overrides were re-pointed to the survivor) and derives the donor's
+sub, minting a fresh `OidcAccessToken` on the tombstoned donor - a live token
+for a merged-away account, outside the reversal snapshot, with the survivor
+holding no override for that client. Bounded by the 60s auth-code TTL but
+unhandled. The Phase 7 RepeatableRead merge txn closes the _in-txn_ drift window
+(a token committed mid-merge now stays on the donor); this is the _post-commit_
+class the drift check always documented as out of scope.
+
+**Why it matters:** The same un-preserved-sub state the in-txn drift check aborts
+on, reachable for ~60s post-commit. Fail direction is a stale token on a
+tombstoned donor whose badges have all moved, not a cross-account leak.
+
+**Fix (two cheap closures, orthogonal to the pairwise seam):** (1) delete the
+donor's `OidcAuthorizationCode` rows inside the merge transaction (consider
+WizardSession-adjacent pending flows too); (2) select `mergedIntoUserId` in the
+`/token` (and `/userinfo`) user lookup and refuse with `invalid_grant` /
+unauthorized when non-null. Deferred here because the `/token` guard is a
+behavioral change to the OIDC endpoints, separate from the merge/seam surface
+this PR touches - filed per the auditor's own recommendation.
+
 ---
 
 ## crypto-core Phase 5 (email dedup) — accepted follow-ups
