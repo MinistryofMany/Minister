@@ -11,6 +11,7 @@ import {
   emailText,
   renderEmail,
 } from "@/lib/email-layout";
+import { normalizeEmailAnchor } from "@/lib/nullifier/normalize";
 
 const STEP_FORM = "collect-email";
 const STEP_MAGIC = "wait-magic-link";
@@ -39,7 +40,7 @@ export const emailDomainPlugin: Plugin = {
     id: "email-domain",
     name: "Email domain",
     description:
-      "Prove you control an email address at a given domain. Verified via a one-time link sent to that address — Minister never stores the email itself, only the domain.",
+      "Prove you control an email address at a given domain. Verified via a one-time link sent to that address — the issued badge records only the domain, never the address.",
     badgeTypes: ["email-domain"],
     requiresExtension: false,
     iconKey: "at-sign",
@@ -115,10 +116,16 @@ export const emailDomainPlugin: Plugin = {
                 expectedToken: token,
               },
             },
-            // We retain the *domain*, not the email, in wizard state so
-            // a wizard-state dump (e.g. via Prisma Studio) shows minimum
-            // PII. The token is the wizard-runtime's pendingToken.
-            data: { domain },
+            // We DELIBERATELY carry the full address in `data.email` across the
+            // magic-link round trip: it is the transient carrier for the Sybil
+            // anchor, which is computed only AT VERIFY (once inbox control is
+            // proven — the build-plan §2.3 anti-squat decision; registering at
+            // form-submit would let an attacker squat a victim's anchor). This
+            // at-rest exposure is bounded by the wizard-session TTL and the
+            // pending magic-link token, and the runtime SCRUBS `data` the moment
+            // the anchor is nullified on completion. The issued badge itself
+            // records only the domain. `token` is the runtime's pendingToken.
+            data: { domain, email },
           },
         };
       }
@@ -132,12 +139,20 @@ export const emailDomainPlugin: Plugin = {
         // session's pendingToken before reaching the plugin. So we
         // trust the input here.
         const domain = typeof state.data.domain === "string" ? state.data.domain : "";
-        if (!domain) {
+        const email = typeof state.data.email === "string" ? state.data.email : "";
+        if (!domain || !email) {
           return {
             kind: "error",
-            message: "Wizard state missing domain — restart the flow.",
+            message: "Wizard state missing the verified address — restart the flow.",
           };
         }
+        // Inbox control is now proven → capture the Sybil anchor: the NORMALIZED
+        // FULL address. Only the domain is revealed/stored on the badge; the
+        // runtime nullifies this anchor into an opaque Badge.nullifierRef,
+        // DISCARDS the raw address, and scrubs it from the persisted state.
+        const sybilAnchor = normalizeEmailAnchor(email);
+        // Audit records the domain only — never the address (the AuditLog is one
+        // of the at-rest stores the raw anchor must never land in).
         await ctx.audit.log("plugin.email_domain.verified", { domain });
 
         return {
@@ -147,6 +162,7 @@ export const emailDomainPlugin: Plugin = {
               type: "email-domain",
               attributes: { domain },
               claims: { domain },
+              sybilAnchor,
             },
           ],
         };
