@@ -70,6 +70,22 @@ function anchorAppearsAsValue(node: unknown, anchor: string): boolean {
   return false;
 }
 
+// The user-facing credential noun for a `taken` (one-credential-one-account)
+// refusal, keyed on the badge type. github-family types keep the exact wording
+// that shipped in Phase 1; the email types get their own noun (Phase 5, when
+// email became the second anchor-emitting plugin). Fallback is generic.
+function takenCredentialNoun(badgeType: string): string {
+  if (badgeType === "email-domain" || badgeType === "email-exact") return "email address";
+  if (
+    badgeType === "oauth-account" ||
+    badgeType === "account-age" ||
+    badgeType === "social-following"
+  ) {
+    return "GitHub account";
+  }
+  return "credential";
+}
+
 // Wizard-state is persisted as JSON, but only the `currentStep` and
 // `data` fields need to survive — userId and pluginId are stored as
 // dedicated columns. Strip back to the minimum for round-trips.
@@ -356,10 +372,13 @@ async function issueBadgesAndComplete(args: {
   };
 
   // The one-credential-one-account error, raised from two places (the initial
-  // registerDedup and the mint-side re-validation re-register). Concrete copy
-  // for the only anchor-emitting plugin today (github); generic wiring.
-  const takenError = () =>
-    new SybilTakenError("This GitHub account is already linked to another Minister account.");
+  // registerDedup and the mint-side re-validation re-register). The credential
+  // noun is derived from the badge type so the copy is correct per anchor plugin
+  // (github vs email); the oauth phrasing is unchanged from before Phase 5.
+  const takenError = (badgeType: string) =>
+    new SybilTakenError(
+      `This ${takenCredentialNoun(badgeType)} is already linked to another Minister account.`,
+    );
 
   for (const badge of issued) {
     let nullifierRef: string | null = null;
@@ -372,9 +391,16 @@ async function issueBadgesAndComplete(args: {
       // it at rest despite this central discard point stripping the `sybilAnchor`
       // FIELD. Refuse issuance outright if the anchor VALUE appears in the badge
       // it is meant to have been discarded from — fail closed (Finding 5).
+      //
+      // EXCEPT a badge that reveals its anchor BY DESIGN (`revealsAnchor`, today
+      // only email-exact): there the normalized address IS the disclosed claim,
+      // so the value legitimately appears — the guard would else refuse every
+      // such badge. The opt-out is explicit and per-badge; every anchor-hiding
+      // badge keeps the guard.
       if (
-        anchorAppearsAsValue(badge.attributes, anchor) ||
-        anchorAppearsAsValue(badge.claims, anchor)
+        !badge.revealsAnchor &&
+        (anchorAppearsAsValue(badge.attributes, anchor) ||
+          anchorAppearsAsValue(badge.claims, anchor))
       ) {
         await compensateBatch();
         throw new Error(
@@ -390,7 +416,7 @@ async function issueBadgesAndComplete(args: {
       });
       if (reg.status === "taken") {
         await compensateBatch();
-        throw takenError();
+        throw takenError(badge.type);
       }
       nullifierRef = reg.entryRef;
       if (reg.status === "registered") freshRegs.push({ ref: reg.entryRef, handle: ownerHandle });
@@ -507,7 +533,7 @@ async function issueBadgesAndComplete(args: {
             ownerHandle: handle,
           });
           if (reReg.status === "taken") {
-            throw takenError();
+            throw takenError(badge.type);
           }
           if (reReg.status === "registered") {
             freshRegs.push({ ref: reReg.entryRef, handle });

@@ -129,6 +129,14 @@ export interface IssuedBadge {
   // before setting it (normalization is the plugin's job); emitting it opts the
   // badge into one-credential-one-account dedup. See src/lib/nullifier/.
   sybilAnchor?: string;
+  // IN-MEMORY ONLY, NEVER SERIALIZED. Opt OUT of the runtime's value-based
+  // anchor-leak guard for a badge that reveals its anchor BY DESIGN — today only
+  // `email-exact`, whose normalized address IS the disclosed claim. Default /
+  // absent = guard ON, so every anchor-HIDING badge (github, email-domain) stays
+  // protected against accidentally copying its anchor into claims/attributes.
+  // The dedup nullifier (Badge.nullifierRef) is still recorded; nothing extra is
+  // hidden because the claim already discloses the value.
+  revealsAnchor?: boolean;
   expiresAt?: Date;
   eligibilities?: Array<{
     badgeType: string;
