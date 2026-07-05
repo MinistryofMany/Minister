@@ -27,6 +27,11 @@ export default defineConfig({
       testMatch: /.*\.spec\.ts/,
     },
   ],
+  // Signet-backed mode (crypto-core Phase 3): playwright merges this env over
+  // the caller's process.env, so `set -a; source signet-e2e/.stack/minister.env;
+  // set +a` before `test:e2e` boots the dev server with
+  // MINISTER_NULLIFIER_BACKEND=signet against the local/compose Signet stack
+  // (see signet-e2e/README.md). Nothing sourced → default interim, unchanged.
   webServer: {
     command: `node_modules/.bin/next dev --port ${E2E_PORT}`,
     url: BASE_URL,

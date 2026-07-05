@@ -1,0 +1,3 @@
+# Generated test stack (certs, sealed keystore, env files, logs) + Rust build.
+.stack/
+fixture/target/

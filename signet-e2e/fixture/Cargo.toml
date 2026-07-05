@@ -1,0 +1,20 @@
+# Test-stack generator for the Minister <-> Signet e2e/CI fixture (crypto-core
+# Phase 3). Compiles against the sibling Signet checkout so the sealed keys DB
+# it emits uses Signet's OWN keystore code — nothing is reimplemented.
+# Requires the MinistryOfMany workspace layout (Signet next to Minister); the
+# CI job recreates the same layout with two checkouts.
+[package]
+name = "signet-e2e-fixture"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+signet = { path = "../../../Signet" }
+# Dev mTLS certs, same generator crate/version Signet's own harness uses.
+rcgen = "0.13"
+hex = "0.4"
+serde_json = "1"
+rand = "0.9"
+
+[workspace]
