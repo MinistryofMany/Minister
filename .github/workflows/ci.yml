@@ -84,7 +84,6 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: MinistryofMany/Signet
-          token: ${{ secrets.SIGNET_READ_TOKEN }}
           path: Signet
 
       # The frozen vectors are committed to BOTH repos; byte-inequality here
