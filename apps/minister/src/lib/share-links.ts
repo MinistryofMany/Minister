@@ -22,6 +22,24 @@ const SHARE_TOKEN_BYTES = 32;
 export const DEFAULT_SHARE_TTL_DAYS = 7;
 export const MAX_SHARE_TTL_DAYS = 90;
 
+// audit() is a bare prisma.auditLog.create with no internal error handling. In
+// the fail-closed per-badge disclosure catch below it MUST NOT be able to reject
+// into the enclosing Promise.all — a degraded-DB audit-write failure there would
+// take down the whole share-link render and drop every other badge on the link,
+// inverting the "one bad badge omits only itself" invariant. Mirrors oidc-claims.ts:
+// swallow with a console fallback (the record is a non-secret omission note).
+async function safeAudit(
+  userId: string,
+  action: string,
+  metadata: Record<string, unknown>,
+): Promise<void> {
+  try {
+    await audit(userId, action, metadata);
+  } catch (auditErr) {
+    console.error(`[share-links] failed to write audit ${action}:`, auditErr);
+  }
+}
+
 export function generateShareToken(): string {
   return randomBytes(SHARE_TOKEN_BYTES).toString("base64url");
 }
@@ -160,7 +178,7 @@ export async function loadShareLinkByToken(token: string): Promise<{
           sanitizeClaims: sanitizeDisclosedClaims,
         });
       } catch (err) {
-        await audit(row.userId, "sharelink.badge_disclosure_omitted", {
+        await safeAudit(row.userId, "sharelink.badge_disclosure_omitted", {
           badgeId: b.id,
           shareLinkId: row.id,
           reason: err instanceof Error ? err.message : String(err),
