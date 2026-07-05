@@ -6,14 +6,32 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // signature binding itself is covered by packages/vc remint.test.ts; here we
 // mock reMintVc to observe exactly what the disclosure seam feeds it.
 
-const h = vi.hoisted(() => ({
-  findMany: vi.fn(),
-  userFindUnique: vi.fn(),
-  reMintVc: vi.fn(),
-  disclose: vi.fn(),
-  assertDrift: vi.fn(),
-  audit: vi.fn(),
-}));
+const h = vi.hoisted(
+  () =>
+    ({
+      findMany: vi.fn(),
+      userFindUnique: vi.fn(),
+      reMintVc: vi.fn(),
+      disclose: vi.fn(),
+      assertDrift: vi.fn(),
+      audit: vi.fn(),
+      // Populated by the drift-cache mock factory below (a real constructor the
+      // tests instantiate to exercise the dedicated drift-alert path).
+      DriftError: undefined as unknown as new (
+        entryRef: string,
+        clientId: string,
+        detail: string,
+      ) => Error,
+    }) as {
+      findMany: ReturnType<typeof vi.fn>;
+      userFindUnique: ReturnType<typeof vi.fn>;
+      reMintVc: ReturnType<typeof vi.fn>;
+      disclose: ReturnType<typeof vi.fn>;
+      assertDrift: ReturnType<typeof vi.fn>;
+      audit: ReturnType<typeof vi.fn>;
+      DriftError: new (entryRef: string, clientId: string, detail: string) => Error;
+    },
+);
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
@@ -38,9 +56,27 @@ vi.mock("@/lib/disclosure-claims", () => ({
 vi.mock("@/lib/nullifier", () => ({
   nullifierService: { disclose: h.disclose },
 }));
-vi.mock("@/lib/nullifier/drift-cache", () => ({
-  assertNullifierDriftConsistent: h.assertDrift,
-}));
+// oidc-claims imports NullifierDriftError and branches on `instanceof`, so the
+// mock must export a real constructor. Defined INSIDE the factory (vi.mock is
+// hoisted above module-level declarations, so a top-level class would not yet be
+// initialized when the factory runs). Re-exported to the test via h.DriftError.
+vi.mock("@/lib/nullifier/drift-cache", () => {
+  class NullifierDriftError extends Error {
+    entryRef: string;
+    clientId: string;
+    constructor(entryRef: string, clientId: string, detail: string) {
+      super(`nullifier drift detected for entryRef ${entryRef} at client ${clientId}: ${detail}`);
+      this.name = "NullifierDriftError";
+      this.entryRef = entryRef;
+      this.clientId = clientId;
+    }
+  }
+  h.DriftError = NullifierDriftError;
+  return {
+    assertNullifierDriftConsistent: h.assertDrift,
+    NullifierDriftError,
+  };
+});
 vi.mock("@/lib/audit", () => ({ audit: h.audit }));
 
 import { loadApprovedBadgeJwts } from "@/lib/oidc-claims";
@@ -49,7 +85,11 @@ const CLIENT = "mc_client";
 const SUB = "PAIRWISE_SUB";
 
 beforeEach(() => {
-  Object.values(h).forEach((fn) => fn.mockReset());
+  for (const v of Object.values(h)) {
+    if (typeof v === "function" && "mockReset" in v) {
+      (v as ReturnType<typeof vi.fn>).mockReset();
+    }
+  }
   h.reMintVc.mockImplementation(async (_issuer, vcJwt: string) => `minted(${vcJwt})`);
   h.disclose.mockResolvedValue("mnv1:DISCLOSED_value" as never);
   h.assertDrift.mockResolvedValue(undefined);
@@ -105,17 +145,61 @@ describe("loadApprovedBadgeJwts — nullifier disclosure", () => {
     );
   });
 
-  it("FAILS CLOSED on a drift-cache mismatch", async () => {
+  it("FAILS CLOSED on a drift-cache mismatch and raises a DEDICATED drift alert", async () => {
     h.findMany.mockResolvedValue([
       { id: "b1", vcJwt: "vc1", expiresAt: null, nullifierRef: "ref-1" },
     ]);
-    h.assertDrift.mockRejectedValue(new Error("drift detected"));
+    h.assertDrift.mockRejectedValue(new h.DriftError("ref-1", CLIENT, "value changed"));
 
     const out = await loadApprovedBadgeJwts("user1", CLIENT, SUB, ["b1"]);
 
     expect(out).toEqual([]);
     expect(h.reMintVc).not.toHaveBeenCalled();
-    expect(h.audit).toHaveBeenCalledOnce();
+    // A drift emits its OWN action (alertable, not buried) AND the omission
+    // record — never just the generic omission a benign schema failure produces.
+    expect(h.audit).toHaveBeenCalledWith(
+      "user1",
+      "nullifier.drift_detected",
+      expect.objectContaining({ badgeId: "b1", clientId: CLIENT }),
+    );
+    expect(h.audit).toHaveBeenCalledWith(
+      "user1",
+      "oidc.badge_disclosure_omitted",
+      expect.objectContaining({ badgeId: "b1", clientId: CLIENT }),
+    );
+  });
+
+  it("a BENIGN (non-drift) failure emits ONLY the generic omission, not the drift alert", async () => {
+    h.findMany.mockResolvedValue([
+      { id: "b1", vcJwt: "vc1", expiresAt: null, nullifierRef: "ref-1" },
+    ]);
+    h.disclose.mockRejectedValue(new Error("signet down"));
+
+    await loadApprovedBadgeJwts("user1", CLIENT, SUB, ["b1"]);
+
+    expect(h.audit).not.toHaveBeenCalledWith(
+      "user1",
+      "nullifier.drift_detected",
+      expect.anything(),
+    );
+    expect(h.audit).toHaveBeenCalledWith(
+      "user1",
+      "oidc.badge_disclosure_omitted",
+      expect.objectContaining({ badgeId: "b1" }),
+    );
+  });
+
+  it("still omits (never throws) when the audit write itself fails — login stays up", async () => {
+    h.findMany.mockResolvedValue([
+      { id: "b1", vcJwt: "vc1", expiresAt: null, nullifierRef: "ref-1" },
+    ]);
+    h.disclose.mockRejectedValue(new Error("signet down"));
+    h.audit.mockRejectedValue(new Error("db degraded"));
+
+    // A bare audit reject would otherwise escape into Promise.all and fail the
+    // whole token request; safeAudit must swallow it.
+    const out = await loadApprovedBadgeJwts("user1", CLIENT, SUB, ["b1"]);
+    expect(out).toEqual([]);
   });
 
   it("FAILS CLOSED when a ref-bearing badge has no owner handle (never a nullifier-less copy)", async () => {

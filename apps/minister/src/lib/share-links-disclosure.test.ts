@@ -394,6 +394,36 @@ describe("loadShareLinkByToken — pairwise disclosure re-mint (MIN-1)", () => {
     expect(link).not.toBeNull();
     expect(link!.badges).toEqual([]);
   });
+
+  // ADR §2.5 decision: SHARE LINKS GET NO NULLIFIER. The link is a
+  // human-audience bearer artifact, not a Sybil-gated RP — injecting a
+  // persistent per-RP tracking tag into a URL-borne disclosure widens the leak
+  // surface for zero gating value. loadShareLinkByToken passes no `nullifier`
+  // option to reMintVc, and reMintVc strips any same-named STORED claim. This
+  // pins BOTH at the share-link call site (mirroring remint.test.ts's strip
+  // assertions) so a future edit copy-pasting the oidc-claims disclose block —
+  // and thereby threading a nullifier into a share link — fails loudly here.
+  it("never discloses a `nullifier` claim, even when the stored VC smuggles one", async () => {
+    // A stored VC whose credentialSubject carries a `nullifier` claim (issueVc
+    // spreads claims verbatim, so this simulates a smuggled/legacy value).
+    const smuggledVcJwt = await issueVc(
+      issuer,
+      "email-domain",
+      buildUserDid(issuer.domain, USER),
+      { domain: "example.com", nullifier: "mnv1:SMUGGLED_tracking_tag" },
+      { jti: BADGE_ID, expiresIn: "1y" },
+    );
+
+    const link = await viewLink(linkRow(), [badgeRow({ vcJwt: smuggledVcJwt })]);
+    expect(link).not.toBeNull();
+    const served = link!.badges[0]!.vcJwt;
+    const payload = decodeJwt(served);
+    const vc = payload.vc as { credentialSubject: Record<string, unknown> };
+    expect("nullifier" in vc.credentialSubject).toBe(false);
+    // And the smuggled value appears nowhere in the served artifact.
+    expect(served).not.toContain("SMUGGLED_tracking_tag");
+    expect(JSON.stringify(payload)).not.toContain("mnv1:");
+  });
 });
 
 describe("loadApprovedBadgeJwts — per-badge fail-closed omit (Finding 2)", () => {

@@ -3,7 +3,7 @@ import { buildPairwiseUserDid, reMintVc } from "@minister/vc";
 import { audit } from "@/lib/audit";
 import { sanitizeDisclosedClaims } from "@/lib/disclosure-claims";
 import { getIssuer } from "@/lib/issuer";
-import { assertNullifierDriftConsistent } from "@/lib/nullifier/drift-cache";
+import { assertNullifierDriftConsistent, NullifierDriftError } from "@/lib/nullifier/drift-cache";
 import { nullifierService } from "@/lib/nullifier";
 import { ACCESS_TOKEN_TTL, pairwiseJti } from "@/lib/oidc-tokens";
 import { prisma } from "@/lib/prisma";
@@ -19,6 +19,24 @@ import { prisma } from "@/lib/prisma";
 // the raw id_token on every gated call (dead at 10 min by its own model) and
 // gates rooms once, at join, against a freshly minted per-room token.
 const BADGE_DISCLOSURE_TTL_SECONDS = ACCESS_TOKEN_TTL;
+
+// audit() is a bare prisma.auditLog.create with no internal error handling. In
+// the fail-closed disclosure catch it MUST NOT be able to reject into the
+// enclosing Promise.all — a degraded-DB audit-write failure there would fail
+// the whole token/userinfo request and break the "login unaffected" invariant.
+// Mirror the runPostCommit pattern: swallow with a console fallback (the record
+// being written is a non-secret ledger/omission note, never user data).
+async function safeAudit(
+  userId: string,
+  action: string,
+  metadata: Record<string, unknown>,
+): Promise<void> {
+  try {
+    await audit(userId, action, metadata);
+  } catch (auditErr) {
+    console.error(`[oidc-claims] failed to write audit ${action}:`, auditErr);
+  }
+}
 
 // The user fields both OIDC claim paths need. Deliberately only the
 // user-curated profile values — the upstream auth identity (`User.name`,
@@ -203,10 +221,31 @@ export async function loadApprovedBadgeJwts(
           ...(nullifier !== undefined ? { nullifier } : {}),
         });
       } catch (err) {
-        await audit(userId, "oidc.badge_disclosure_omitted", {
+        const reason = err instanceof Error ? err.message : String(err);
+        // A drift throw means Signet returned a different N_rp than first
+        // recorded — a possible integrity failure of the ONLY runtime detector
+        // Minister has (stage 2 carries no DLEQ). Raise a DEDICATED, alertable
+        // signal (console.error + its own audit action), NOT the generic
+        // omission record that also covers benign re-mint/schema failures, so a
+        // lying/compromised Signet is not buried in omission noise.
+        if (err instanceof NullifierDriftError) {
+          console.error(`[nullifier] ${reason}`);
+          await safeAudit(userId, "nullifier.drift_detected", {
+            badgeId: row.id,
+            clientId,
+            reason,
+          });
+        }
+        // Fail-closed omit. audit() is a bare prisma write with no internal
+        // error handling; if it rejected here (DB degraded after the reads
+        // succeeded) the rejection would escape into Promise.all and take down
+        // the whole token/userinfo request — inverting the "login unaffected"
+        // invariant precisely in the degraded conditions this path exists to
+        // survive. Guard it so an audit-write failure can never do that.
+        await safeAudit(userId, "oidc.badge_disclosure_omitted", {
           badgeId: row.id,
           clientId,
-          reason: err instanceof Error ? err.message : String(err),
+          reason,
         });
         return null;
       }
