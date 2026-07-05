@@ -1,7 +1,7 @@
 import type { Prisma } from "@/generated/prisma";
 import { MERGE_REVERSAL_DAYS } from "@/lib/assurance";
 import { ensureDedupHandle, nullifierService, runPostCommit } from "@/lib/nullifier";
-import { pairwiseSub } from "@/lib/oidc-tokens";
+import { derivePairwiseSub } from "@/lib/pairwise-backend";
 import { prisma } from "@/lib/prisma";
 
 // Account merge (slice 5) — the data-reconciliation core. The SECURITY
@@ -128,17 +128,24 @@ export async function mergeAccounts(
 
   const now = new Date();
 
-  // §2.6: the donor-sub derivations (pairwiseSub today; a Signet mTLS round-trip
-  // from Phase 7) are PRE-COMPUTED here, BEFORE the transaction opens. No PRF /
-  // nullifier network call may run inside an open prisma.$transaction. Collect
-  // the donor's token clientIds, resolve their subs, then transact.
+  // §2.6: the donor-sub derivations route through the Phase 7 pairwise seam
+  // (`derivePairwiseSub`), which is a Signet mTLS round-trip under the
+  // shadow/signet-fallback/signet backends. They are PRE-COMPUTED here, BEFORE
+  // the transaction opens — no PRF/pairwise network call may run inside an open
+  // prisma.$transaction. Collect the donor's token clientIds, resolve their
+  // subs (awaiting the seam), then transact. (Finding 7 below re-reads the
+  // client set inside the tx and aborts on any drift in this gap.)
   const donorTokenClients = await prisma.oidcAccessToken.findMany({
     where: { userId: donorUserId },
     select: { clientId: true },
     distinct: ["clientId"],
   });
   const donorSubByClient = new Map<string, string>(
-    donorTokenClients.map((r) => [r.clientId, pairwiseSub(donorUserId, r.clientId)]),
+    await Promise.all(
+      donorTokenClients.map(
+        async (r) => [r.clientId, await derivePairwiseSub(donorUserId, r.clientId)] as const,
+      ),
+    ),
   );
 
   const txResult = await prisma.$transaction(async (tx) => {

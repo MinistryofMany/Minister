@@ -147,7 +147,11 @@ export type SignetTransport = (
 // filesystem path (a compose mount). Mirrors FreedInk's signet config layer.
 // A read error surfaces loudly — a misconfigured cert path must never
 // silently degrade.
-function resolvePem(value: string, name: string): string {
+//
+// Exported so the pairwise-sub backend (lib/pairwise-backend.ts) reuses the
+// exact same PEM resolution and hardened mTLS transport instead of duplicating
+// it — both talk to the same Signet over the same MINISTER_SIGNET_* material.
+export function resolvePem(value: string, name: string): string {
   const trimmed = value.trim();
   if (trimmed.startsWith("-----BEGIN")) return value;
   try {
@@ -165,7 +169,7 @@ function resolvePem(value: string, name: string): string {
 // lifted from the proven RemoteSigner shape in @ministryofmany/blind-token.
 // rejectUnauthorized stays true so a future edit can't silently disable
 // server-cert verification. Never logs request or response bodies.
-function createHttpsTransport(cfg: {
+export function createHttpsTransport(cfg: {
   baseUrl: string;
   clientCert: string;
   clientKey: string;

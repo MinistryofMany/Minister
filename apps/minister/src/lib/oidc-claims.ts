@@ -5,7 +5,8 @@ import { sanitizeDisclosedClaims } from "@/lib/disclosure-claims";
 import { getIssuer } from "@/lib/issuer";
 import { assertNullifierDriftConsistent, NullifierDriftError } from "@/lib/nullifier/drift-cache";
 import { nullifierService } from "@/lib/nullifier";
-import { ACCESS_TOKEN_TTL, pairwiseJti } from "@/lib/oidc-tokens";
+import { ACCESS_TOKEN_TTL } from "@/lib/oidc-tokens";
+import { derivePairwiseJti } from "@/lib/pairwise-backend";
 import { prisma } from "@/lib/prisma";
 
 // Presentation lifetime of a disclosed badge VC = the access-token TTL (1h),
@@ -212,7 +213,10 @@ export async function loadApprovedBadgeJwts(
 
         return await reMintVc(issuer, row.vcJwt, {
           subjectId,
-          jti: pairwiseJti(row.id, clientId),
+          // Route through the Phase 7 seam (async) so the per-RP jti can be
+          // staged into Signet; byte-identical to pairwiseJti in `local` mode.
+          // §2.6: no open prisma.$transaction is held here.
+          jti: await derivePairwiseJti(row.id, clientId),
           maxExpiresAt: row.expiresAt,
           disclosureTtlSeconds: BADGE_DISCLOSURE_TTL_SECONDS,
           // Strip any legacy claim the current schema has since removed (e.g. the

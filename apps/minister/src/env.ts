@@ -25,15 +25,19 @@ const serverSchema = z
     // into Signet.
     OIDC_PAIRWISE_SECRET: z.string().optional(),
 
-    // Selects the pairwise-sub derivation backend. ONLY `local` exists today:
-    // Phase 7 widens this enum (shadow | signet-fallback | signet) in the PR
-    // that actually wires the Signet sub backend, and relaxes the
-    // OIDC_PAIRWISE_SECRET requirement below at the same time (the 7c-ii SSM
-    // secret deletion). Constrained now so a premature `signet` value fails
-    // at boot instead of disabling the required-secret rule while every
-    // runtime derivation still hard-requires the secret (500s deep inside
-    // token minting) — and so a typo cannot silently behave as unset.
-    MINISTER_SUB_BACKEND: z.enum(["local"]).optional(),
+    // Selects the pairwise-sub derivation backend (crypto-core Phase 7 seam,
+    // lib/pairwise-backend.ts). Staged cutover: local → shadow →
+    // signet-fallback → signet. Default (unset) is `local` — merging the seam
+    // changes NOTHING at runtime. `shadow` serves the local value and compares
+    // an async Signet call; `signet-fallback` serves Signet with a
+    // byte-identical local fallback; `signet` serves Signet only.
+    //
+    // OIDC_PAIRWISE_SECRET stays REQUIRED here even under `signet` for now: the
+    // secret is only removed from Minister at the SIGN-OFF-gated 7c deploy step,
+    // which relaxes the requirement below (conditional-off under `signet`) in
+    // its own change. Constraining the enum to these four values means a typo
+    // fails at boot instead of silently behaving as unset.
+    MINISTER_SUB_BACKEND: z.enum(["local", "shadow", "signet-fallback", "signet"]).optional(),
 
     // Sybil-dedup nullifier backend (crypto-core Phase 3). `interim` keeps the
     // in-Minister HMAC ledger; `signet` routes stage-1 through Signet's VOPRF
