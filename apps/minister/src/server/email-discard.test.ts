@@ -250,6 +250,59 @@ describe("email-domain — anchor discarded, only the domain revealed", () => {
   });
 });
 
+describe("email-domain — the continue step leaks NO pending token or address to the client", () => {
+  const LOCAL = "clientleakprobe";
+  const DOMAIN = "leakprobe.example";
+  const ADDRESS = `${LOCAL}@${DOMAIN}`;
+
+  it("returns a client-safe state from submitStep: expectedToken and data stripped, full state persisted", async () => {
+    vi.mocked(getPlugin).mockReturnValue(emailDomainPlugin);
+    // Seed the FORM step (pre-magic-link); submitting it sends the email and
+    // transitions to the magic-link step.
+    h.tables.wizardSession.push({
+      id: "wf1",
+      userId: USER,
+      pluginId: "email-domain",
+      state: {
+        currentStep: {
+          id: "collect-email",
+          kind: "form",
+          payload: { title: "Verify an email domain", fields: [] },
+        },
+        data: {},
+      },
+      completedAt: null,
+      pendingToken: null,
+      expiresAt: new Date(Date.now() + 60_000),
+    });
+
+    const result = await submitStep("wf1", USER, "http://localhost:3000", { email: ADDRESS });
+    expect(result.kind).toBe("continue");
+    if (result.kind !== "continue") throw new Error("kind");
+
+    expect(result.state.currentStep.kind).toBe("magic-link");
+    if (result.state.currentStep.kind !== "magic-link") throw new Error("kind");
+    // capture-at-verify: the pending TOKEN (inbox-control proof) must not cross
+    // the server-action wire. (sentTo legitimately echoes the address back to the
+    // SAME browser that just typed it — that is display, not a token leak.)
+    expect(result.state.currentStep.payload.expectedToken).toBeUndefined();
+    // The server-side `data` accumulator (which carries the raw address) is
+    // dropped entirely from the client copy.
+    expect(result.state.data).toEqual({});
+    expect(JSON.stringify(result.state.data)).not.toContain(LOCAL);
+
+    // The PERSISTED row still holds the token (as pendingToken) and the raw
+    // address (in data) so the emailed link can complete the flow.
+    const row = h.tables.wizardSession.find((r) => r.id === "wf1")!;
+    expect(typeof row.pendingToken).toBe("string");
+    const persistedToken = row.pendingToken as string;
+    expect(persistedToken.length).toBeGreaterThan(8);
+    // The token that reached the DB must NOT appear anywhere in the client copy.
+    expect(JSON.stringify(result.state)).not.toContain(persistedToken);
+    expect(JSON.stringify((row.state as { data: unknown }).data)).toContain(ADDRESS);
+  });
+});
+
 describe("email-exact — address revealed BY DESIGN, but scrubbed from state + audit", () => {
   const LOCAL = "scanexact";
   const DOMAIN = "exactprobe.example";

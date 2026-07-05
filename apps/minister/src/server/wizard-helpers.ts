@@ -1,4 +1,4 @@
-import type { WizardState } from "@minister/plugin-sdk";
+import type { WizardState, WizardStep } from "@minister/plugin-sdk";
 
 // Pure helpers used by the wizard runtime and the OIDC server actions.
 // Extracted so the logic is unit-testable without standing up Prisma.
@@ -22,6 +22,49 @@ export function pendingTokenFor(state: WizardState): string | null {
     default:
       return null;
   }
+}
+
+// Strip every pending-token-class SECRET from a step's payload before the
+// wizard state crosses the RSC/server-action boundary to the browser.
+//
+// A server action's return value is serialized to the client IN FULL — the
+// React renderer ignoring a field does NOT keep it off the wire. Three step
+// kinds carry a token that is ALSO lifted into WizardSession.pendingToken (see
+// pendingTokenFor) and accepted by the resume/callback routes as proof of
+// possession:
+//   - magic-link:       expectedToken            (proves inbox control)
+//   - redirect:         expectedState            (OAuth CSRF/correlation state)
+//   - extension-action: expectedSubmissionToken  (TLSN submit correlation)
+// Returning any of them to the initiating browser defeats capture-at-verify:
+// for the email plugins it hands an attacker the very token the verify route
+// treats as inbox proof (anchor-squat / false-attestation, build-plan §2.3).
+// The token still exists where it MUST — the DB column and (for magic-link) the
+// emailed URL — so this only removes the illegitimate client copy.
+function stripStepSecrets(step: WizardStep): WizardStep {
+  switch (step.kind) {
+    case "magic-link":
+      return { ...step, payload: { ...step.payload, expectedToken: undefined } };
+    case "redirect":
+      return { ...step, payload: { ...step.payload, expectedState: undefined } };
+    case "extension-action":
+      return { ...step, payload: { ...step.payload, expectedSubmissionToken: undefined } };
+    default:
+      return step;
+  }
+}
+
+// Build the client-safe view of a wizard state to return from a server action.
+// Drops both the pending-token secrets (above) AND `data` — `WizardState.data`
+// is documented server-side-only accumulator (the email plugins stash the raw
+// lowercased address there across the round trip), so it must never ride the
+// wire. The FULL state is still persisted to the DB by the runtime; this copy
+// is display-only and is never sent back by the client.
+export function toClientState(state: WizardState): WizardState {
+  return {
+    ...state,
+    currentStep: stripStepSecrets(state.currentStep),
+    data: {},
+  };
 }
 
 // Reduce the requested OIDC scope set to what the user actually agreed

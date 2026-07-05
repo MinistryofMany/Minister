@@ -43,17 +43,29 @@ function stripPlusTag(localPart: string): string {
 }
 
 // Normalize a submitted email into its Sybil anchor (the normalized full
-// address, `local@domain`). Throws on an address with no usable local@domain
-// split — callers validate with Zod's `.email()` first, so a throw here signals
-// a programmer error, not raw user input.
+// address, `local@domain`). Throws on a non-ASCII character, an address with no
+// usable local@domain split, or a local part that normalization empties —
+// callers validate with Zod's `.email()` first, so a throw here signals a
+// programmer error, not raw user input.
 export function normalizeEmailAnchor(email: string): string {
-  const trimmed = email.trim().toLowerCase();
-  const at = trimmed.lastIndexOf("@");
-  if (at <= 0 || at === trimmed.length - 1) {
+  const trimmed = email.trim();
+  // ENFORCE the ASCII-input precondition (don't just document it). The fold
+  // rules below assume ASCII: `toLowerCase()` on a non-ASCII char can collapse
+  // distinct addresses (U+212A KELVIN SIGN → ascii "k", so "booK@x" ≡ "book@x")
+  // or leave visually-identical NFC/NFD / homoglyph forms as DISTINCT anchors.
+  // Zod's `.email()` (every caller) already rejects non-ASCII, so a throw here
+  // is a programmer error (a future call site feeding provider-sourced strings),
+  // not raw user input — same contract as the no-local@domain throw below.
+  if (/[^\u0000-\u007f]/u.test(trimmed)) {
+    throw new Error("normalizeEmailAnchor: non-ASCII character in address");
+  }
+  const lowered = trimmed.toLowerCase();
+  const at = lowered.lastIndexOf("@");
+  if (at <= 0 || at === lowered.length - 1) {
     throw new Error("normalizeEmailAnchor: address has no local@domain split");
   }
-  let local = trimmed.slice(0, at);
-  let domain = trimmed.slice(at + 1);
+  let local = lowered.slice(0, at);
+  let domain = lowered.slice(at + 1);
 
   // Google: googlemail.com is an alias of gmail.com (identical mailbox).
   if (domain === "googlemail.com") domain = "gmail.com";
@@ -66,6 +78,17 @@ export function normalizeEmailAnchor(email: string): string {
     local = stripPlusTag(local);
   }
   // Every other domain: lowercase only (already applied above).
+
+  // Stripping can empty the local part ("+tag@gmail.com", "....@gmail.com" →
+  // "@gmail.com"): a syntactically-invalid anchor that also OVER-COLLAPSES
+  // (every such degenerate input at a stripping provider maps to one
+  // "@domain"). These addresses can't exist as deliverable mailboxes, so they
+  // are unreachable for real issuance — but fail UNIFORMLY here (same
+  // programmer-error contract as the no-local@domain throw) rather than
+  // returning an invalid anchor or 500-ing downstream at schema.parse.
+  if (local.length === 0) {
+    throw new Error("normalizeEmailAnchor: address normalizes to an empty local part");
+  }
 
   return `${local}@${domain}`;
 }

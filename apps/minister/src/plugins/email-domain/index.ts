@@ -120,11 +120,15 @@ export const emailDomainPlugin: Plugin = {
             // magic-link round trip: it is the transient carrier for the Sybil
             // anchor, which is computed only AT VERIFY (once inbox control is
             // proven — the build-plan §2.3 anti-squat decision; registering at
-            // form-submit would let an attacker squat a victim's anchor). This
-            // at-rest exposure is bounded by the wizard-session TTL and the
-            // pending magic-link token, and the runtime SCRUBS `data` the moment
-            // the anchor is nullified on completion. The issued badge itself
-            // records only the domain. `token` is the runtime's pendingToken.
+            // form-submit would let an attacker squat a victim's anchor). The
+            // runtime NEVER returns this `data` to the browser (server actions
+            // return a scrubbed copy — see toClientState). At-rest it is bounded:
+            // the runtime SCRUBS `data` the moment the anchor is nullified on
+            // completion (or on a compensated abort), and the ABANDONED path
+            // (link never clicked) is reaped by the wizard-session TTL —
+            // delete-on-observe + sweepExpiredWizardSessions in the runtime, so
+            // the address does not outlive the 60-minute TTL. The issued badge
+            // itself records only the domain. `token` is the runtime's pendingToken.
             data: { domain, email },
           },
         };

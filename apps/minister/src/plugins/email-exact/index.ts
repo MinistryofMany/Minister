@@ -47,7 +47,7 @@ export const emailExactPlugin: Plugin = {
     id: "email-exact",
     name: "Email address",
     description:
-      "Prove you control a specific email address, revealing the full address. Less private than the email-domain badge — verified via a one-time link sent to that address.",
+      "Prove you control a specific email address, revealing the full address. Less private than the email-domain badge — verified via a one-time link sent to that address. The badge attests the CANONICAL (normalized) form of the address (lowercased; for Gmail, dots and any +tag are dropped), which can differ from exactly what you typed.",
     badgeTypes: ["email-exact"],
     requiresExtension: false,
     iconKey: "mail",
@@ -182,7 +182,7 @@ function makeFormStep(userId: string): WizardState {
       payload: {
         title: "Verify an email address",
         description:
-          "Enter the email address you want to attest. Minister will email a verification link; clicking it issues a badge revealing that exact address.",
+          "Enter the email address you want to attest. Minister will email a verification link; clicking it issues a badge revealing the canonical (normalized) form of that address — an exact-string match by a relying party is not guaranteed.",
         fields: [
           {
             name: "email",

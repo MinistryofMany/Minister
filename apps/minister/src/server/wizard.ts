@@ -12,7 +12,7 @@ import {
 import { prisma } from "@/lib/prisma";
 import { getPlugin } from "@/plugins/registry";
 import { issueBadge } from "@/server/issue-badge";
-import { pendingTokenFor } from "@/server/wizard-helpers";
+import { pendingTokenFor, toClientState } from "@/server/wizard-helpers";
 
 // Thrown when a Sybil-anchored badge's credential is already linked to another
 // account (registerDedup → `taken`). Surfaced to the wizard UI as an error, not
@@ -48,6 +48,34 @@ function isIssuanceInfraError(err: unknown): boolean {
 
 function nowPlusMinutes(min: number): Date {
   return new Date(Date.now() + min * 60_000);
+}
+
+// Best-effort at-rest cleanup: a raw address a plugin stashes in `state.data`
+// across a magic-link round trip lives on the WizardSession row until the flow
+// completes (scrub-on-completion) or is undone (compensateBatch scrub). The
+// ABANDONED path — form submitted, link never clicked, user never returns — has
+// no such trigger, so without an expiry sweep the lowercased address would sit
+// at rest indefinitely, past the session TTL the plugin comments claim bounds
+// it. Deleted-on-observe (below) covers a revisited-after-expiry session;
+// sweepExpiredWizardSessions covers the never-revisited one, piggybacked on
+// startWizard so any wizard use purges the backlog (there is no scheduler yet).
+export async function sweepExpiredWizardSessions(): Promise<number> {
+  const { count } = await prisma.wizardSession.deleteMany({
+    where: { completedAt: null, expiresAt: { lt: new Date() } },
+  });
+  return count;
+}
+
+// Delete a single observed-expired, uncompleted session. Best-effort: a failed
+// delete must not turn a user-facing "expired" response into a 500; the sweep
+// is the backstop. deleteMany (not delete) so a concurrent purge is a no-op,
+// not a P2025 throw.
+async function deleteExpiredSession(id: string): Promise<void> {
+  try {
+    await prisma.wizardSession.deleteMany({ where: { id, completedAt: null } });
+  } catch (err) {
+    console.error("[wizard] failed to delete expired session:", err);
+  }
 }
 
 // Does the raw Sybil anchor appear as a VALUE anywhere in `node`? Walk the
@@ -140,6 +168,14 @@ export async function startWizard(
   const ctx = buildPluginContext(userId, origin);
   const state = await plugin.startWizard(ctx);
 
+  // Purge globally-expired abandoned sessions (their at-rest address is past
+  // TTL). Best-effort: a sweep failure must not block a new wizard.
+  try {
+    await sweepExpiredWizardSessions();
+  } catch (err) {
+    console.error("[wizard] expired-session sweep failed:", err);
+  }
+
   // Drop any stale unfinished session for this user+plugin before
   // creating a new one — prevents pendingToken collisions on retries.
   await prisma.wizardSession.deleteMany({
@@ -160,7 +196,10 @@ export async function startWizard(
     },
   });
 
-  return { sessionId: row.id, state };
+  // Never return the pending-token secret (or the server-side `data`) to the
+  // initiating browser — a server action serializes the whole value over the
+  // wire. The DB row above holds the full state; the client gets a scrubbed copy.
+  return { sessionId: row.id, state: toClientState(state) };
 }
 
 export async function loadWizard(sessionId: string, userId: string): Promise<WizardState | null> {
@@ -168,8 +207,13 @@ export async function loadWizard(sessionId: string, userId: string): Promise<Wiz
     where: { id: sessionId, userId, completedAt: null },
   });
   if (!row) return null;
-  if (row.expiresAt < new Date()) return null;
-  return hydrate(row);
+  if (row.expiresAt < new Date()) {
+    // TTL-bound the at-rest address: delete on observation, don't just ignore.
+    await deleteExpiredSession(row.id);
+    return null;
+  }
+  // The loaded state feeds the client-rendered wizard, so scrub its secrets/data.
+  return toClientState(hydrate(row));
 }
 
 export async function submitStep(
@@ -187,6 +231,8 @@ export async function submitStep(
   });
   if (!row) return { kind: "error", message: "Wizard session not found" };
   if (row.expiresAt < new Date()) {
+    // Delete the observed-expired row so its at-rest address is TTL-bounded.
+    await deleteExpiredSession(row.id);
     return { kind: "error", message: "Wizard session expired" };
   }
 
@@ -211,7 +257,10 @@ export async function submitStep(
           expiresAt: nowPlusMinutes(SESSION_TTL_MINUTES),
         },
       });
-      return { kind: "continue", state: result.state };
+      // Persist the full state (above) but hand the browser a scrubbed copy:
+      // the magic-link `expectedToken` (and the raw address in `data`) must
+      // never cross the server-action wire (capture-at-verify, build-plan §2.3).
+      return { kind: "continue", state: toClientState(result.state) };
     }
     case "complete": {
       try {

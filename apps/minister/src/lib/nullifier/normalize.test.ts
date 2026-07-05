@@ -54,8 +54,13 @@ describe("normalizeEmailAnchor — every other provider: lowercase ONLY", () => 
   it("preserves dots at an unknown provider", () => {
     expect(normalizeEmailAnchor("user.name@example.com")).toBe("user.name@example.com");
   });
-  it("preserves a +tag at fastmail (freemail, but NOT a plus-stripping provider)", () => {
+  it("preserves a +tag at fastmail — it supports +tags, but is deliberately NOT in the table (under-normalization accepted per §2.3)", () => {
     expect(normalizeEmailAnchor("me+x@fastmail.com")).toBe("me+x@fastmail.com");
+  });
+  it("does NOT fold a gmail SUBDOMAIN (mail.gmail.com ≠ gmail.com — dots/tag preserved)", () => {
+    // Only the exact `gmail.com` / `googlemail.com` hosts get Google's rules; a
+    // subdomain is an unknown provider → lowercase only.
+    expect(normalizeEmailAnchor("a.b+c@mail.gmail.com")).toBe("a.b+c@mail.gmail.com");
   });
   it("keeps two +tag addresses at an unknown provider DISTINCT", () => {
     expect(normalizeEmailAnchor("bob+a@corp.test")).not.toBe(
@@ -82,6 +87,21 @@ describe("normalizeEmailAnchor — invalid input", () => {
   });
   it("throws on a leading @ with no local part", () => {
     expect(() => normalizeEmailAnchor("@example.com")).toThrow(/local@domain/u);
+  });
+  it("throws when a leading +tag empties the local part at a stripping provider", () => {
+    // "+x" → stripPlusTag → "" : a degenerate empty-local anchor. Guard it so
+    // distinct such inputs can't over-collapse to a single "@gmail.com".
+    expect(() => normalizeEmailAnchor("+x@gmail.com")).toThrow(/empty local part/u);
+    expect(() => normalizeEmailAnchor("+a@outlook.com")).toThrow(/empty local part/u);
+  });
+  it("throws when an all-dots gmail local part empties after dot removal", () => {
+    expect(() => normalizeEmailAnchor("....@gmail.com")).toThrow(/empty local part/u);
+  });
+  it("throws on a non-ASCII character (caller must pre-validate with Zod .email())", () => {
+    // U+212A KELVIN SIGN lowercases INTO ascii "k" — the exact over-collapse the
+    // ASCII precondition exists to prevent. Also a plain accented local part.
+    expect(() => normalizeEmailAnchor("booKk@example.com")).toThrow(/non-ASCII/u);
+    expect(() => normalizeEmailAnchor("bücher@example.com")).toThrow(/non-ASCII/u);
   });
 });
 
