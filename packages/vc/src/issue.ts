@@ -255,12 +255,17 @@ export async function reMintVc(
     ? options.sanitizeClaims(claims, original.type)
     : claims;
   // The reserved keys are stamped AFTER the preserved claims so the disclosure
-  // derivation always wins over a same-named stored claim. The nullifier is
-  // added only when supplied; a stored `nullifier` was already stripped above,
-  // so a ref-less badge discloses with no nullifier claim, never a smuggled one.
+  // derivation always wins over a same-named stored claim. `id` is a reserved
+  // key too: `credentialSubject.id == id_token sub` is THE RP holder-binding
+  // rule (§2.5), so it is stamped LAST alongside the others — a sanitizer hook
+  // (or a future schema) that returned an `id` field could otherwise override
+  // the pairwise subject and silently break every RP binding check. The
+  // nullifier is added only when supplied; a stored `nullifier` was already
+  // stripped above, so a ref-less badge discloses with no nullifier claim,
+  // never a smuggled one.
   const credentialSubject: CredentialSubject = {
-    id: options.subjectId,
     ...sanitizedClaims,
+    id: options.subjectId,
     [ISSUANCE_MONTH_CLAIM]: issuanceMonthOf(decoded.iat),
     ...(options.nullifier !== undefined ? { [NULLIFIER_CLAIM]: options.nullifier } : {}),
   };

@@ -19,6 +19,15 @@ import { prisma } from "@/lib/prisma";
 // two users sharing an N_rp at one RP — is undetectable without cross-row
 // equality, which M1 forbids; it stays inside Signet's documented trust
 // envelope, per §2.1.)
+//
+// GROWTH (accepted, hygiene-only): rows are only ever created, never reaped on
+// entry release, badge revocation, or OIDC-client deletion. This is safe, not a
+// leak: entryRefs are never reused (16 random bytes / cuid), so a released →
+// re-registered credential mints a FRESH entryRef and never matches a stale
+// row; and the per-row random salt means accumulated rows carry no cross-row
+// equality structure to mine. The table grows with dead baselines — a cleanup
+// job keyed on released entryRefs / deleted clientIds is a future hygiene task,
+// not a correctness requirement.
 
 // Digest of a nullifier under a given salt. The nullifier is a `mnv1:` ASCII
 // string; its UTF-8 bytes are unambiguous. salt is prepended (never
@@ -30,6 +39,22 @@ function digest(salt: Uint8Array, nrp: string): Uint8Array<ArrayBuffer> {
   const out = new Uint8Array(32);
   out.set(createHash("sha256").update(salt).update(Buffer.from(nrp, "utf8")).digest());
   return out;
+}
+
+// Typed so the disclosure catch can distinguish a Signet integrity failure
+// (drift) from a benign re-mint/schema omission and raise a DEDICATED,
+// grep-independent alert. Stage 2 carries no DLEQ, so drift is Minister's ONLY
+// runtime detection of a lying/compromised Signet — it must be alertable, not
+// buried in the generic omission noise.
+export class NullifierDriftError extends Error {
+  readonly entryRef: string;
+  readonly clientId: string;
+  constructor(entryRef: string, clientId: string, detail: string) {
+    super(`nullifier drift detected for entryRef ${entryRef} at client ${clientId}: ${detail}`);
+    this.name = "NullifierDriftError";
+    this.entryRef = entryRef;
+    this.clientId = clientId;
+  }
 }
 
 // Assert the disclosed nullifier for (entryRef, clientId) matches what Signet
@@ -54,9 +79,10 @@ export async function assertNullifierDriftConsistent(
     // timingSafeEqual is unnecessary (both sides are Minister-local, non-secret
     // digests) but a length guard keeps Buffer.equals well-defined.
     if (!Buffer.from(existing.check).equals(recomputed)) {
-      throw new Error(
-        `nullifier drift detected for entryRef ${entryRef} at client ${clientId}: ` +
-          "Signet returned a different value than first recorded",
+      throw new NullifierDriftError(
+        entryRef,
+        clientId,
+        "Signet returned a different value than first recorded",
       );
     }
     return;
@@ -78,10 +104,7 @@ export async function assertNullifierDriftConsistent(
         select: { salt: true, check: true },
       });
       if (winner && Buffer.from(winner.check).equals(digest(winner.salt, nrp))) return;
-      throw new Error(
-        `nullifier drift detected for entryRef ${entryRef} at client ${clientId} ` +
-          "(concurrent first disclosure disagreed)",
-      );
+      throw new NullifierDriftError(entryRef, clientId, "concurrent first disclosure disagreed");
     }
     throw err;
   }
