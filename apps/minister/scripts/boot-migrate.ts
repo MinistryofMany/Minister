@@ -17,6 +17,15 @@
 // container before it can serve against an unmigrated / wrong database. With
 // no MINISTER_SECRETS_SSM_PATH set (dev/local) the load is an inert no-op and
 // db push runs against the env's DATABASE_URL exactly as before.
+//
+// --accept-data-loss: `prisma db push` refuses, without this flag, any change it
+// deems potentially data-losing — including adding a UNIQUE constraint to an
+// existing table (e.g. the crypto-core `User.dedupHandle @unique`, a brand-new
+// all-NULL column where NULLs are distinct, so the add is in fact safe). Prod
+// syncs schema by db push, not committed migrations (tracked gap, issue #47), so
+// the flag is required for the container to boot past an additive-but-flagged
+// change. This trusts that schema changes are reviewed non-destructive before
+// deploy; the durable fix is a real migration baseline (#47).
 
 import { spawnSync } from "node:child_process";
 
@@ -25,10 +34,14 @@ import { loadSecretsFromSsm } from "../src/lib/secrets";
 async function main(): Promise<void> {
   await loadSecretsFromSsm();
 
-  const result = spawnSync("pnpm", ["prisma", "db", "push", "--skip-generate"], {
-    stdio: "inherit",
-    env: process.env,
-  });
+  const result = spawnSync(
+    "pnpm",
+    ["prisma", "db", "push", "--skip-generate", "--accept-data-loss"],
+    {
+      stdio: "inherit",
+      env: process.env,
+    },
+  );
 
   if (result.error) throw result.error;
   process.exit(result.status ?? 1);
