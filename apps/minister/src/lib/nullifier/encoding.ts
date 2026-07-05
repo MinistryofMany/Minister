@@ -76,6 +76,33 @@ export function deriveDedupValue(anchor: string, badgeType: string): Buffer {
   return createHmac("sha256", interimKey()).update(msg).digest();
 }
 
+// The FROZEN stage-1 VOPRF input for the signet backend (build plan §2.1):
+//   LP("minister/null/v1") || LP("dedup") || LP(anchor) || LP(badgeType)
+// This is the single Minister-side definition of the bytes that get blinded
+// and sent to /prf/evaluate; it must mirror Signet's `prf::dedup_input`
+// byte-for-byte (pinned by the frozen `dedup.input_hex` vector in
+// prf-vectors.json). NOTE the protocol tag: the interim HMAC input below
+// deliberately lacks it (interim values are throwaway; VOPRF values are
+// forever), so the two stage-1 encodings can never be confused.
+const VOPRF_PROTOCOL_TAG = "minister/null/v1";
+
+export function buildVoprfDedupInput(anchor: string, badgeType: string): Buffer {
+  capField(anchor, MAX_ANCHOR_BYTES, "anchor");
+  capField(badgeType, MAX_BADGE_TYPE_BYTES, "badge_type");
+  return Buffer.concat([
+    lpStr(VOPRF_PROTOCOL_TAG),
+    lpStr("dedup"),
+    lpStr(anchor),
+    lpStr(badgeType),
+  ]);
+}
+
+// Shared clientId cap for the signet backend's disclose path (the interim
+// backend applies the same cap inside deriveDisclosedNullifier).
+export function capClientId(clientId: string): void {
+  capField(clientId, MAX_CLIENT_ID_BYTES, "clientId");
+}
+
 // Stage-2 per-RP disclosed nullifier, derived from the STORED dedup `value`
 // (never the discarded anchor) plus the clientId:
 //   "mnv1:" + base64url(HMAC(k_int, LP("rp") || LP(value) || LP(clientId)))

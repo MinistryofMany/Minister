@@ -1,10 +1,50 @@
-# Sybil-dedup nullifier (crypto-core Phase 1 — interim backend)
+# Sybil-dedup nullifier (crypto-core — interim + signet backends)
 
 Credential-anchored, one-credential-one-account gating. Cross-ref:
 `ecosystem-planner/adr/minister-crypto-core.md` (§ Resolved) and
 `ecosystem-planner/adr/signet-crypto-core-build-plan.md` §2.1, §2.2, §2.3, §2.6, §3
-Phase 1. This directory is the **frozen `NullifierService` interface** the Signet
-backend implements UNCHANGED in Phase 3.
+Phases 1 and 3. This directory is the **frozen `NullifierService` interface** with
+two backends behind `MINISTER_NULLIFIER_BACKEND` (default `interim`):
+
+- `interim.ts` — Phase 1: in-Minister HMAC + the Prisma `NullifierEntry` ledger.
+- `signet-backend.ts` — Phase 3: RFC 9497 VOPRF (ristretto255-SHA512) client
+  against Signet's `/prf` + `/dedup` surface over mTLS. Stage 1: LP-encode →
+  blind (`@cloudflare/voprf-ts` + noble, pinned exact) → `POST /prf/evaluate` →
+  DLEQ-verify against the pinned `MINISTER_SIGNET_DEDUP_PUBKEY` (fetch-and-verify
+  on first use AND per-evaluation proof check, fail-closed — the
+  `ISSUER_KMS_PUBLIC_JWK` pattern) → finalize `N_dedup` → `POST /dedup/register`
+  (`owner_tag` = `User.dedupHandle`). Signet never sees the raw anchor. Stage 2
+  (`/prf/disclose`) is computed inside Signet from the STORED value. `signet` env
+  set: `MINISTER_SIGNET_URL` + `MINISTER_SIGNET_CLIENT_CERT/KEY` +
+  `MINISTER_SIGNET_CA_CERT` (PEM-or-path) + `MINISTER_SIGNET_DEDUP_PUBKEY`,
+  boot-validated in `env.ts`.
+
+### Release atomicity across the Minister/Signet split (Phase 3)
+
+The interim backend closes the delete-vs-reissue dedup bypass in ONE atomic
+conditional DELETE — possible only while ledger and `Badge` share a Postgres.
+Signet's `/dedup/release` is an unconditional owner-checked delete, so the signet
+backend re-establishes atomicity with **Minister-side serialization**: a pg
+advisory lock keyed on the entryRef (`withSignetEntryLock`) held across BOTH
+critical sections — release's [fresh sibling check → `/dedup/release`] and the
+wizard's mint window [badge INSERT → probe] (`serializeMintWindow` in
+`index.ts`; interim: passthrough). The two sections are totally ordered per ref,
+so the Case-A ordering (release firing after the probe returned true) is
+impossible; regressions: `signet-backend.test.ts`, `wizard-signet-race.test.ts`,
+and the live half of `signet-live.fixture.test.ts`. No Signet-side change is
+required; a Signet-side compare-and-release (refcount/generation token) is a
+possible future hardening if Minister ever runs more than one Postgres.
+
+### Testing the signet backend
+
+Offline: `signet-backend.test.ts` + `wizard-signet-race.test.ts` against the
+scripted in-memory Signet (`signet-backend.testutil.ts` — a real voprf-ts server
+on the frozen test seed). Live: `signet-live.fixture.test.ts`
+(`MINISTER_SIGNET_FIXTURE=1`, see `signet-e2e/README.md`) asserts the frozen
+ecosystem vectors (`prf-vectors.json`, byte-identical to
+`Signet/interop/prf-vectors.json` — CI enforces) against a REAL Signet over
+mTLS — the Minister half of the "both CIs" interop commitment (CI job
+`signet-interop`).
 
 ## What it does
 

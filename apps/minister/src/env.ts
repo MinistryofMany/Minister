@@ -32,9 +32,49 @@ const serverSchema = z
     // sub is derived inside Signet.
     MINISTER_SUB_BACKEND: z.string().optional(),
 
+    // Sybil-dedup nullifier backend (crypto-core Phase 3). `interim` keeps the
+    // in-Minister HMAC ledger; `signet` routes stage-1 through Signet's VOPRF
+    // surface and requires the full MINISTER_SIGNET_* set below (checked in
+    // the refine so a half-configured signet backend fails at boot, never as
+    // a 500 inside a wizard step).
+    MINISTER_NULLIFIER_BACKEND: z.enum(["interim", "signet"]).default("interim"),
+    // Signet base URL, e.g. https://signet:8443 (mTLS).
+    MINISTER_SIGNET_URL: z.string().url().optional(),
+    // mTLS material: inline PEM or a file path (resolved in the backend).
+    MINISTER_SIGNET_CLIENT_CERT: z.string().optional(),
+    MINISTER_SIGNET_CLIENT_KEY: z.string().optional(),
+    MINISTER_SIGNET_CA_CERT: z.string().optional(),
+    // The pinned VOPRF public key pkS printed by `signet init-service-keys`
+    // (base64url no padding, 43 chars). The backend fetch-and-verifies it
+    // against /prf/public-key and DLEQ-verifies every evaluation against it,
+    // fail-closed — the ISSUER_KMS_PUBLIC_JWK pattern.
+    MINISTER_SIGNET_DEDUP_PUBKEY: z
+      .string()
+      .regex(/^[A-Za-z0-9_-]{43}$/, "must be base64url(32 bytes), no padding")
+      .optional(),
+
     NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   })
   .superRefine((val, ctx) => {
+    // The signet nullifier backend is unusable half-configured: require the
+    // full transport + pin set at boot.
+    if (val.MINISTER_NULLIFIER_BACKEND === "signet") {
+      for (const key of [
+        "MINISTER_SIGNET_URL",
+        "MINISTER_SIGNET_CLIENT_CERT",
+        "MINISTER_SIGNET_CLIENT_KEY",
+        "MINISTER_SIGNET_CA_CERT",
+        "MINISTER_SIGNET_DEDUP_PUBKEY",
+      ] as const) {
+        if (!val[key]) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: [key],
+            message: `${key} is required when MINISTER_NULLIFIER_BACKEND=signet`,
+          });
+        }
+      }
+    }
     // OIDC_PAIRWISE_SECRET is REQUIRED unless the pairwise sub is derived in
     // Signet (which holds the imported secret). Boot fails fast here rather than
     // deriving under an absent/wrong key deep inside a token mint.

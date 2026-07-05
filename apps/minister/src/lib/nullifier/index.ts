@@ -3,6 +3,7 @@ import { randomBytes } from "node:crypto";
 import { prisma } from "@/lib/prisma";
 
 import { interimBackend } from "./interim";
+import { signetBackend, withSignetEntryLock } from "./signet-backend";
 
 // ===========================================================================
 // Sybil-dedup nullifier service — FROZEN INTERFACE
@@ -92,20 +93,34 @@ export interface NullifierService {
   }): Promise<number>;
 }
 
-// Backend selection. `interim` is the only backend in Phase 1; the flag is
-// written now so the Phase 3 signet flip is a config change, not a code change.
-function selectBackend(): NullifierService {
+// Backend selection. Default `interim` (Phase 1); `signet` (Phase 3) is the
+// VOPRF client against Signet's PRF/dedup surface — flipping is a config
+// change, not a code change.
+type BackendKind = "interim" | "signet";
+
+function selectBackendKind(): BackendKind {
   const backend = process.env.MINISTER_NULLIFIER_BACKEND ?? "interim";
-  switch (backend) {
-    case "interim":
-      return interimBackend;
-    // case "signet": lands in Phase 3.
-    default:
-      throw new Error(`Unknown MINISTER_NULLIFIER_BACKEND: ${backend}`);
-  }
+  if (backend === "interim" || backend === "signet") return backend;
+  throw new Error(`Unknown MINISTER_NULLIFIER_BACKEND: ${backend}`);
 }
 
-export const nullifierService: NullifierService = selectBackend();
+const backendKind: BackendKind = selectBackendKind();
+
+export const nullifierService: NullifierService =
+  backendKind === "signet" ? signetBackend : interimBackend;
+
+// MINT-WINDOW SERIALIZATION (Phase 3 release atomicity, see signet-backend.ts
+// module doc). The wizard runtime wraps [badge INSERT -> mint-side probe] for
+// an anchor-bearing badge in this. Interim backend: a passthrough — its
+// release statement is already atomically sibling-guarded in one snapshot.
+// Signet backend: a Postgres advisory lock keyed on the entryRef, the same
+// lock its release() holds across [sibling check -> /dedup/release], so the
+// two windows are totally ordered and the Case-A delete-vs-reissue bypass
+// cannot reopen across the Minister/Signet split.
+export async function serializeMintWindow<T>(entryRef: string, fn: () => Promise<T>): Promise<T> {
+  if (backendKind === "signet") return withSignetEntryLock(entryRef, fn);
+  return fn();
+}
 
 // ---------------------------------------------------------------------------
 // Owner-handle minting (Minister-side, never leaves Minister)
