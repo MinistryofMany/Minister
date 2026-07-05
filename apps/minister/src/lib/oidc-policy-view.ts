@@ -26,6 +26,9 @@ export interface PolicyBadgeOption {
   id: string;
   label: string;
   summary: string;
+  // True when disclosing this badge also discloses a per-RP Sybil nullifier
+  // (crypto-core M5) — drives the consent screen's persistent-tag notice.
+  carriesNullifier: boolean;
 }
 
 // A leaf requirement (one badge type) within the policy, with the user's
@@ -99,6 +102,7 @@ export function buildAlreadyGrantedView(
       id: badge.id,
       label: badge.meta.label,
       summary: summarizeAttributes(badge.type, badge.attributes),
+      carriesNullifier: badge.nullifierRef !== null,
     };
     const bucket = byType.get(badge.type);
     if (bucket) bucket.push(option);
@@ -124,6 +128,7 @@ function leafOptions(leaf: { type: string }, badges: DisplayBadge[]): PolicyBadg
       id: b.id,
       label: b.meta.label,
       summary: summarizeAttributes(b.type, b.attributes),
+      carriesNullifier: b.nullifierRef !== null,
     }));
 }
 

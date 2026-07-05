@@ -13,6 +13,11 @@ export interface BadgeRow {
   sortOrder: number;
   importedFrom: string | null;
   pluginId: string | null;
+  // Non-null ⇒ this badge discloses a per-RP Sybil nullifier (crypto-core M5).
+  // Surfaced (as a boolean) to the consent screen so the user is told a
+  // persistent per-site tag rides along. Read-only display use; the value
+  // itself is an opaque ledger handle.
+  nullifierRef: string | null;
 }
 
 // Client-safe view of badge type metadata. Strips the Zod schema —
@@ -60,6 +65,7 @@ async function loadBadges(userId: string, publicOnly: boolean): Promise<DisplayB
       sortOrder: true,
       importedFrom: true,
       pluginId: true,
+      nullifierRef: true,
     },
   });
 

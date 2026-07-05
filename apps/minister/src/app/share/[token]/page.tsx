@@ -111,6 +111,9 @@ export default async function SharePage({ params }: PageProps) {
                   sortOrder: 0,
                   importedFrom: null,
                   pluginId: null,
+                  // Share-link badges never disclose a nullifier (§2.5): a
+                  // display-only flag for the public view.
+                  nullifierRef: null,
                   meta: {
                     type: b.type,
                     label: b.label,
