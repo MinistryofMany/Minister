@@ -192,6 +192,22 @@ const defaultObserver: PairwiseObserver = {
 
 let observer: PairwiseObserver = defaultObserver;
 
+// A telemetry observer must never take down the mint path. The observer seam is
+// invoked on the HOT token-mint / userinfo / share-render path; a future metrics
+// observer that throws (or one wired to a sink that does) would otherwise surface
+// as an unhandled rejection inside a fire-and-forget shadow compare — process
+// termination — or abort a live derivation. Swallow observer faults to
+// console.error and continue; the served value is never affected.
+function notify(emit: () => void): void {
+  try {
+    emit();
+  } catch (err) {
+    console.error(
+      `[pairwise] observer threw (ignored): ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Backend selection (read per-call so tests can flip the flag)
 // ---------------------------------------------------------------------------
@@ -291,22 +307,24 @@ function startShadowCompare(family: PairwiseFamily, input: string, local: string
   // compare is counted (soak coverage stays measurable) and the local value the
   // caller already holds is returned unchanged by derivePairwise.
   if (inFlightShadow.size >= MAX_INFLIGHT_SHADOW) {
-    observer.onShadowSkipped({ family });
+    notify(() => observer.onShadowSkipped({ family }));
     return;
   }
   const run = (async () => {
     try {
       const remote = await signetPairwise(input);
       if (remote !== local) {
-        observer.onShadowMismatch({ family });
+        notify(() => observer.onShadowMismatch({ family }));
       } else {
-        observer.onShadowCompareOk({ family });
+        notify(() => observer.onShadowCompareOk({ family }));
       }
     } catch (err) {
-      observer.onShadowError({
-        family,
-        error: err instanceof Error ? err.message : String(err),
-      });
+      notify(() =>
+        observer.onShadowError({
+          family,
+          error: err instanceof Error ? err.message : String(err),
+        }),
+      );
     }
   })();
   const tracked = run.finally(() => {
@@ -358,15 +376,17 @@ async function derivePairwise(family: PairwiseFamily, input: string): Promise<st
     try {
       const remote = await signetPairwise(input);
       if (remote !== local) {
-        observer.onServeMismatch({ family });
+        notify(() => observer.onServeMismatch({ family }));
         return local;
       }
       return remote;
     } catch (err) {
-      observer.onFallback({
-        family,
-        error: err instanceof Error ? err.message : String(err),
-      });
+      notify(() =>
+        observer.onFallback({
+          family,
+          error: err instanceof Error ? err.message : String(err),
+        }),
+      );
       return local;
     }
   }

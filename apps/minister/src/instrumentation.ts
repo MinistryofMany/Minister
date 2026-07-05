@@ -15,6 +15,21 @@ export async function register(): Promise<void> {
   const { loadSecretsFromSsm } = await import("@/lib/secrets");
   await loadSecretsFromSsm();
 
+  // Validate the server env NOW — AFTER the SSM secrets are in process.env and
+  // before any request runs. env.ts parses process.env at module load and THROWS
+  // on a bad/half-configured deploy: a non-local pairwise backend missing its
+  // MINISTER_SIGNET_* transport, a pure `signet` sub-backend while
+  // OIDC_PAIRWISE_SECRET is still present, a MINISTER_SUB_BACKEND typo, an
+  // http:// (non-mTLS) Signet URL, or a missing/short pairwise secret. Without
+  // this a half-configured shadow/signet-fallback/signet deploy boots clean and
+  // 500s deep inside token minting instead of failing fast here.
+  //
+  // Ordering is load-bearing: it MUST run after loadSecretsFromSsm() (the secret,
+  // DATABASE_URL, and cert material may all arrive from SSM) and it is a DYNAMIC
+  // import so the module is not pulled into the edge/middleware compile and does
+  // not parse before the SSM load has populated process.env.
+  await import("@/env");
+
   const { validateTlsnVerifierConfig } = await import("@/lib/tlsn-verifier");
   validateTlsnVerifierConfig();
 

@@ -128,6 +128,26 @@ const serverSchema = z
         }
       }
     }
+    // Pre-7c-i safety: a pure `signet` sub-backend serves Signet's /prf/pairwise
+    // output with NO crosscheck against the local golden value — unlike `shadow`
+    // and `signet-fallback`, which still compute the local HMAC and compare
+    // (serving the byte-identical local value on any drift). While
+    // OIDC_PAIRWISE_SECRET is still present the local truth is available, so a
+    // silently drifted / compromised Signet value would go UNDETECTED only under
+    // `signet`. Reject `signet` at boot as long as the secret is set; it becomes
+    // legitimate ONLY post-7c-i, once OIDC_PAIRWISE_SECRET has been removed from
+    // Minister (pairwise-backend.ts:derivePairwise `signet` branch). THIS CHECK
+    // INVERTS AT 7c-i: when the secret is gone, `signet` is the intended mode and
+    // the OIDC_PAIRWISE_SECRET required-check below flips to require its ABSENCE.
+    if (val.MINISTER_SUB_BACKEND === "signet" && val.OIDC_PAIRWISE_SECRET) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["MINISTER_SUB_BACKEND"],
+        message:
+          "MINISTER_SUB_BACKEND=signet is not allowed while OIDC_PAIRWISE_SECRET is still set " +
+          "(pure signet has no local crosscheck; use shadow or signet-fallback until the 7c-i secret removal)",
+      });
+    }
     // OIDC_PAIRWISE_SECRET is REQUIRED. Boot fails fast here rather than
     // deriving under an absent/wrong key deep inside a token mint. Phase 7
     // (pairwise sub derived inside Signet, which holds the imported secret)
