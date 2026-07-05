@@ -50,10 +50,9 @@ jobs:
   # (@cloudflare/voprf-ts + noble, from this lockfile) byte-agrees with the
   # Rust `voprf` crate over the real mTLS wire on the frozen ecosystem
   # vectors. The Minister half of the "both CIs" interop commitment (the
-  # Signet half runs interop/prf.mjs in Signet CI).
-  #
-  # Requires the SIGNET_READ_TOKEN secret (read access to the private
-  # MinistryofMany/Signet repo) for the second checkout.
+  # Signet half runs interop/prf.mjs in Signet CI). The second checkout below
+  # pulls the now-public MinistryofMany/Signet repo with the default token — no
+  # extra secret required.
   signet-interop:
     runs-on: ubuntu-latest
     services:

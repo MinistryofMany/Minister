@@ -50,5 +50,5 @@ signet-e2e/down.sh
 
 CI: the `signet-interop` job in `.github/workflows/ci.yml` runs the same
 `up.sh` + live suite on every push/PR, after a byte-equality drift check of
-the frozen vectors across the two repos. It needs the `SIGNET_READ_TOKEN`
-secret (read access to the private Signet repo).
+the frozen vectors across the two repos. It checks out the now-public Signet
+repo with the default token — no extra secret required.
