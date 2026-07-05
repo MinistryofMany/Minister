@@ -20,6 +20,45 @@ const REPEATABLE_READ: { isolationLevel: Prisma.TransactionIsolationLevel } = {
   isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead,
 };
 
+// Both merge transactions read-then-write the same rows under RepeatableRead, so
+// a concurrent writer can make Postgres abort the whole transaction with a
+// serialization failure — Prisma surfaces it as P2034 and explicitly advises a
+// retry. The transaction is fully rolled back on that error (no partial writes),
+// and the callback re-reads everything from a fresh snapshot on the next
+// attempt, so retrying is safe and idempotent. Bounded so a pathological
+// hot-spot can't spin forever: after MAX_TX_ATTEMPTS we rethrow the last P2034
+// and let the caller fail the ceremony. Any OTHER error propagates immediately —
+// never swallowed, never retried.
+const MAX_TX_ATTEMPTS = 5;
+const TX_RETRY_BASE_MS = 25;
+
+function isWriteConflict(err: unknown): boolean {
+  return err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2034";
+}
+
+async function runWithWriteConflictRetry<T>(run: () => Promise<T>, label: string): Promise<T> {
+  let lastErr: unknown;
+  for (let attempt = 1; attempt <= MAX_TX_ATTEMPTS; attempt++) {
+    try {
+      return await run();
+    } catch (err) {
+      if (!isWriteConflict(err)) throw err;
+      lastErr = err;
+      if (attempt < MAX_TX_ATTEMPTS) {
+        // Exponential backoff with jitter (full-jitter over the growing window)
+        // so racing retries de-correlate instead of colliding on the same beat.
+        const window = TX_RETRY_BASE_MS * 2 ** (attempt - 1);
+        const delay = Math.floor(Math.random() * (window + 1));
+        console.warn(
+          `[merge] ${label} write-conflict (P2034), retry ${attempt}/${MAX_TX_ATTEMPTS}`,
+        );
+        await new Promise((resolve) => setTimeout(resolve, delay));
+      }
+    }
+  }
+  throw lastErr;
+}
+
 // Account merge (slice 5) — the data-reconciliation core. The SECURITY
 // dual-control (survivor at AAL2 + a single-use donor-proof) lives one layer up
 // in src/server/merge-actions.ts; by the time mergeAccounts runs, the caller has
@@ -173,8 +212,12 @@ export async function mergeAccounts(
   );
 
   // RepeatableRead (see REPEATABLE_READ above) closes the in-tx token-drift
-  // window between the finding-7 check and the by-userId re-point.
-  const txResult = await prisma.$transaction(async (tx) => {
+  // window between the finding-7 check and the by-userId re-point. A concurrent
+  // writer that trips a P2034 serialization failure is retried with bounded
+  // backoff (runWithWriteConflictRetry) — the whole tx rolls back and re-runs
+  // from a fresh snapshot, which is exactly the "safe to retry" contract the
+  // drift check and Finding 7 already assume.
+  const runMergeTx = async (tx: Prisma.TransactionClient) => {
     const survivor = await tx.user.findUnique({
       where: { id: survivorUserId },
       select: {
@@ -660,7 +703,11 @@ export async function mergeAccounts(
         donorHandle: donor.dedupHandle,
       },
     };
-  }, REPEATABLE_READ);
+  };
+  const txResult = await runWithWriteConflictRetry(
+    () => prisma.$transaction(runMergeTx, REPEATABLE_READ),
+    "mergeAccounts",
+  );
 
   // §2.6 post-commit: re-tag the donor's dedup ledger entries to the survivor.
   // Runs AFTER the transaction commits, with idempotent retry; a failure leaves
@@ -761,9 +808,10 @@ export async function reverseMerge(mergeRecordId: string): Promise<ReverseResult
 
   // RepeatableRead to match mergeAccounts (see REPEATABLE_READ above): reversal
   // re-points rows back to the donor by the exact snapshot PK lists under one
-  // snapshot; a serialization failure is a retryable P2034 and reversal is
-  // idempotent-guarded above.
-  const txResult = await prisma.$transaction(async (tx) => {
+  // snapshot; a serialization failure is a retryable P2034 (runWithWriteConflictRetry)
+  // and reversal is idempotent-guarded above (the reversedAt check + the exact
+  // PK lists make a re-run a no-op once it has committed).
+  const runReverseTx = async (tx: Prisma.TransactionClient) => {
     // Guard: the donor must still be tombstoned INTO this survivor. If something
     // else changed the donor in the meantime, refuse rather than corrupt state.
     const donor = await tx.user.findUnique({
@@ -990,7 +1038,11 @@ export async function reverseMerge(mergeRecordId: string): Promise<ReverseResult
         toHandle: donor.dedupHandle,
       },
     };
-  }, REPEATABLE_READ);
+  };
+  const txResult = await runWithWriteConflictRetry(
+    () => prisma.$transaction(runReverseTx, REPEATABLE_READ),
+    "reverseMerge",
+  );
 
   // §2.6 post-commit: re-tag EXACTLY the merge's reassigned refs back to the
   // donor handle. Idempotent retry; conservative on failure (entries stay under

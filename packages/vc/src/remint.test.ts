@@ -600,6 +600,73 @@ describe("reMintVc", () => {
     expect(jwt).not.toContain("SMUGGLED_evil");
   });
 
+  // POST-hook strip: the sanitizer runs on claims that already had the reserved
+  // keys removed, but a buggy or hostile sanitizer (or a future badge-type schema
+  // it re-parses through) could RE-ADD a reserved-named field. The strip is
+  // applied to the sanitizer's OUTPUT too, so a fresh nullifier is never
+  // reachable from sanitizer content.
+  it("strips a reserved nullifier the sanitizer REINTRODUCES (post-hook, no fresh nullifier)", async () => {
+    const original = await signOriginal(issuer, { claims: { domain: "example.com" } });
+    const pairwise = buildPairwiseUserDid(issuer.domain, "POST_HOOK_STRIP");
+
+    const jwt = await reMintVc(issuer, original, {
+      subjectId: pairwise,
+      jti: "j",
+      // Hostile hook: injects a nullifier that was never on the stored VC.
+      sanitizeClaims: (claims) => ({ ...claims, nullifier: "mnv1:SANITIZER_INJECTED" }),
+    });
+    const v = await verifyVc(issuer, jwt);
+
+    // Ref-less badge, no fresh nullifier supplied → the disclosure carries NONE,
+    // and the sanitizer's injected value never reaches the signed payload.
+    expect("nullifier" in v.vc.credentialSubject).toBe(false);
+    expect(jwt).not.toContain("SANITIZER_INJECTED");
+  });
+
+  it("the fresh nullifier wins over one the sanitizer REINTRODUCES (post-hook override)", async () => {
+    const original = await signOriginal(issuer, { claims: { domain: "example.com" } });
+    const pairwise = buildPairwiseUserDid(issuer.domain, "POST_HOOK_OVERRIDE");
+
+    const jwt = await reMintVc(issuer, original, {
+      subjectId: pairwise,
+      jti: "j",
+      nullifier: "mnv1:LEGIT_value",
+      sanitizeClaims: (claims) => ({ ...claims, nullifier: "mnv1:SANITIZER_INJECTED" }),
+    });
+    const v = await verifyVc(issuer, jwt);
+
+    expect(v.vc.credentialSubject.nullifier).toBe("mnv1:LEGIT_value");
+    expect(jwt).not.toContain("SANITIZER_INJECTED");
+  });
+
+  it("a reserved `id` or issuanceMonth the sanitizer REINTRODUCES can never win (post-hook)", async () => {
+    const issuanceSec = Math.floor(Date.UTC(2026, 3, 15) / 1000); // 2026-04
+    const original = await signOriginal(issuer, {
+      claims: { domain: "example.com" },
+      iatSec: issuanceSec,
+    });
+    const pairwise = buildPairwiseUserDid(issuer.domain, "POST_HOOK_ID_MONTH");
+
+    const jwt = await reMintVc(issuer, original, {
+      subjectId: pairwise,
+      jti: "j",
+      // Try to override the holder binding AND the freshness bucket via the hook.
+      sanitizeClaims: (claims) => ({
+        ...claims,
+        id: "did:web:evil.test:users:attacker",
+        issuanceMonth: "1999-01",
+      }),
+    });
+    const v = await verifyVc(issuer, jwt);
+
+    // The pairwise subject and the honest issuance bucket both survive intact.
+    expect(v.vc.credentialSubject.id).toBe(pairwise);
+    expect(v.sub).toBe(pairwise);
+    expect(v.vc.credentialSubject.issuanceMonth).toBe(issuanceMonthOf(issuanceSec));
+    expect(v.vc.credentialSubject.issuanceMonth).not.toBe("1999-01");
+    expect(jwt).not.toContain("evil.test");
+  });
+
   it("gives two RPs different nullifiers while sharing the disclosed fact (per-RP by construction)", async () => {
     const original = await signOriginal(issuer, { claims: { domain: "example.com" } });
     const subA = buildPairwiseUserDid(issuer.domain, "PAIRWISE_A");
