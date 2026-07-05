@@ -113,6 +113,32 @@ export function issuanceMonthStartSeconds(instant: number | Date): number {
 // so a stored row can never inject its own nullifier value into a disclosure.
 export const NULLIFIER_CLAIM = "nullifier";
 
+// The full set of reserved credentialSubject keys — issuer-derived disclosure
+// metadata (`id` binds the holder, `issuanceMonth` the coarse freshness bucket,
+// `nullifier` the per-RP Sybil tag), never a pass-through per-badge-type claim.
+// reMintVc stamps its own fresh value for each of these; this set is the strip
+// list for the POST-hook that drops any reserved key the sanitizer returns, so
+// the fresh issuer-derived values are the ONLY reserved keys that reach the
+// signed credentialSubject.
+export const RESERVED_CREDENTIAL_SUBJECT_KEYS: readonly string[] = [
+  "id",
+  ISSUANCE_MONTH_CLAIM,
+  NULLIFIER_CLAIM,
+];
+
+// Drop every reserved key from a claim set. Applied to the sanitizer's OUTPUT as
+// a post-processing hook (not just the stored VC's input), so neither a hostile
+// or buggy sanitizer nor a future badge-type schema that emits a reserved-named
+// field can smuggle a value past reMintVc's own fresh stamps.
+function stripReservedClaims(claims: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(claims)) {
+    if (RESERVED_CREDENTIAL_SUBJECT_KEYS.includes(key)) continue;
+    out[key] = value;
+  }
+  return out;
+}
+
 // Default presentation lifetime for a disclosed (re-minted) VC. One hour =
 // Minister's access-token TTL, the longest-lived artifact of a single OIDC
 // grant: it comfortably covers the id_token TTL (10 min + the SDK's 30s clock
@@ -254,6 +280,15 @@ export async function reMintVc(
   const sanitizedClaims = options.sanitizeClaims
     ? options.sanitizeClaims(claims, original.type)
     : claims;
+  // POST-hook: strip the reserved keys from the sanitizer's OUTPUT before the
+  // fresh values are stamped. The pre-destructure above removed them from the
+  // STORED VC so the sanitizer never sees them; this closes the symmetric gap on
+  // the other side — a sanitizer that (accidentally or maliciously) returns a
+  // reserved-named field, or a future badge-type schema that adds one, can no
+  // longer ride it into the disclosure. Without this, only `id` and
+  // `issuanceMonth` (always re-stamped) were safe; `nullifier` (stamped only when
+  // a fresh one is supplied) could otherwise pass through from the sanitizer.
+  const safeClaims = stripReservedClaims(sanitizedClaims);
   // The reserved keys are stamped AFTER the preserved claims so the disclosure
   // derivation always wins over a same-named stored claim. `id` is a reserved
   // key too: `credentialSubject.id == id_token sub` is THE RP holder-binding
@@ -264,7 +299,7 @@ export async function reMintVc(
   // stripped above, so a ref-less badge discloses with no nullifier claim,
   // never a smuggled one.
   const credentialSubject: CredentialSubject = {
-    ...sanitizedClaims,
+    ...safeClaims,
     id: options.subjectId,
     [ISSUANCE_MONTH_CLAIM]: issuanceMonthOf(decoded.iat),
     ...(options.nullifier !== undefined ? { [NULLIFIER_CLAIM]: options.nullifier } : {}),
