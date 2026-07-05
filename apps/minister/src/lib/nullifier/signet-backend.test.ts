@@ -79,6 +79,7 @@ import { buildVoprfDedupInput } from "./encoding";
 import {
   _setSignetTransportForTests,
   createSignetBackend,
+  SignetPinMismatchError,
   withSignetEntryLock,
   type SignetBackendConfig,
 } from "./signet-backend";
@@ -236,6 +237,75 @@ describe("signet backend — pin + DLEQ fail closed", () => {
       ownerHandle: "h",
     });
     expect(reg.status).toBe("registered");
+  });
+});
+
+describe("signet backend — verifyPin: fatal fork vs. transient outage (boot-defer)", () => {
+  // A validly-shaped pin that differs from what the mock serves (flip one byte).
+  function wrongPinFor(mock: MockSignet): string {
+    return Buffer.from(
+      Buffer.from(mock.publicKeyB64, "base64url").map((b, i) => (i === 3 ? b ^ 0xff : b)),
+    ).toString("base64url");
+  }
+
+  it("throws SignetPinMismatchError on a served-key mismatch (fatal — instrumentation rethrows)", async () => {
+    const mock = await MockSignet.create(MASTER_SEED);
+    const backend = createSignetBackend(cfg(wrongPinFor(mock)), mock.transport());
+    await expect(backend.verifyPin()).rejects.toBeInstanceOf(SignetPinMismatchError);
+  });
+
+  it("throws SignetPinMismatchError on a suite mismatch (fatal)", async () => {
+    const mock = await MockSignet.create(MASTER_SEED);
+    mock.advertisedSuite = "p256-SHA256";
+    const backend = createSignetBackend(cfg(mock.publicKeyB64), mock.transport());
+    await expect(backend.verifyPin()).rejects.toBeInstanceOf(SignetPinMismatchError);
+  });
+
+  it("throws a NON-mismatch error when Signet is unreachable (transient — instrumentation defers)", async () => {
+    const { mock, backend } = await freshMockAndBackend();
+    mock.downStatus = 503;
+    // The exact branch instrumentation.register() keys on: NOT a
+    // SignetPinMismatchError, so boot logs and defers instead of crash-looping.
+    const err = await backend.verifyPin().then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(Error);
+    expect(err).not.toBeInstanceOf(SignetPinMismatchError);
+  });
+
+  it("deferred boot: verifyPin fails while down, then the first nullifier op verifies once Signet recovers", async () => {
+    const { mock, backend } = await freshMockAndBackend();
+    // Boot with Signet down: verifyPin throws transiently (instrumentation
+    // would swallow this and DEFER) — nothing is memoized.
+    mock.downStatus = 503;
+    await expect(backend.verifyPin()).rejects.not.toBeInstanceOf(SignetPinMismatchError);
+
+    // Signet recovers; the FIRST real nullifier op runs the deferred pin
+    // verification and succeeds — no op proceeded without a verified pin.
+    mock.downStatus = null;
+    const reg = await backend.registerDedup({
+      anchor: "gh:1",
+      badgeType: "oauth-account",
+      ownerHandle: "h",
+    });
+    expect(reg.status).toBe("registered");
+
+    // Success memoized: a second op does NOT re-fetch the public key.
+    const fetchesAfterFirst = mock.requests.filter((r) => r.path === "/prf/public-key").length;
+    await backend.registerDedup({ anchor: "gh:2", badgeType: "oauth-account", ownerHandle: "h" });
+    const fetchesAfterSecond = mock.requests.filter((r) => r.path === "/prf/public-key").length;
+    expect(fetchesAfterSecond).toBe(fetchesAfterFirst);
+  });
+
+  it("mismatch on the LAZY path still throws (the first nullifier op fails closed)", async () => {
+    const mock = await MockSignet.create(MASTER_SEED);
+    const backend = createSignetBackend(cfg(wrongPinFor(mock)), mock.transport());
+    await expect(
+      backend.registerDedup({ anchor: "gh:1", badgeType: "oauth-account", ownerHandle: "h" }),
+    ).rejects.toBeInstanceOf(SignetPinMismatchError);
+    // Fail closed BEFORE any evaluation left the building.
+    expect(mock.requests.map((r) => r.path)).toEqual(["/prf/public-key"]);
   });
 });
 
@@ -490,6 +560,41 @@ describe("signet backend — reassignOwner (per-ref skip semantics)", () => {
     // alien and missing refs were skipped (mirrors the interim per-ref
     // semantics merge/reverse-merge retries rely on).
     expect(moved).toBe(1);
+  });
+
+  it("distinguishes an owner-mismatch 403 (skip) from an authorization 403 (throw)", async () => {
+    const { mock } = await freshMockAndBackend();
+    // Owner-mismatch 403 is already covered above (alien-owned ref skipped).
+    // Here: an AUTHORIZATION 403 — Minister's client not on Signet's PRF
+    // allow-list — must fail LOUD, never masquerade as "0 moved". Wrap the
+    // scripted transport to return Signet's require_prf forbidden shape for
+    // /dedup/reassign only (the pin fetch still succeeds).
+    const scripted = mock.transport();
+    const backend = createSignetBackend(cfg(mock.publicKeyB64), async (m, p, b) => {
+      if (p === "/dedup/reassign") {
+        return {
+          status: 403,
+          json: {
+            error: "forbidden",
+            message: "client identity is not authorized for the PRF surface",
+          },
+        };
+      }
+      return scripted(m, p, b);
+    });
+    const owned = await backend.registerDedup({
+      anchor: "gh:600",
+      badgeType: "oauth-account",
+      ownerHandle: "donor",
+    });
+    if (owned.status === "taken") throw new Error("setup");
+    await expect(
+      backend.reassignOwner({
+        entryRefs: [owned.entryRef],
+        fromOwnerHandle: "donor",
+        toOwnerHandle: "survivor",
+      }),
+    ).rejects.toThrow(/not authorized/i);
   });
 
   it("no-ops on an empty list and on from === to", async () => {

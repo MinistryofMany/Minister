@@ -119,6 +119,22 @@ const NULLIFIER_RE = /^mnv1:[A-Za-z0-9_-]{43}$/;
 
 const B64URL_RE = /^[A-Za-z0-9_-]+$/;
 
+// FATAL pin-verification failure: Signet served a public key or VOPRF suite
+// that disagrees with the pin — a fork / mis-pin signal. This MUST fail closed
+// everywhere, including at boot (instrumentation.ts rethrows it, crash-looping
+// a mis-pinned deploy exactly as before). It is deliberately distinct from a
+// transient fetch/timeout/non-200 failure (a plain Error): boot tolerates the
+// transient case by DEFERRING verification to lazy first-use, but never the
+// fork case. On the lazy path both throw identically — every nullifier op
+// still fails closed — so this type only changes the boot decision, never the
+// runtime guarantee (every finalize() also DLEQ-verifies against the pin).
+export class SignetPinMismatchError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "SignetPinMismatchError";
+  }
+}
+
 export interface SignetBackendConfig {
   baseUrl: string;
   // PEM strings (already resolved — see resolvePem for the env layer).
@@ -327,6 +343,21 @@ function stringField(body: Record<string, unknown>, key: string): string {
   return v;
 }
 
+// Signet folds two very different 403s into one `{ error: "forbidden" }` shape
+// (src/error.rs): an OWNER-MISMATCH (the entry is owned by neither the source
+// nor the target handle — src/handlers.rs dedup_reassign) versus an
+// AUTHORIZATION denial (Minister's pinned client identity is not on Signet's
+// SIGNET_PRF_CLIENT_IDS — require_prf). They are told apart ONLY by the static
+// `message` string. This recognizes the owner-mismatch text so reassignOwner
+// can keep its per-ref SKIP semantics for that case while failing LOUD on an
+// authorization denial (which affects every ref and must never masquerade as
+// "0 moved"). Coupled to Signet's handler message; the reassign tests pin it.
+function isOwnerMismatchForbidden(json: unknown): boolean {
+  if (typeof json !== "object" || json === null) return false;
+  const message = (json as Record<string, unknown>).message;
+  return typeof message === "string" && /owned by neither/i.test(message);
+}
+
 // Advisory-lock serialization for the mint window and the release critical
 // section (see the module doc). Transaction-scoped (pg_advisory_xact_lock):
 // the lock releases automatically on commit OR abort, so there is no unlock
@@ -387,10 +418,15 @@ export interface SignetNullifierBackend extends NullifierService {
   // Boot/readiness hook: fetch GET /prf/public-key and verify it against the
   // pinned MINISTER_SIGNET_DEDUP_PUBKEY, fail-closed. Called from
   // instrumentation.ts when the signet backend is selected so a mis-pinned
-  // deploy (or wrong URL / bad mTLS material) dies at boot instead of on the
-  // first user's mint. Every operation re-runs the same check lazily (success
-  // memoized, failure not), and every finalize independently DLEQ-verifies
-  // against the pin — this hook is the ops-legible guard, not the only one.
+  // deploy dies at boot instead of on the first user's mint. Throws a
+  // SignetPinMismatchError on a served-key / suite mismatch (a fork / mis-pin
+  // — instrumentation rethrows it, killing boot) and a plain Error on a
+  // transient failure (Signet unreachable / non-200 — instrumentation logs and
+  // DEFERS verification to lazy first-use, so a box that boots Minister before
+  // Signet does not crash-loop). Every operation re-runs the same check lazily
+  // (only a real success memoizes), and every finalize independently
+  // DLEQ-verifies against the pin — no nullifier op proceeds without a verified
+  // pin regardless of what boot decided.
   verifyPin(): Promise<void>;
 }
 
@@ -438,12 +474,22 @@ export function createSignetBackend(
     return transport(method, path, body);
   };
 
-  // Boot-time fetch-and-verify of the pinned public key, fail-closed —
-  // the ISSUER_KMS_PUBLIC_JWK pattern. Success is memoized; a mismatch or a
-  // fetch failure is NOT (a transient outage may recover; a mismatch keeps
+  // Fetch-and-verify of the pinned public key, fail-closed — the
+  // ISSUER_KMS_PUBLIC_JWK pattern. Only a real success memoizes (pinVerified);
+  // neither a fork mismatch nor a transient fetch failure sets it, so the next
+  // op re-runs the check (a transient outage may recover; a mismatch keeps
   // refusing on every call). Every VOPRF finalize additionally verifies the
-  // DLEQ proof against the PIN itself, so this check is the ops-legible
-  // guard, not the only one.
+  // DLEQ proof against the PIN itself, so this check is the ops-legible guard,
+  // not the only one.
+  //
+  // Two failure classes, told apart by throw type (so instrumentation.ts can
+  // decide whether a boot outage is survivable):
+  //   * a served-key or suite mismatch -> SignetPinMismatchError (FATAL,
+  //     fail-closed everywhere — a fork / mis-pin);
+  //   * everything else (connection error, timeout, non-200, malformed body)
+  //     -> a plain Error (TRANSIENT — boot may defer to lazy first-use).
+  // On the lazy path the distinction is irrelevant: any throw fails the
+  // operation closed. It matters ONLY at boot.
   const ensurePinVerified = async (): Promise<void> => {
     if (pinVerified) return;
     const expected = config().pinnedPublicKey.trim();
@@ -456,13 +502,13 @@ export function createSignetBackend(
     const suite = stringField(body, "suite");
     const served = stringField(body, "public_key");
     if (suite !== "ristretto255-SHA512") {
-      throw new Error(
+      throw new SignetPinMismatchError(
         `nullifier: signet serves VOPRF suite ${suite}, expected ristretto255-SHA512`,
       );
     }
     if (served !== expected) {
       // Both values are public keys — safe to surface for ops.
-      throw new Error(
+      throw new SignetPinMismatchError(
         `nullifier: signet public key ${served} does not match the pinned ` +
           `MINISTER_SIGNET_DEDUP_PUBKEY ${expected}; refusing to operate (key-fork guard)`,
       );
@@ -645,7 +691,21 @@ export function createSignetBackend(
           from_owner_handle: fromOwnerHandle,
           to_owner_handle: toOwnerHandle,
         });
-        if (res.status === 404 || res.status === 403) continue;
+        // A vanished (released) ref 404s — skip it, exactly the per-ref
+        // contract merge/reverse-merge retries rely on.
+        if (res.status === 404) continue;
+        if (res.status === 403) {
+          // Two distinct 403s (see isOwnerMismatchForbidden): an OWNER-MISMATCH
+          // ref is skipped (per-ref semantics — that ref simply isn't the
+          // donor's to move), but an AUTHORIZATION denial is a deploy-level
+          // misconfiguration that would otherwise silently under-report the
+          // ENTIRE merge as "0 moved" — fail loud and legible instead.
+          if (isOwnerMismatchForbidden(res.json)) continue;
+          throw new Error(
+            "nullifier: signet /dedup/reassign denied authorization (403) — Minister's " +
+              "client identity is not authorized for the PRF/dedup surface (fail closed)",
+          );
+        }
         if (res.status !== 200) {
           throw new Error(`nullifier: signet /dedup/reassign returned ${res.status}`);
         }

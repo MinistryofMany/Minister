@@ -56,6 +56,10 @@ export class MockSignet {
   // the pin catches a server whose advertised key is honest-looking but whose
   // evaluations are under another key).
   advertisedPublicKeyB64: string;
+  // What GET /prf/public-key advertises as the suite. Normally the real suite;
+  // tests set it to a lie to prove the backend treats a suite mismatch as a
+  // FATAL fork signal (SignetPinMismatchError), not a transient outage.
+  advertisedSuite = "ristretto255-SHA512";
   // When set, every request short-circuits to this status (Signet-down).
   downStatus: number | null = null;
   readonly requests: Array<{ method: string; path: string }> = [];
@@ -116,7 +120,7 @@ export class MockSignet {
     if (method === "GET" && path === "/prf/public-key") {
       return {
         status: 200,
-        json: { suite: "ristretto255-SHA512", public_key: this.advertisedPublicKeyB64 },
+        json: { suite: this.advertisedSuite, public_key: this.advertisedPublicKeyB64 },
       };
     }
 
@@ -189,7 +193,15 @@ export class MockSignet {
         const entry = this.ledgerByRef.get(r);
         if (!entry) return { status: 404, json: { error: "not_found", message: "no such entry" } };
         if (entry.ownerHandle !== from && entry.ownerHandle !== to) {
-          return { status: 403, json: { error: "forbidden", message: "owner mismatch" } };
+          // Signet's real owner-mismatch message (src/handlers.rs
+          // dedup_reassign) — the backend's 403 discriminator keys on it.
+          return {
+            status: 403,
+            json: {
+              error: "forbidden",
+              message: "an entry is owned by neither from_owner_handle nor to_owner_handle",
+            },
+          };
         }
         rows.push(entry);
       }
