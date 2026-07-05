@@ -12,7 +12,7 @@ import {
 import { prisma } from "@/lib/prisma";
 import { getPlugin } from "@/plugins/registry";
 import { issueBadge } from "@/server/issue-badge";
-import { pendingTokenFor } from "@/server/wizard-helpers";
+import { pendingTokenFor, toClientState } from "@/server/wizard-helpers";
 
 // Thrown when a Sybil-anchored badge's credential is already linked to another
 // account (registerDedup → `taken`). Surfaced to the wizard UI as an error, not
@@ -50,6 +50,34 @@ function nowPlusMinutes(min: number): Date {
   return new Date(Date.now() + min * 60_000);
 }
 
+// Best-effort at-rest cleanup: a raw address a plugin stashes in `state.data`
+// across a magic-link round trip lives on the WizardSession row until the flow
+// completes (scrub-on-completion) or is undone (compensateBatch scrub). The
+// ABANDONED path — form submitted, link never clicked, user never returns — has
+// no such trigger, so without an expiry sweep the lowercased address would sit
+// at rest indefinitely, past the session TTL the plugin comments claim bounds
+// it. Deleted-on-observe (below) covers a revisited-after-expiry session;
+// sweepExpiredWizardSessions covers the never-revisited one, piggybacked on
+// startWizard so any wizard use purges the backlog (there is no scheduler yet).
+export async function sweepExpiredWizardSessions(): Promise<number> {
+  const { count } = await prisma.wizardSession.deleteMany({
+    where: { completedAt: null, expiresAt: { lt: new Date() } },
+  });
+  return count;
+}
+
+// Delete a single observed-expired, uncompleted session. Best-effort: a failed
+// delete must not turn a user-facing "expired" response into a 500; the sweep
+// is the backstop. deleteMany (not delete) so a concurrent purge is a no-op,
+// not a P2025 throw.
+async function deleteExpiredSession(id: string): Promise<void> {
+  try {
+    await prisma.wizardSession.deleteMany({ where: { id, completedAt: null } });
+  } catch (err) {
+    console.error("[wizard] failed to delete expired session:", err);
+  }
+}
+
 // Does the raw Sybil anchor appear as a VALUE anywhere in `node`? Walk the
 // object/array tree and compare STRING-typed leaves for equality to the anchor,
 // rather than substring-scanning JSON.stringify (Finding 5). The anchor is
@@ -68,6 +96,22 @@ function anchorAppearsAsValue(node: unknown, anchor: string): boolean {
     return Object.values(node).some((v) => anchorAppearsAsValue(v, anchor));
   }
   return false;
+}
+
+// The user-facing credential noun for a `taken` (one-credential-one-account)
+// refusal, keyed on the badge type. github-family types keep the exact wording
+// that shipped in Phase 1; the email types get their own noun (Phase 5, when
+// email became the second anchor-emitting plugin). Fallback is generic.
+function takenCredentialNoun(badgeType: string): string {
+  if (badgeType === "email-domain" || badgeType === "email-exact") return "email address";
+  if (
+    badgeType === "oauth-account" ||
+    badgeType === "account-age" ||
+    badgeType === "social-following"
+  ) {
+    return "GitHub account";
+  }
+  return "credential";
 }
 
 // Wizard-state is persisted as JSON, but only the `currentStep` and
@@ -124,6 +168,14 @@ export async function startWizard(
   const ctx = buildPluginContext(userId, origin);
   const state = await plugin.startWizard(ctx);
 
+  // Purge globally-expired abandoned sessions (their at-rest address is past
+  // TTL). Best-effort: a sweep failure must not block a new wizard.
+  try {
+    await sweepExpiredWizardSessions();
+  } catch (err) {
+    console.error("[wizard] expired-session sweep failed:", err);
+  }
+
   // Drop any stale unfinished session for this user+plugin before
   // creating a new one — prevents pendingToken collisions on retries.
   await prisma.wizardSession.deleteMany({
@@ -144,7 +196,10 @@ export async function startWizard(
     },
   });
 
-  return { sessionId: row.id, state };
+  // Never return the pending-token secret (or the server-side `data`) to the
+  // initiating browser — a server action serializes the whole value over the
+  // wire. The DB row above holds the full state; the client gets a scrubbed copy.
+  return { sessionId: row.id, state: toClientState(state) };
 }
 
 export async function loadWizard(sessionId: string, userId: string): Promise<WizardState | null> {
@@ -152,8 +207,13 @@ export async function loadWizard(sessionId: string, userId: string): Promise<Wiz
     where: { id: sessionId, userId, completedAt: null },
   });
   if (!row) return null;
-  if (row.expiresAt < new Date()) return null;
-  return hydrate(row);
+  if (row.expiresAt < new Date()) {
+    // TTL-bound the at-rest address: delete on observation, don't just ignore.
+    await deleteExpiredSession(row.id);
+    return null;
+  }
+  // The loaded state feeds the client-rendered wizard, so scrub its secrets/data.
+  return toClientState(hydrate(row));
 }
 
 export async function submitStep(
@@ -171,6 +231,8 @@ export async function submitStep(
   });
   if (!row) return { kind: "error", message: "Wizard session not found" };
   if (row.expiresAt < new Date()) {
+    // Delete the observed-expired row so its at-rest address is TTL-bounded.
+    await deleteExpiredSession(row.id);
     return { kind: "error", message: "Wizard session expired" };
   }
 
@@ -195,7 +257,10 @@ export async function submitStep(
           expiresAt: nowPlusMinutes(SESSION_TTL_MINUTES),
         },
       });
-      return { kind: "continue", state: result.state };
+      // Persist the full state (above) but hand the browser a scrubbed copy:
+      // the magic-link `expectedToken` (and the raw address in `data`) must
+      // never cross the server-action wire (capture-at-verify, build-plan §2.3).
+      return { kind: "continue", state: toClientState(result.state) };
     }
     case "complete": {
       try {
@@ -356,10 +421,13 @@ async function issueBadgesAndComplete(args: {
   };
 
   // The one-credential-one-account error, raised from two places (the initial
-  // registerDedup and the mint-side re-validation re-register). Concrete copy
-  // for the only anchor-emitting plugin today (github); generic wiring.
-  const takenError = () =>
-    new SybilTakenError("This GitHub account is already linked to another Minister account.");
+  // registerDedup and the mint-side re-validation re-register). The credential
+  // noun is derived from the badge type so the copy is correct per anchor plugin
+  // (github vs email); the oauth phrasing is unchanged from before Phase 5.
+  const takenError = (badgeType: string) =>
+    new SybilTakenError(
+      `This ${takenCredentialNoun(badgeType)} is already linked to another Minister account.`,
+    );
 
   for (const badge of issued) {
     let nullifierRef: string | null = null;
@@ -372,9 +440,16 @@ async function issueBadgesAndComplete(args: {
       // it at rest despite this central discard point stripping the `sybilAnchor`
       // FIELD. Refuse issuance outright if the anchor VALUE appears in the badge
       // it is meant to have been discarded from — fail closed (Finding 5).
+      //
+      // EXCEPT a badge that reveals its anchor BY DESIGN (`revealsAnchor`, today
+      // only email-exact): there the normalized address IS the disclosed claim,
+      // so the value legitimately appears — the guard would else refuse every
+      // such badge. The opt-out is explicit and per-badge; every anchor-hiding
+      // badge keeps the guard.
       if (
-        anchorAppearsAsValue(badge.attributes, anchor) ||
-        anchorAppearsAsValue(badge.claims, anchor)
+        !badge.revealsAnchor &&
+        (anchorAppearsAsValue(badge.attributes, anchor) ||
+          anchorAppearsAsValue(badge.claims, anchor))
       ) {
         await compensateBatch();
         throw new Error(
@@ -390,7 +465,7 @@ async function issueBadgesAndComplete(args: {
       });
       if (reg.status === "taken") {
         await compensateBatch();
-        throw takenError();
+        throw takenError(badge.type);
       }
       nullifierRef = reg.entryRef;
       if (reg.status === "registered") freshRegs.push({ ref: reg.entryRef, handle: ownerHandle });
@@ -507,7 +582,7 @@ async function issueBadgesAndComplete(args: {
             ownerHandle: handle,
           });
           if (reReg.status === "taken") {
-            throw takenError();
+            throw takenError(badge.type);
           }
           if (reReg.status === "registered") {
             freshRegs.push({ ref: reReg.entryRef, handle });

@@ -50,7 +50,10 @@ describe("emailDomainPlugin.handleStep — collect-email → magic-link", () => 
     expect(message?.text).toContain(magic.expectedToken!);
   });
 
-  it("stores only the domain, not the full email, in wizard state", async () => {
+  it("carries the domain AND the lowercased address in wizard state (anchor computed at verify)", async () => {
+    // The full address is DELIBERATELY carried across the round trip as the
+    // transient anchor carrier (build-plan §2.3); the runtime scrubs it on
+    // completion. Only the domain lands on the issued badge.
     const start = await emailDomainPlugin.startWizard(ctx());
     const result = await emailDomainPlugin.handleStep(
       start,
@@ -58,7 +61,10 @@ describe("emailDomainPlugin.handleStep — collect-email → magic-link", () => 
       ctx(),
     );
     if (result.kind !== "continue") throw new Error("kind");
-    expect(result.state.data).toEqual({ domain: "workmail.test" });
+    expect(result.state.data).toEqual({
+      domain: "workmail.test",
+      email: "alice@workmail.test",
+    });
   });
 
   it("rejects malformed email input", async () => {
@@ -69,36 +75,54 @@ describe("emailDomainPlugin.handleStep — collect-email → magic-link", () => 
 });
 
 describe("emailDomainPlugin.handleStep — magic-link → complete", () => {
-  function magicLinkState(token: string, domain = "example.com"): WizardState {
+  function magicLinkState(
+    token: string,
+    domain = "example.com",
+    email = `someone@${domain}`,
+  ): WizardState {
     return {
       pluginId: "email-domain",
       userId: "user_test",
       currentStep: {
         id: "wait-magic-link",
         kind: "magic-link",
-        payload: { sentTo: `someone@${domain}`, expectedToken: token },
+        payload: { sentTo: email, expectedToken: token },
       },
-      data: { domain },
+      data: { domain, email },
     };
   }
 
-  it("returns complete with an email-domain IssuedBadge", async () => {
+  it("returns complete with an email-domain IssuedBadge carrying the normalized anchor", async () => {
     const result = await emailDomainPlugin.handleStep(
-      magicLinkState("TOKEN_xyz", "workmail.test"),
+      magicLinkState("TOKEN_xyz", "workmail.test", "someone@workmail.test"),
       { token: "TOKEN_xyz" },
       ctx(),
     );
     expect(result.kind).toBe("complete");
     if (result.kind !== "complete") throw new Error("kind");
     expect(result.badges).toHaveLength(1);
+    // Claims/attributes reveal only the domain; the anchor is the normalized
+    // FULL address (the runtime nullifies + discards it).
     expect(result.badges[0]).toEqual({
       type: "email-domain",
       attributes: { domain: "workmail.test" },
       claims: { domain: "workmail.test" },
+      sybilAnchor: "someone@workmail.test",
     });
   });
 
-  it("errors if wizard state is missing the domain", async () => {
+  it("normalizes the anchor at verify (gmail dots + tag) while revealing only the domain", async () => {
+    const result = await emailDomainPlugin.handleStep(
+      magicLinkState("TOKEN_gmail1", "gmail.com", "John.Doe+news@gmail.com"),
+      { token: "TOKEN_gmail1" },
+      ctx(),
+    );
+    if (result.kind !== "complete") throw new Error("kind");
+    expect(result.badges[0]?.claims).toEqual({ domain: "gmail.com" });
+    expect(result.badges[0]?.sybilAnchor).toBe("johndoe@gmail.com");
+  });
+
+  it("errors if wizard state is missing the verified address", async () => {
     const state: WizardState = {
       pluginId: "email-domain",
       userId: "user_test",
@@ -107,7 +131,7 @@ describe("emailDomainPlugin.handleStep — magic-link → complete", () => {
         kind: "magic-link",
         payload: { sentTo: "x@y", expectedToken: "T" },
       },
-      data: {},
+      data: { domain: "y" },
     };
     const result = await emailDomainPlugin.handleStep(state, { token: "T" }, ctx());
     expect(result.kind).toBe("error");

@@ -189,6 +189,35 @@ donor's `badgeTypes` / `profileName` / `profileAvatar` into the survivor's
 
 ---
 
+## crypto-core Phase 5 (email dedup) — accepted follow-ups
+
+These are deliberate deferrals from the Phase 5 finalization review, not stubs.
+Each is safe for the interim window (near-zero users) and recorded so the
+gate-claim/code gap is never silent.
+
+- **Provider table is deliberately minimal (under-normalization accepted).**
+  `PLUS_TAG_IGNORING_PROVIDERS` covers only outlook/hotmail/live (+ gmail's
+  dot/tag rules). iCloud/Proton/Fastmail and Microsoft regional consumer
+  domains (hotmail.co.uk, outlook.fr, msn.com, …) also subaddress with `+tag`
+  but are intentionally omitted — ADR §2.3 fails toward NOT over-matching, and
+  `email-domain`/`email-exact` are `sybilResistance: "weak"`. Adding any of them
+  is an append-only change that MUST bump `ANCHOR_NORMALIZATION_VERSION` and be
+  treated as a re-verification event (`normalize.ts` versioning contract).
+- **`ANCHOR_NORMALIZATION_VERSION` is not persisted per anchor.** The re-key
+  procedure is documented but has no executable "affected anchors" query. Fold a
+  version column into Signet's `dedup_entries` schema (or `Badge.nullifierRef`
+  metadata) at the Phase 3 backend split so a future table change can be
+  enumerated precisely.
+- **Auto-issue email-domain shares the mint-window discipline only partially.**
+  `autoIssueEmailDomainBadge` now registers the Sybil anchor and persists the
+  nullifierRef (closing the old nullifier-less 2x-Sybil), and releases a fresh
+  registration on mint failure, but it does NOT wrap the mint in
+  `serializeMintWindow` + a mint-side re-validation probe as the wizard runtime
+  does. The residual pre-INSERT delete-vs-reissue window is strictly smaller than
+  the one the wizard closes (release is sibling-guarded once the badge commits).
+  Unify both issuance paths on the shared register→mint→compensate→self-heal core
+  at the Phase 3 backend split.
+
 ## Misc small things
 
 - `services/ws-proxy/`: alpine stub; see Stage 6 item above.

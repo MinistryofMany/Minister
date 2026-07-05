@@ -32,6 +32,11 @@ export default async function globalSetup(): Promise<void> {
     await prisma.inviteCode.deleteMany();
     await prisma.badge.deleteMany();
     await prisma.eligibility.deleteMany();
+    // The Sybil-dedup ledger + drift cache are NOT FK-linked to Badge/User
+    // (nullifierRef is an opaque string, no cascade), so they must be wiped
+    // explicitly or anchors leak across runs and issuance is refused `taken`.
+    await prisma.nullifierRpCheck.deleteMany();
+    await prisma.nullifierEntry.deleteMany();
     await prisma.oidcAccessToken.deleteMany();
     await prisma.oidcAuthorizationCode.deleteMany();
     await prisma.oidcClient.deleteMany();

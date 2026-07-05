@@ -13,6 +13,13 @@ import {
 } from "@/lib/email-layout";
 import { normalizeEmailAnchor } from "@/lib/nullifier/normalize";
 
+// email-exact: a small clone of the email-domain plugin. It proves control of an
+// email address and reveals the FULL (normalized) address as the claim — less
+// private than email-domain, opt-in by design. It shares email-domain's Sybil
+// anchor (the normalized full address) but issues under its OWN badge_type, so
+// the dedup namespace is DISTINCT: holding both an email-domain and an
+// email-exact badge for the same mailbox does not self-collide.
+
 const STEP_FORM = "collect-email";
 const STEP_MAGIC = "wait-magic-link";
 const TOKEN_BYTES = 32;
@@ -35,15 +42,15 @@ function deriveDomain(email: string): string | null {
   return email.slice(at + 1).toLowerCase();
 }
 
-export const emailDomainPlugin: Plugin = {
+export const emailExactPlugin: Plugin = {
   manifest: {
-    id: "email-domain",
-    name: "Email domain",
+    id: "email-exact",
+    name: "Email address",
     description:
-      "Prove you control an email address at a given domain. Verified via a one-time link sent to that address — the issued badge records only the domain, never the address.",
-    badgeTypes: ["email-domain"],
+      "Prove you control a specific email address, revealing the full address. Less private than the email-domain badge — verified via a one-time link sent to that address. The badge attests the CANONICAL (normalized) form of the address (lowercased; for Gmail, dots and any +tag are dropped), which can differ from exactly what you typed.",
+    badgeTypes: ["email-exact"],
     requiresExtension: false,
-    iconKey: "at-sign",
+    iconKey: "mail",
   },
 
   async startWizard(ctx) {
@@ -67,17 +74,14 @@ export const emailDomainPlugin: Plugin = {
         }
         const token = tokenFromBytes(TOKEN_BYTES);
 
-        // We don't yet know the wizard session id here — the runtime
-        // assigns it. The verify URL therefore embeds only the token
-        // (the runtime can look up the session by pendingToken).
-        const verifyUrl = `${ctx.origin}/badges/new/email-domain/verify?token=${encodeURIComponent(token)}`;
+        const verifyUrl = `${ctx.origin}/badges/new/email-exact/verify?token=${encodeURIComponent(token)}`;
 
         await ctx.sendMail({
           to: email,
           subject: "Verify your email for Minister",
           text: [
             "Someone (hopefully you) asked Minister to issue a badge proving",
-            `control of an email address at ${domain}.`,
+            "control of this exact email address.",
             "",
             "If that's you, click the link below to complete the proof:",
             verifyUrl,
@@ -86,10 +90,10 @@ export const emailDomainPlugin: Plugin = {
           ].join("\n"),
           html: renderEmail({
             title: "Verify your email for Minister",
-            heading: "Verify your email domain",
+            heading: "Verify your email address",
             blocks: [
               emailText(
-                `Someone (hopefully you) asked Minister to issue a badge proving control of an email address at ${domain}.`,
+                "Someone (hopefully you) asked Minister to issue a badge proving control of this exact email address.",
               ),
               emailText("If that's you, complete the proof:"),
               emailButton("Verify this email", verifyUrl),
@@ -99,9 +103,8 @@ export const emailDomainPlugin: Plugin = {
           }),
         });
 
-        await ctx.audit.log("plugin.email_domain.verification_sent", {
-          domain,
-        });
+        // Audit records the domain only — never the address.
+        await ctx.audit.log("plugin.email_exact.verification_sent", { domain });
 
         return {
           kind: "continue",
@@ -116,20 +119,12 @@ export const emailDomainPlugin: Plugin = {
                 expectedToken: token,
               },
             },
-            // We DELIBERATELY carry the full address in `data.email` across the
-            // magic-link round trip: it is the transient carrier for the Sybil
-            // anchor, which is computed only AT VERIFY (once inbox control is
-            // proven — the build-plan §2.3 anti-squat decision; registering at
-            // form-submit would let an attacker squat a victim's anchor). The
-            // runtime NEVER returns this `data` to the browser (server actions
-            // return a scrubbed copy — see toClientState). At-rest it is bounded:
-            // the runtime SCRUBS `data` the moment the anchor is nullified on
-            // completion (or on a compensated abort), and the ABANDONED path
-            // (link never clicked) is reaped by the wizard-session TTL —
-            // delete-on-observe + sweepExpiredWizardSessions in the runtime, so
-            // the address does not outlive the 60-minute TTL. The issued badge
-            // itself records only the domain. `token` is the runtime's pendingToken.
-            data: { domain, email },
+            // Carry the full address across the round trip: it is BOTH the Sybil
+            // anchor and (normalized) the disclosed claim, captured only AT
+            // VERIFY once inbox control is proven (build-plan §2.3 anti-squat).
+            // The runtime scrubs `data` on completion; the AuditLog never sees
+            // the address (domain only, above).
+            data: { email },
           },
         };
       }
@@ -139,34 +134,34 @@ export const emailDomainPlugin: Plugin = {
         if (!parsed.success) {
           return { kind: "error", message: "Missing verification token" };
         }
-        // The wizard runtime has already confirmed `token` matches the
-        // session's pendingToken before reaching the plugin. So we
-        // trust the input here.
-        const domain = typeof state.data.domain === "string" ? state.data.domain : "";
+        // The wizard runtime has already confirmed `token` matches the session's
+        // pendingToken before reaching the plugin.
         const email = typeof state.data.email === "string" ? state.data.email : "";
-        if (!domain || !email) {
+        if (!email) {
           return {
             kind: "error",
             message: "Wizard state missing the verified address — restart the flow.",
           };
         }
-        // Inbox control is now proven → capture the Sybil anchor: the NORMALIZED
-        // FULL address. Only the domain is revealed/stored on the badge; the
-        // runtime nullifies this anchor into an opaque Badge.nullifierRef,
-        // DISCARDS the raw address, and scrubs it from the persisted state.
-        const sybilAnchor = normalizeEmailAnchor(email);
-        // Audit records the domain only — never the address (the AuditLog is one
-        // of the at-rest stores the raw anchor must never land in).
-        await ctx.audit.log("plugin.email_domain.verified", { domain });
+        // Inbox control proven → the normalized full address is BOTH the anchor
+        // and the revealed claim. Same normalization as email-domain, so the two
+        // badges share one anchor; the distinct badge_type keeps their dedup
+        // namespaces separate. `revealsAnchor` opts this badge out of the
+        // runtime's anchor-leak guard, since the address here is disclosed by
+        // design.
+        const normalized = normalizeEmailAnchor(email);
+        const domain = deriveDomain(normalized) ?? "";
+        await ctx.audit.log("plugin.email_exact.verified", { domain });
 
         return {
           kind: "complete",
           badges: [
             {
-              type: "email-domain",
-              attributes: { domain },
-              claims: { domain },
-              sybilAnchor,
+              type: "email-exact",
+              attributes: { email: normalized },
+              claims: { email: normalized },
+              sybilAnchor: normalized,
+              revealsAnchor: true,
             },
           ],
         };
@@ -179,15 +174,15 @@ export const emailDomainPlugin: Plugin = {
 
 function makeFormStep(userId: string): WizardState {
   return {
-    pluginId: "email-domain",
+    pluginId: "email-exact",
     userId,
     currentStep: {
       id: STEP_FORM,
       kind: "form",
       payload: {
-        title: "Verify an email domain",
+        title: "Verify an email address",
         description:
-          "Enter any email address at the domain you want to attest. Minister will email a verification link; clicking it issues the badge.",
+          "Enter the email address you want to attest. Minister will email a verification link; clicking it issues a badge revealing the canonical (normalized) form of that address — an exact-string match by a relying party is not guaranteed.",
         fields: [
           {
             name: "email",
