@@ -3,7 +3,12 @@ import type { IssuedBadge, PluginContext, WizardState } from "@minister/plugin-s
 import type { Prisma } from "@/generated/prisma";
 import { audit } from "@/lib/audit";
 import { sendMail } from "@/lib/mailer";
-import { ensureDedupHandle, nullifierService, runPostCommit } from "@/lib/nullifier";
+import {
+  ensureDedupHandle,
+  nullifierService,
+  runPostCommit,
+  serializeMintWindow,
+} from "@/lib/nullifier";
 import { prisma } from "@/lib/prisma";
 import { getPlugin } from "@/plugins/registry";
 import { issueBadge } from "@/server/issue-badge";
@@ -351,21 +356,7 @@ async function issueBadgesAndComplete(args: {
     // Shared mint path — see src/server/issue-badge.ts. `badge` is an
     // IssuedBadge; issueBadge reads only BadgeToIssue fields, so `sybilAnchor`
     // is structurally dropped and never persisted.
-    let createdId: string;
-    try {
-      createdId = await issueBadge({ userId, pluginId, badge, nullifierRef });
-    } catch (err) {
-      // A mid-batch mint failure strands the just-registered entry AND leaves any
-      // earlier badges in this batch minted (partial success presented as an
-      // error). Roll the whole batch back before surfacing the fault.
-      await compensateBatch();
-      if (err instanceof Error && err.message.startsWith("Unknown badge type:")) {
-        throw new Error(`Plugin ${pluginId} produced an ${err.message.toLowerCase()}`);
-      }
-      throw err;
-    }
-    createdIds.push(createdId);
-
+    //
     // MINT-SIDE RE-VALIDATION (Finding 1 — the delete-vs-reissue TOCTOU).
     //
     // registerDedup above may return `already_yours` (ref E already exists),
@@ -376,45 +367,86 @@ async function issueBadgesAndComplete(args: {
     // account to register: two live signed VCs for one credential, a dedup
     // bypass.
     //
-    // This probe is ONE HALF of the fix, and covers exactly ONE ordering: a
-    // release that COMMITS BEFORE this badge's INSERT commits is visible here
-    // as a gone entry → self-heal below. It cannot guard a release that fires
-    // AFTER it returns true (a one-shot read has no forward reach — two prior
-    // fix attempts died on that). That ordering is closed on the RELEASE side:
-    // the interim backend's release deletes the entry atomically only when no
-    // Badge row references it (lib/nullifier/interim.ts), and this badge's row
-    // is already committed by the time this probe runs, so any later release
-    // no-ops on it. The two mechanisms COMPOSE — keep both.
+    // The probe covers exactly ONE ordering: a release that COMMITS BEFORE
+    // this badge's INSERT commits is visible as a gone entry → self-heal
+    // below. It cannot guard a release that fires AFTER it returns true (a
+    // one-shot read has no forward reach — two prior fix attempts died on
+    // that). That ordering is closed on the RELEASE side, per backend:
+    //   * interim — release deletes the entry atomically only when no Badge
+    //     row references it (lib/nullifier/interim.ts), and this badge's row
+    //     is committed by the time the probe runs, so a later release no-ops.
+    //   * signet — the ledger lives across the network, so the equivalent is
+    //     SERIALIZATION: serializeMintWindow holds the per-entryRef advisory
+    //     lock across [INSERT → probe], and the signet backend's release
+    //     holds the same lock across [sibling check → /dedup/release]
+    //     (lib/nullifier/signet-backend.ts). Interim: passthrough.
+    // The mechanisms COMPOSE — keep both halves.
     //
+    // The probe runs INSIDE the try: in the signet backend it is a network
+    // round trip, and a transport failure must roll the whole batch back
+    // (wizard error, retryable, no reservation leak) — compensateBatch runs
+    // AFTER the lock window so its releases can take the same lock.
+    let createdId: string;
+    let entryPresent = true;
+    try {
+      if (nullifierRef !== null && ownerHandle !== null) {
+        const ref = nullifierRef;
+        const handle = ownerHandle;
+        const minted = await serializeMintWindow(ref, async () => {
+          const id = await issueBadge({ userId, pluginId, badge, nullifierRef: ref });
+          // Record immediately: if the probe below throws, compensateBatch
+          // must still delete this badge.
+          createdIds.push(id);
+          const present = await nullifierService.entryExistsForOwner({
+            entryRef: ref,
+            ownerHandle: handle,
+          });
+          return { id, present };
+        });
+        createdId = minted.id;
+        entryPresent = minted.present;
+      } else {
+        createdId = await issueBadge({ userId, pluginId, badge, nullifierRef });
+        createdIds.push(createdId);
+      }
+    } catch (err) {
+      // A mid-batch mint failure strands the just-registered entry AND leaves any
+      // earlier badges in this batch minted (partial success presented as an
+      // error). Roll the whole batch back before surfacing the fault.
+      await compensateBatch();
+      if (err instanceof Error && err.message.startsWith("Unknown badge type:")) {
+        throw new Error(`Plugin ${pluginId} produced an ${err.message.toLowerCase()}`);
+      }
+      throw err;
+    }
+
     // Self-heal: if the entry is GONE, the raw anchor is still in memory —
     // re-register it and re-point the badge. A fresh `registered` re-anchors
     // the credential to this account; `already_yours` means a concurrent
     // re-issue of ours already re-created it; `taken` means another account
     // grabbed the freed credential in the gap, so compensate and fail closed.
     // This makes the race self-correct instead of silently bypassing dedup.
-    if (anchor !== null && nullifierRef !== null && ownerHandle) {
-      const present = await nullifierService.entryExistsForOwner({
-        entryRef: nullifierRef,
+    // Runs OUTSIDE the mint window lock: the re-registered entry is fresh and
+    // unreachable by any release (nothing references it and nobody else holds
+    // its ref), and compensateBatch on the `taken` path must be free to take
+    // the release lock.
+    if (anchor !== null && nullifierRef !== null && ownerHandle && !entryPresent) {
+      const reReg = await nullifierService.registerDedup({
+        anchor,
+        badgeType: badge.type,
         ownerHandle,
       });
-      if (!present) {
-        const reReg = await nullifierService.registerDedup({
-          anchor,
-          badgeType: badge.type,
-          ownerHandle,
-        });
-        if (reReg.status === "taken") {
-          await compensateBatch();
-          throw takenError();
-        }
-        await prisma.badge.update({
-          where: { id: createdId },
-          data: { nullifierRef: reReg.entryRef },
-        });
-        nullifierRef = reReg.entryRef;
-        if (reReg.status === "registered") {
-          freshRegs.push({ ref: reReg.entryRef, handle: ownerHandle });
-        }
+      if (reReg.status === "taken") {
+        await compensateBatch();
+        throw takenError();
+      }
+      await prisma.badge.update({
+        where: { id: createdId },
+        data: { nullifierRef: reReg.entryRef },
+      });
+      nullifierRef = reReg.entryRef;
+      if (reReg.status === "registered") {
+        freshRegs.push({ ref: reReg.entryRef, handle: ownerHandle });
       }
     }
   }
