@@ -138,3 +138,52 @@ jobs:
       - name: Signet log on failure
         if: failure()
         run: tail -50 Minister/signet-e2e/.stack/signet.log || true
+
+  # Account-merge core (slice 5) against a REAL Postgres — the userId-FK
+  # re-points, per-RP SubjectOverride preservation, shared-RP stranding, and
+  # reversal all move exact rows; the mocked unit suite in the main `ci` job
+  # can't prove that against a real relational store. Skipped by the main
+  # job (gated on MINISTER_MERGE_DB_TEST), so it gets its own job here.
+  merge-db-test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: minister
+          POSTGRES_PASSWORD: minister
+          POSTGRES_DB: minister_merge_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U minister"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://minister:minister@localhost:5432/minister_merge_test?schema=public
+      MINISTER_MERGE_DB_TEST: "1"
+      OIDC_PAIRWISE_SECRET: merge-db-test-pairwise-secret-32chars!!
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.12.0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Push schema into the test database
+        run: pnpm --filter @minister/app exec prisma db push --skip-generate
+
+      - name: Account-merge live Postgres suite
+        run: pnpm --filter @minister/app exec vitest run src/lib/merge.db.test.ts
