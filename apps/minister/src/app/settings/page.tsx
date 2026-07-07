@@ -1,9 +1,11 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 
+import { ProfileForm } from "@/app/settings/profile-form";
 import { RevokeAllButton } from "@/components/revoke-all-button";
 import { SignOutButton } from "@/components/sign-out-button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { prisma } from "@/lib/prisma";
 import { getCurrentSession } from "@/lib/session";
 
 // Links into the account-security surfaces (multi-credential, recovery,
@@ -29,14 +31,57 @@ const SECURITY_LINKS = [
 export default async function SettingsPage() {
   const session = await getCurrentSession();
   if (!session?.user) redirect("/");
+
+  const user = await prisma.user.findUnique({
+    where: { id: session.user.id },
+    select: { displayName: true, avatarUrl: true },
+  });
+
   return (
     <div className="mx-auto flex max-w-2xl flex-col gap-6 px-4 py-12">
       <header className="space-y-1">
         <h1 className="text-2xl font-semibold tracking-tight">Settings</h1>
         <p className="text-sm text-neutral-600 dark:text-neutral-400">
-          Account controls. Display name, avatar, and privacy settings arrive in Stage 1.
+          Manage your profile, credentials, and sessions.
         </p>
       </header>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Profile</CardTitle>
+          <CardDescription>
+            Your display name and avatar. Shared with apps only when you choose to disclose your
+            profile.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <ProfileForm
+            initialDisplayName={user?.displayName ?? null}
+            initialAvatarUrl={user?.avatarUrl ?? null}
+          />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Connected apps</CardTitle>
+          <CardDescription>
+            Manage the name and avatar each app you&apos;ve signed into sees. Per-app and separate
+            from your global default above.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <Link
+            href="/settings/apps"
+            className="block rounded-lg border border-neutral-200 p-3 transition hover:bg-neutral-50 dark:border-neutral-800 dark:hover:bg-neutral-900"
+          >
+            <div className="text-sm font-medium">Connected apps</div>
+            <div className="text-sm text-neutral-600 dark:text-neutral-400">
+              Set a per-app display name and avatar, or clear one to stop sharing it with that app.
+            </div>
+          </Link>
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader>

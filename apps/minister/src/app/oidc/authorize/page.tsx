@@ -9,6 +9,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { holderCountsByType } from "@/lib/anonymity-sets";
 import { loadUserBadges, summarizeAttributes, type DisplayBadge } from "@/lib/badges";
 import { buildErrorRedirect, validateAuthorizeRequest } from "@/lib/oidc-authorize";
+import { loadProfileOverride } from "@/lib/oidc-claims";
 import { grantedRelevantBadgeIds, loadGrant } from "@/lib/oidc-grants";
 import {
   buildAlreadyGrantedView,
@@ -120,17 +121,27 @@ export default async function OidcAuthorizePage({ searchParams }: PageProps) {
     );
   }
 
-  // The curated profile values previewed beside the name/avatar toggles, so
-  // the user sees the real data they'd disclose. Only the user-curated
-  // fields — never the upstream auth identity. Plain object across the RSC
-  // boundary.
-  const profileUser = await prisma.user.findUnique({
-    where: { id: session.user.id },
-    select: { displayName: true, avatarUrl: true },
-  });
+  // The EFFECTIVE persona previewed beside (and pre-filling) the name/avatar
+  // inputs. Loaded only when the RP requested `profile` (M-2: skip the queries
+  // otherwise — the card is not rendered). Mirrors the disclosure resolver's
+  // authoritative-on-present precedence: a present override row wins verbatim
+  // (a null field seeds an EMPTY input — "share nothing for this field"); no
+  // row falls back to the global curated default (the seed for a first-time
+  // persona). Only user-curated fields — never the upstream auth identity.
+  // Plain object across the RSC boundary.
+  const wantsProfile = request.scopes.includes("profile");
+  const [profileUser, profileOverride] = wantsProfile
+    ? await Promise.all([
+        prisma.user.findUnique({
+          where: { id: session.user.id },
+          select: { displayName: true, avatarUrl: true },
+        }),
+        loadProfileOverride(session.user.id, request.clientId, true),
+      ])
+    : [null, null];
   const profilePreview = {
-    displayName: profileUser?.displayName ?? null,
-    avatarUrl: profileUser?.avatarUrl ?? null,
+    displayName: profileOverride ? profileOverride.displayName : (profileUser?.displayName ?? null),
+    avatarUrl: profileOverride ? profileOverride.avatarUrl : (profileUser?.avatarUrl ?? null),
   };
 
   return (
@@ -145,8 +156,9 @@ export default async function OidcAuthorizePage({ searchParams }: PageProps) {
 
       <ConsentScreen
         clientName={request.clientName}
-        wantsProfile={request.scopes.includes("profile")}
+        wantsProfile={wantsProfile}
         profilePreview={profilePreview}
+        previouslyShared={{ name: grant.profileName, avatar: grant.profileAvatar }}
         badgeChoices={badgeChoices}
         alreadyGranted={alreadyGranted}
         policyView={policyView}

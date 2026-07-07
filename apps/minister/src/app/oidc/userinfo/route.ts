@@ -2,7 +2,7 @@ import { jwtVerify } from "jose";
 import { NextResponse } from "next/server";
 
 import { getIssuer } from "@/lib/issuer";
-import { loadApprovedBadgeJwts, resolveUserClaims } from "@/lib/oidc-claims";
+import { loadApprovedBadgeJwts, loadProfileOverride, resolveUserClaims } from "@/lib/oidc-claims";
 import { oidcIssuerUrl } from "@/lib/oidc-config";
 import { prisma } from "@/lib/prisma";
 import { clientIpFrom, oidcUserinfoLimiter } from "@/lib/rate-limit";
@@ -106,13 +106,25 @@ export async function GET(request: Request) {
     sub,
     row.approvedBadgeIds,
   );
+  // Per-RP profile persona snapshot (OidcProfileOverride), keyed on the same
+  // (userId, clientId) the ID token used, so /userinfo discloses the identical
+  // persona. Fail-safe: skipped when no profile field is granted, and a missing
+  // table (P2021) is treated as "no override" so it can never 500 userinfo. A
+  // present row is authoritative; a missing row falls back to the global value.
+  const profileOverride = await loadProfileOverride(
+    row.userId,
+    row.clientId,
+    row.profileName || row.profileAvatar,
+  );
   // Shared resolver so these claims provably match the ID token's. The
   // per-claim profile grant comes from the access-token row (denormalized
-  // from the auth code), not from the scope string.
+  // from the auth code), not from the scope string. The per-RP override (when
+  // set) supersedes the global curated value per field.
   const resolved = resolveUserClaims(
     row.user,
     { name: row.profileName, avatar: row.profileAvatar },
     approvedBadgeJwts,
+    profileOverride,
   );
 
   const claims: Record<string, unknown> = {

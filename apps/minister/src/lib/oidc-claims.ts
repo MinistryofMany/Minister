@@ -1,5 +1,6 @@
 import { buildPairwiseUserDid, reMintVc } from "@minister/vc";
 
+import { Prisma } from "@/generated/prisma";
 import { audit } from "@/lib/audit";
 import { sanitizeDisclosedClaims } from "@/lib/disclosure-claims";
 import { getIssuer } from "@/lib/issuer";
@@ -59,6 +60,18 @@ export interface ProfileGrant {
   avatar: boolean;
 }
 
+// The per-relying-party persona snapshot for this grant (OidcProfileOverride),
+// or `null` when NO override row exists for this RP. When the row exists it is
+// AUTHORITATIVE for both fields: a null field means "share nothing for this
+// field with this app", never a fall-through to the global default. Only a
+// missing row (`null`) falls back to the global curated value (legacy grants).
+// This is ONLY the snapshotted per-RP override — never the upstream auth
+// identity, which is not a source anywhere in this resolver.
+export interface ProfileOverride {
+  displayName: string | null;
+  avatarUrl: string | null;
+}
+
 // The common claim subset shared by the ID token (/oidc/token) and the
 // userinfo response (/oidc/userinfo). `sub` is NOT included here: each path
 // sources `sub` differently (the ID token mints a fresh pairwise sub; the
@@ -83,29 +96,78 @@ export interface ResolvedUserClaims {
 // curated-value mapping and the per-claim grant gate here makes that
 // agreement structural.
 //
-// Privacy: only the user-curated `displayName`/`avatarUrl` are ever
-// disclosed. The upstream auth identity (`User.name`/`User.image`) is not
-// a parameter here, so it cannot leak. When a granted claim has no curated
-// value, it is omitted entirely rather than falling back or emitting a
-// misleading placeholder.
+// Precedence, PER FIELD, and only when that field's grant boolean is true.
+// The snapshot-per-app model makes an EXISTING override row AUTHORITATIVE — a
+// null field on a present row means "share nothing for this field with this
+// app", NOT "fall back to the global default". The global value is ONLY a
+// legacy fallback for a grant that predates personas (no override row at all):
+//   - override row present  -> use `override.<field>` verbatim (null => omit);
+//   - no override row (null) -> use the GLOBAL `user.<field>` (null => omit).
+// In both cases a null resolved value omits the claim entirely (no null, no
+// placeholder).
 //
-// Pure given its inputs (the user's curated profile, the per-claim grant,
-// the already loaded badge JWTs) so it can be unit-tested without a database.
+// Why authoritative-on-present: once a user has shaped a persona for an app,
+// clearing a field must DOWNGRADE disclosure (share nothing) rather than
+// silently UPGRADE it to the global real name/avatar. Falling back per-null-
+// field would make "clear the field" leak the global default — the opposite
+// of the user's intent.
+//
+// Privacy: both sources are user-curated. The upstream auth identity
+// (`User.name`/`User.image`) is NOT a parameter here, so it can never leak
+// through either source.
+//
+// Pure given its inputs (the global curated profile, the per-RP override
+// snapshot, the per-claim grant, the already loaded badge JWTs) so it can be
+// unit-tested without a database.
 export function resolveUserClaims(
   user: ClaimsUser,
   profile: ProfileGrant,
   approvedBadgeJwts: string[],
+  override: ProfileOverride | null,
 ): ResolvedUserClaims {
   const resolved: ResolvedUserClaims = { ministerBadges: approvedBadgeJwts };
 
-  if (profile.name && user.displayName !== null) {
-    resolved.name = user.displayName;
+  if (profile.name) {
+    const name = override ? override.displayName : user.displayName;
+    if (name !== null) resolved.name = name;
   }
-  if (profile.avatar && user.avatarUrl !== null) {
-    resolved.picture = user.avatarUrl;
+  if (profile.avatar) {
+    const picture = override ? override.avatarUrl : user.avatarUrl;
+    if (picture !== null) resolved.picture = picture;
   }
 
   return resolved;
+}
+
+// Fail-safe loader for the per-RP profile persona override, shared by both
+// disclosure paths (and the consent preview). Returns null — the resolver
+// then uses the legacy global fallback — in two cases that must NEVER 500 a
+// login (the "login unaffected" invariant):
+//   1. no profile field is granted (`wantsProfile` false): skip the query
+//      entirely. The resolver gates both fields off regardless, and this drops
+//      a hot-path lookup from the common badge-only / no-profile login.
+//   2. the OidcProfileOverride table does not exist (Prisma P2021), e.g. a
+//      deploy where this migration has not run yet: no override rows can exist,
+//      so null is the correct, safe answer.
+// ONLY P2021 is swallowed; every other error propagates exactly as the
+// surrounding user/badge reads on these paths already do.
+export async function loadProfileOverride(
+  userId: string,
+  clientId: string,
+  wantsProfile: boolean,
+): Promise<ProfileOverride | null> {
+  if (!wantsProfile) return null;
+  try {
+    return await prisma.oidcProfileOverride.findUnique({
+      where: { userId_clientId: { userId, clientId } },
+      select: { displayName: true, avatarUrl: true },
+    });
+  } catch (err) {
+    if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2021") {
+      return null;
+    }
+    throw err;
+  }
 }
 
 // Loads and RE-MINTS the VC JWTs for the badges the user approved for this
