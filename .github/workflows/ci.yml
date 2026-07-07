@@ -16,17 +16,17 @@ jobs:
       HUSKY: "0" # git hooks are irrelevant in CI
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6
         with:
           version: 9.12.0
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
-          node-version: 20
+          node-version: 24
           cache: pnpm
 
       - name: Install
@@ -75,12 +75,12 @@ jobs:
       # Recreate the MinistryOfMany workspace layout (Signet as a sibling of
       # Minister) — the fixture crate's path dependency expects it.
       - name: Checkout Minister
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           path: Minister
 
       - name: Checkout Signet
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: MinistryofMany/Signet
           path: Signet
@@ -107,14 +107,14 @@ jobs:
         run: Minister/signet-e2e/up.sh
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6
         with:
           version: 9.12.0
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
-          node-version: 20
+          node-version: 24
           cache: pnpm
           cache-dependency-path: Minister/pnpm-lock.yaml
 
@@ -166,17 +166,17 @@ jobs:
       OIDC_PAIRWISE_SECRET: merge-db-test-pairwise-secret-32chars!!
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6
         with:
           version: 9.12.0
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
-          node-version: 20
+          node-version: 24
           cache: pnpm
 
       - name: Install
