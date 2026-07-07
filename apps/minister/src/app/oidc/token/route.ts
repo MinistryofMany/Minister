@@ -3,7 +3,7 @@ import { randomBytes } from "node:crypto";
 import { NextResponse } from "next/server";
 
 import { getIssuer } from "@/lib/issuer";
-import { loadApprovedBadgeJwts, resolveUserClaims } from "@/lib/oidc-claims";
+import { loadApprovedBadgeJwts, loadProfileOverride, resolveUserClaims } from "@/lib/oidc-claims";
 import { findClient, verifyClientSecret } from "@/lib/oidc-clients";
 import { ACCESS_TOKEN_TTL, mintAccessToken, mintIdToken, verifyPkceS256 } from "@/lib/oidc-tokens";
 import { resolveSub } from "@/lib/oidc-subject";
@@ -156,13 +156,24 @@ export async function POST(request: Request) {
     sub,
     stored.approvedBadgeIds,
   );
+  // Per-RP profile persona snapshot (OidcProfileOverride). Fail-safe: skipped
+  // entirely when no profile field is granted, and a missing table (P2021) is
+  // treated as "no override" so it can never 500 the token exchange. A present
+  // row is authoritative; a missing row falls back to the global value.
+  const profileOverride = await loadProfileOverride(
+    user.id,
+    client.clientId,
+    stored.profileName || stored.profileAvatar,
+  );
   // Shared resolver so the ID token's claims provably match /oidc/userinfo.
   // The per-claim profile grant is persisted on the auth code, not inferred
-  // from the scope string, so name and avatar disclose independently.
+  // from the scope string, so name and avatar disclose independently. The
+  // per-RP override (when set) supersedes the global curated value per field.
   const userClaims = resolveUserClaims(
     user,
     { name: stored.profileName, avatar: stored.profileAvatar },
     minister_badges,
+    profileOverride,
   );
 
   const idToken = await mintIdToken(issuer, {

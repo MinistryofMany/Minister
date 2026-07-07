@@ -14,6 +14,7 @@ import { verifyOidcRequest } from "@/lib/oidc-request-token";
 import { prisma } from "@/lib/prisma";
 import { getCurrentSession } from "@/lib/session";
 import { minimizeToPolicy, toPolicyUserBadge } from "@/server/oidc-consent-minimize";
+import { normalizeProfileInput } from "@/server/profile-validation";
 import { effectiveScopes } from "@/server/wizard-helpers";
 
 const ApproveInput = z.object({
@@ -23,6 +24,12 @@ const ApproveInput = z.object({
   // approve their display name, their avatar, neither, or both.
   approveName: z.boolean(),
   approveAvatar: z.boolean(),
+  // The raw inline-edit text for the per-RP persona (snapshot per app). Only
+  // meaningful for a field whose toggle is on; validated + snapshotted into
+  // OidcProfileOverride below. Optional so an old client or a name-only
+  // approval need not send them.
+  nameValue: z.string().optional(),
+  avatarValue: z.string().optional(),
 });
 
 const DenyInput = z.object({
@@ -129,10 +136,50 @@ export async function approveConsent(
   );
   const approvedBadgeIds = userBadges.map((b) => b.id);
 
+  // H-1 (authoritative gate): profile disclosure is only ever permitted when
+  // the RP actually requested the `profile` scope. The consent-screen re-login
+  // pre-check seeds approveName/approveAvatar from the durable grant, which can
+  // arrive true on a badge-only re-login where the profile card is never even
+  // rendered; without this server-side mask a client that dropped `profile`
+  // would still get name/avatar re-disclosed off the stale grant. Mask BOTH
+  // booleans HERE, before ANY persistence, so the auth code, the grant, the
+  // audit fields, and the override upsert all see the same masked truth.
+  const profileRequested = request.scopes.includes("profile");
+  const approveName = profileRequested && parsed.data.approveName;
+  const approveAvatar = profileRequested && parsed.data.approveAvatar;
+
   // The `profile` scope is retained in the RP-facing granted scopes if the
   // user approved either profile sub-claim; the exact name/avatar split is
   // persisted separately so the resolver can emit them independently.
-  const approveProfile = parsed.data.approveName || parsed.data.approveAvatar;
+  const approveProfile = approveName || approveAvatar;
+
+  // Per-RP profile persona (snapshot per app). Validate the inline-edit text
+  // for whichever field(s) were approved this round, using the same validator
+  // the global profile editor uses (it validates BOTH fields together and
+  // throws on invalid — e.g. a non-https avatar URL). Only an approved field's
+  // raw value is fed in; an unapproved field passes "" (normalizes to null) so
+  // a stale/malformed value for a field the user didn't tick can't block the
+  // approval. Validation errors are RETURNED (not thrown) so the consent
+  // screen renders them inline, same as every other error shape here.
+  let overrideName: string | null = null;
+  let overrideAvatar: string | null = null;
+  try {
+    const normalized = normalizeProfileInput({
+      displayName: approveName ? (parsed.data.nameValue ?? "") : "",
+      avatarUrl: approveAvatar ? (parsed.data.avatarValue ?? "") : "",
+    });
+    overrideName = normalized.displayName;
+    overrideAvatar = normalized.avatarUrl;
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : "Invalid profile value" };
+  }
+
+  // Write only the field(s) approved this round; leave the other field of the
+  // override untouched (a prior persona for it survives an approval that only
+  // re-ticks the sibling field).
+  const overrideWrite: { displayName?: string | null; avatarUrl?: string | null } = {};
+  if (approveName) overrideWrite.displayName = overrideName;
+  if (approveAvatar) overrideWrite.avatarUrl = overrideAvatar;
 
   const code = newAuthCode();
   // The types actually disclosed this round (the minimized set). These — not
@@ -159,10 +206,11 @@ export async function approveConsent(
           userBadges,
         }),
         approvedBadgeIds,
-        // Granular profile grant. Only meaningful when `profile` was requested
-        // and survives effectiveScopes; harmless (false) otherwise.
-        profileName: parsed.data.approveName,
-        profileAvatar: parsed.data.approveAvatar,
+        // Granular profile grant. Masked to false unless `profile` was
+        // requested (H-1), so a badge-only re-login never persists a profile
+        // grant off the stale pre-check.
+        profileName: approveName,
+        profileAvatar: approveAvatar,
         // Echoed back in id_token at /token time — see CLAUDE.md.
         nonce: request.nonce,
         codeChallenge: request.codeChallenge,
@@ -178,17 +226,35 @@ export async function approveConsent(
       // minimized set), so the next visit's fold force-includes exactly
       // these — not every instance of the type (audit W1).
       badgeIds: approvedBadgeIds,
-      profileName: parsed.data.approveName,
-      profileAvatar: parsed.data.approveAvatar,
+      profileName: approveName,
+      profileAvatar: approveAvatar,
     });
+    // Snapshot the per-RP profile persona ATOMICALLY with the grant/auth-code:
+    // a failed consent must not leave a persona for an RP the user didn't
+    // actually authorize this round. Only touched when a profile field was
+    // approved (masked by profileRequested); the update payload sets only the
+    // approved field(s), so a name-only approval leaves a prior avatar intact.
+    if (approveName || approveAvatar) {
+      await tx.oidcProfileOverride.upsert({
+        where: {
+          userId_clientId: { userId: session.user.id, clientId: request.clientId },
+        },
+        create: {
+          userId: session.user.id,
+          clientId: request.clientId,
+          ...overrideWrite,
+        },
+        update: overrideWrite,
+      });
+    }
   });
 
   await audit(session.user.id, "oidc.consent_approved", {
     clientId: request.clientId,
     requestedScopes: request.scopes,
     disclosedBadgeIds: approvedBadgeIds,
-    disclosedProfileName: parsed.data.approveName,
-    disclosedProfileAvatar: parsed.data.approveAvatar,
+    disclosedProfileName: approveName,
+    disclosedProfileAvatar: approveAvatar,
   });
 
   redirect(buildSuccessRedirect(request.redirectUri, code, request.state));

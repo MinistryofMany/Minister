@@ -4,6 +4,7 @@ import { useMemo, useState, useTransition } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import type { PolicyConsentView } from "@/lib/oidc-policy-view";
 import { approveConsent, denyConsent } from "@/server/oidc-actions";
 
@@ -37,13 +38,22 @@ interface AlreadyGrantedType {
 interface Props {
   clientName: string;
   wantsProfile: boolean;
-  // The user's current curated profile values, shown as a live preview so
-  // the user sees the real data they'd disclose, not just a label. `null`
-  // means the user has not set that value — there is nothing to share.
+  // The EFFECTIVE persona seed for this RP: the per-RP override when set, else
+  // the global curated default (matching the disclosure resolver's per-field
+  // precedence). Pre-fills the inline name/avatar inputs so the user edits the
+  // current persona rather than starting blank. `null` means nothing is set
+  // for that field — the input starts empty. Only user-curated values; never
+  // the upstream auth identity.
   profilePreview: {
     displayName: string | null;
     avatarUrl: string | null;
   };
+  // Whether the user has EVER disclosed name/avatar to this client (from the
+  // durable OidcGrant). On re-login a previously-shared field comes back
+  // pre-checked with its current persona editable, so the user is asked to
+  // update it or untick to stop. A field never shared with this client stays
+  // default OFF - "always unselected by default" applies to new disclosures.
+  previouslyShared: { name: boolean; avatar: boolean };
   badgeChoices: BadgeChoiceGroup[];
   // Phase-3 transparency: badge types already disclosed to this client AND
   // requested by this room. Rendered in a separate locked section, auto-
@@ -61,6 +71,7 @@ export function ConsentScreen({
   clientName,
   wantsProfile,
   profilePreview,
+  previouslyShared,
   badgeChoices,
   alreadyGranted,
   policyView,
@@ -70,7 +81,10 @@ export function ConsentScreen({
   // toggle from off → on — EXCEPT the structured-policy path, which
   // pre-selects the most-anonymous minimal satisfying set (the user can
   // override to another satisfying choice). The `profile` scope is split
-  // into independent name/avatar grants, each default OFF.
+  // into independent name/avatar grants, each default OFF for a field never
+  // shared with this client; a field the user previously disclosed (per the
+  // durable grant) comes back pre-checked so re-login asks them to update it
+  // or untick to stop.
   // Locked ids: every badge in the "already proven" section. These seed the
   // selection as `true` and can never be toggled off (transparency: re-hiding
   // an already-disclosed type from the same client buys no privacy). The
@@ -80,8 +94,17 @@ export function ConsentScreen({
     [alreadyGranted],
   );
 
-  const [nameAllowed, setNameAllowed] = useState(false);
-  const [avatarAllowed, setAvatarAllowed] = useState(false);
+  // H-1: only ever pre-check from the durable grant when the RP actually
+  // requested `profile` this round. A badge-only re-login never renders the
+  // profile card, so a stale previouslyShared flag must not seed these true
+  // (the server masks too, but keep the UI truthful).
+  const [nameAllowed, setNameAllowed] = useState(wantsProfile && previouslyShared.name);
+  const [avatarAllowed, setAvatarAllowed] = useState(wantsProfile && previouslyShared.avatar);
+  // Editable per-RP persona (snapshot per app), seeded from the effective
+  // value (override ?? global). Only sent for a field whose toggle is on.
+  const [nameValue, setNameValue] = useState(profilePreview.displayName ?? "");
+  const [avatarValue, setAvatarValue] = useState(profilePreview.avatarUrl ?? "");
+  const [avatarBroken, setAvatarBroken] = useState(false);
   const [selectedBadges, setSelectedBadges] = useState<Record<string, boolean>>(() => {
     const seed: Record<string, boolean> = {};
     if (policyView) for (const id of policyView.preselectedBadgeIds) seed[id] = true;
@@ -146,6 +169,10 @@ export function ConsentScreen({
         approvedBadgeIds,
         approveName: nameAllowed,
         approveAvatar: avatarAllowed,
+        // The per-RP persona text. Only meaningful (and only persisted) for a
+        // field whose toggle is on; the server re-gates on approveName/Avatar.
+        nameValue,
+        avatarValue,
       });
       if (result?.error) setError(result.error);
     });
@@ -172,63 +199,96 @@ export function ConsentScreen({
             <div>
               <h3 className="text-sm font-semibold">Profile</h3>
               <p className="text-sm text-neutral-600 dark:text-neutral-400">
-                Choose what {clientName} receives. Each is shared only if you tick it.
+                Sharing your name or avatar is optional — you can share neither. Nothing here is
+                sent unless you tick it.
               </p>
             </div>
 
-            <label
-              htmlFor="scope-profile-name"
-              className="flex items-start gap-3 rounded-md border border-neutral-200 p-2 dark:border-neutral-800"
-            >
-              <input
-                id="scope-profile-name"
-                type="checkbox"
-                className="mt-1 h-4 w-4"
-                checked={nameAllowed}
-                onChange={(e) => setNameAllowed(e.target.checked)}
-              />
-              <span className="flex-1 text-sm">
-                <span className="block font-medium">Display name</span>
-                <span className="text-neutral-600 dark:text-neutral-400">
-                  {profilePreview.displayName === null ? (
-                    <>Name: (none set) — nothing to share</>
-                  ) : (
-                    <>Name: {profilePreview.displayName}</>
-                  )}
+            <div className="rounded-md border border-neutral-200 p-2 dark:border-neutral-800">
+              <label htmlFor="scope-profile-name" className="flex items-start gap-3">
+                <input
+                  id="scope-profile-name"
+                  type="checkbox"
+                  className="mt-1 h-4 w-4"
+                  checked={nameAllowed}
+                  onChange={(e) => setNameAllowed(e.target.checked)}
+                />
+                <span className="flex-1 text-sm">
+                  <span className="block font-medium">Display name</span>
+                  <span className="text-neutral-600 dark:text-neutral-400">
+                    {previouslyShared.name
+                      ? `You currently share a display name with ${clientName}. Edit to update it, or untick to stop sharing.`
+                      : `Share a display name with ${clientName}.`}
+                  </span>
                 </span>
-              </span>
-            </label>
+              </label>
+              {nameAllowed ? (
+                <div className="mt-2 pl-7">
+                  <Input
+                    aria-label="Display name to share"
+                    value={nameValue}
+                    onChange={(e) => setNameValue(e.target.value)}
+                    maxLength={80}
+                    placeholder="e.g. Ada Lovelace"
+                  />
+                </div>
+              ) : null}
+            </div>
 
-            <label
-              htmlFor="scope-profile-avatar"
-              className="flex items-start gap-3 rounded-md border border-neutral-200 p-2 dark:border-neutral-800"
-            >
-              <input
-                id="scope-profile-avatar"
-                type="checkbox"
-                className="mt-1 h-4 w-4"
-                checked={avatarAllowed}
-                onChange={(e) => setAvatarAllowed(e.target.checked)}
-              />
-              <span className="flex-1 text-sm">
-                <span className="block font-medium">Avatar</span>
-                <span className="flex items-center gap-2 text-neutral-600 dark:text-neutral-400">
-                  {profilePreview.avatarUrl === null ? (
-                    <>Avatar: (none set) — nothing to share</>
-                  ) : (
-                    <>
-                      {/* eslint-disable-next-line @next/next/no-img-element -- user-supplied avatar URL; next/image would need per-host remotePatterns config */}
-                      <img
-                        src={profilePreview.avatarUrl}
-                        alt="Your avatar"
-                        className="h-8 w-8 rounded-full object-cover"
-                      />
-                      <span>This avatar</span>
-                    </>
-                  )}
+            <div className="rounded-md border border-neutral-200 p-2 dark:border-neutral-800">
+              <label htmlFor="scope-profile-avatar" className="flex items-start gap-3">
+                <input
+                  id="scope-profile-avatar"
+                  type="checkbox"
+                  className="mt-1 h-4 w-4"
+                  checked={avatarAllowed}
+                  onChange={(e) => setAvatarAllowed(e.target.checked)}
+                />
+                <span className="flex-1 text-sm">
+                  <span className="block font-medium">Avatar</span>
+                  <span className="text-neutral-600 dark:text-neutral-400">
+                    {previouslyShared.avatar
+                      ? `You currently share an avatar with ${clientName}. Edit to update it, or untick to stop sharing.`
+                      : `Share an avatar image with ${clientName}.`}
+                  </span>
                 </span>
-              </span>
-            </label>
+              </label>
+              {avatarAllowed ? (
+                <div className="mt-2 flex items-center gap-3 pl-7">
+                  {avatarValue && !avatarBroken ? (
+                    // eslint-disable-next-line @next/next/no-img-element -- user-supplied avatar URL; next/image would need per-host remotePatterns config
+                    <img
+                      src={avatarValue}
+                      alt="Your avatar"
+                      onError={() => setAvatarBroken(true)}
+                      onLoad={() => setAvatarBroken(false)}
+                      className="h-10 w-10 shrink-0 rounded-full border border-neutral-200 object-cover dark:border-neutral-800"
+                    />
+                  ) : (
+                    <div
+                      aria-hidden
+                      className="h-10 w-10 shrink-0 rounded-full bg-neutral-200 dark:bg-neutral-800"
+                    />
+                  )}
+                  <Input
+                    aria-label="Avatar URL to share"
+                    value={avatarValue}
+                    onChange={(e) => {
+                      setAvatarValue(e.target.value);
+                      setAvatarBroken(false);
+                    }}
+                    maxLength={2048}
+                    placeholder="https://example.com/avatar.png"
+                    className="flex-1"
+                  />
+                </div>
+              ) : null}
+            </div>
+
+            <p className="text-xs text-neutral-500 dark:text-neutral-400">
+              This name and avatar are used only for {clientName} and override your global default.
+              You can change or remove them anytime in Settings → Connected apps.
+            </p>
           </CardContent>
         </Card>
       ) : null}

@@ -374,14 +374,21 @@ export const deleteOidcClient = adminAction(
     });
     if (!client) return { ok: false, error: "Client not found" };
 
-    // Outstanding tokens/codes reference the client by clientId string
-    // (no FK) — revoke them in the same transaction so a deleted client
-    // can't keep calling /oidc/userinfo.
+    // Outstanding tokens/codes/grants/personas reference the client by
+    // clientId string (no FK) — clear them in the same transaction so a
+    // deleted client can't keep calling /oidc/userinfo and leaves no orphaned
+    // grant or per-RP profile persona rows behind.
     const [revokedTokens] = await prisma.$transaction([
       prisma.oidcAccessToken.deleteMany({
         where: { clientId: client.clientId },
       }),
       prisma.oidcAuthorizationCode.deleteMany({
+        where: { clientId: client.clientId },
+      }),
+      prisma.oidcGrant.deleteMany({
+        where: { clientId: client.clientId },
+      }),
+      prisma.oidcProfileOverride.deleteMany({
         where: { clientId: client.clientId },
       }),
       prisma.oidcClient.delete({ where: { id: client.id } }),

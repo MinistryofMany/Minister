@@ -4,6 +4,7 @@ import { KeyRound, Plus } from "lucide-react";
 
 import { BadgeGrid } from "@/components/badge-grid";
 import { RegisterPasskeyButton } from "@/components/register-passkey-button";
+import { RelyingParties } from "@/components/relying-parties";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { loadUserBadges } from "@/lib/badges";
@@ -95,6 +96,8 @@ export default async function ProfilePage() {
       ) : (
         <BadgeGrid badges={badges} />
       )}
+
+      <RelyingParties />
     </div>
   );
 }

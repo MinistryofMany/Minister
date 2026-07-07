@@ -82,11 +82,12 @@ model User {
   badges            Badge[]
   eligibilities     Eligibility[]
   shareLinks        ShareLink[]
-  oidcClients       OidcClient[]
-  oidcAccessTokens  OidcAccessToken[]
-  oidcGrants        OidcGrant[]
-  wizardSessions    WizardSession[]
-  inviteRedemptions InviteRedemption[]
+  oidcClients          OidcClient[]
+  oidcAccessTokens     OidcAccessToken[]
+  oidcGrants           OidcGrant[]
+  oidcProfileOverrides OidcProfileOverride[]
+  wizardSessions       WizardSession[]
+  inviteRedemptions    InviteRedemption[]
 
   // Slice 1/3/4/5 — multi-credential identity, recovery, and merge.
   userEmails       UserEmail[]
@@ -560,6 +561,32 @@ model SubjectOverride {
   userId   String
   clientId String
   sub      String
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([userId, clientId])
+  @@index([userId])
+}
+
+// Per-relying-party profile persona ("snapshot per app"). At first consent
+// the user may override the display name / avatar disclosed to a specific RP;
+// the value is snapshotted here and stays FIXED for that app even if the user
+// later edits their global default (User.displayName / User.avatarUrl). The
+// OIDC disclosure path (oidc-claims.ts:resolveUserClaims) reads this per-RP
+// override first, per field, and falls back to the global curated value only
+// when the override row is absent or that field is null. Editing happens later
+// on /settings/apps. The upstream auth identity (User.name / User.image) is
+// still NEVER a source here — same invariant as the global curated fields.
+//
+// `clientId` is the OidcClient.clientId string, the same key OidcGrant and
+// OidcAccessToken use. Mirrors SubjectOverride's (userId, clientId) shape.
+model OidcProfileOverride {
+  userId      String
+  clientId    String
+  displayName String?
+  avatarUrl   String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
