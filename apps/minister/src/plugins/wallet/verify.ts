@@ -78,6 +78,8 @@ export function buildWalletChallenge(
     `Expires at: ${expiresAt}`,
     ``,
     `Signing this message proves you hold the wallet's key. It grants no permissions, moves no funds, and costs no gas.`,
+    ``,
+    `Only sign this if you started this yourself on ministry.id. If someone else gave you this text to sign, do not sign it.`,
   ].join("\n");
   return { message, nonce, expiresAt };
 }

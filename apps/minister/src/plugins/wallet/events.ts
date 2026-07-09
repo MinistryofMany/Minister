@@ -31,6 +31,11 @@ function parseAddressColumn(csv: string): Set<string> {
   return out;
 }
 
+// Provenance: a snapshot of the unique addresses that sent deposits to the ETH2
+// beacon-chain deposit contract, provided as `Beacon Depositors -
+// unique_addresses_beacon_chain.csv` and committed under this plugin. Its sha256
+// is pinned in events.test.ts so an accidental edit or a poisoned row fails CI.
+//
 // Loaded ONCE, memoized on first membership check. Deferred (not a top-level
 // side effect) so importing the plugin registry never does file I/O — the read
 // happens only when an Ethereum ownership proof is actually being checked, and
@@ -41,8 +46,20 @@ const DEPOSITORS_CSV = join(process.cwd(), "src/plugins/wallet/data/beacon-genes
 let eth2GenesisDepositors: Set<string> | null = null;
 function loadEth2GenesisDepositors(): Set<string> {
   if (eth2GenesisDepositors === null) {
-    const csv = readFileSync(DEPOSITORS_CSV, "utf8");
-    eth2GenesisDepositors = parseAddressColumn(csv);
+    try {
+      eth2GenesisDepositors = parseAddressColumn(readFileSync(DEPOSITORS_CSV, "utf8"));
+    } catch (err) {
+      // Fail SOFT: a missing/unreadable list must never crash issuance AFTER a
+      // valid signature — it just means no on-chain event badge this run. Memoize
+      // the empty set so we do not re-stat on every check, and emit an ops signal
+      // (no user data here, only the fact the file did not load).
+      console.warn(
+        `[wallet] beacon-genesis-depositors.csv did not load (${
+          err instanceof Error ? err.message : String(err)
+        }); on-chain event badges are disabled until it is present.`,
+      );
+      eth2GenesisDepositors = new Set<string>();
+    }
   }
   return eth2GenesisDepositors;
 }

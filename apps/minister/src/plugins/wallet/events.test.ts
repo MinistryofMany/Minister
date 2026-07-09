@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -35,5 +36,15 @@ describe("ethOnchainEventsFor", () => {
       .slice(1)
       .filter((l) => /^0x[0-9a-f]{40}$/u.test((l.split(",")[0] ?? "").trim().toLowerCase()));
     expect(total.length).toBeGreaterThan(2000);
+  });
+});
+
+describe("depositor CSV integrity", () => {
+  it("matches the pinned sha256 (a changed or poisoned list fails CI)", () => {
+    // This badge grants provable "took part in eth2 genesis" status, so the
+    // membership set is security-relevant: pin its content hash so no row can be
+    // silently added, removed, or altered without a reviewed, deliberate update.
+    const hash = createHash("sha256").update(readFileSync(CSV)).digest("hex");
+    expect(hash).toBe("51ce4cc29e87f94395e5dccc0dff9f7d12ca239010256cf301f37e982eb631ba");
   });
 });
