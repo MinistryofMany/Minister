@@ -188,9 +188,8 @@ export const steamPlugin: Plugin = {
     };
 
     await ctx.audit.log("plugin.steam.verified", {
-      // The steamid64 is the raw anchor and never logged; the persona (if any) is
-      // already public and is what the badge discloses.
-      handle: handle ?? null,
+      // Neither the steamid64 anchor nor the persona handle is logged: the
+      // AuditLog is an at-rest store and keeps only the issued types.
       issuedTypes: ["oauth-account"],
     });
 

@@ -178,11 +178,10 @@ export const redditPlugin: Plugin = {
       new Date(),
     );
 
-    // Audit the handle + issued types only. The immutable Reddit fullname (the
-    // Sybil anchor) is DELIBERATELY not logged — the AuditLog is an at-rest store
-    // the raw anchor must never reach.
+    // Audit the issued types only. Neither the immutable Reddit fullname (the
+    // Sybil anchor) nor the username handle is logged — the AuditLog is an at-rest
+    // store that keeps no account-identifying value.
     await ctx.audit.log("plugin.reddit.verified", {
-      handle: user.name,
       issuedTypes: badges.map((b) => b.type),
     });
 

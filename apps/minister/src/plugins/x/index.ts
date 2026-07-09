@@ -178,8 +178,8 @@ export const xPlugin: Plugin = {
     );
 
     await ctx.audit.log("plugin.x.verified", {
-      // The numeric id (the anchor) is never logged; only the @handle.
-      handle: me.username,
+      // Neither the numeric id (the anchor) nor the @handle is logged — the
+      // AuditLog is an at-rest store that keeps only the issued types.
       issuedTypes: badges.map((b) => b.type),
     });
 

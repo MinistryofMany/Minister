@@ -97,4 +97,19 @@ describe("googlePlugin.handleStep", () => {
       expect(JSON.stringify(call)).not.toContain("SECRETSUB");
     }
   });
+
+  it("logs only the email domain, never the full address (at-rest PII)", async () => {
+    fetchSpy
+      .mockResolvedValueOnce(mockOk({ access_token: "tok" }))
+      .mockResolvedValueOnce(
+        mockOk({ sub: "1", email: "alice.secret@example.com", email_verified: true }),
+      );
+    const c = ctx();
+    await googlePlugin.handleStep(authState(), { code: "C" }, c);
+    const logged = JSON.stringify(vi.mocked(c.audit.log).mock.calls);
+    // The domain is fine to log; the local part (the identifying PII) is not.
+    expect(logged).toContain("example.com");
+    expect(logged).not.toContain("alice.secret");
+    expect(logged).not.toContain("alice.secret@example.com");
+  });
 });

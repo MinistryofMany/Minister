@@ -176,10 +176,14 @@ export const googlePlugin: Plugin = {
       sybilAnchor: info.sub,
     };
 
+    // The verified email is PII; the AuditLog is a long-lived at-rest store, so
+    // record only the email DOMAIN (never the local part), matching the
+    // anchor-discipline the other providers keep. `sub` (the anchor) is never
+    // logged.
+    const emailDomain =
+      typeof claims.handle === "string" ? (claims.handle.split("@").at(-1) ?? null) : null;
     await ctx.audit.log("plugin.google.verified", {
-      // `sub` (the anchor) is never logged; the verified email is what the badge
-      // discloses.
-      handle: claims.handle ?? null,
+      emailDomain,
       issuedTypes: ["oauth-account"],
     });
 
