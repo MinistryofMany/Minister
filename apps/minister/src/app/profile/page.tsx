@@ -2,6 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { KeyRound, Plus } from "lucide-react";
 
+import { ProfileForm } from "@/app/settings/profile-form";
 import { BadgeGrid } from "@/components/badge-grid";
 import { RegisterPasskeyButton } from "@/components/register-passkey-button";
 import { RelyingParties } from "@/components/relying-parties";
@@ -15,12 +16,19 @@ export default async function ProfilePage() {
   const session = await getCurrentSession();
   if (!session?.user) redirect("/");
 
-  const [badges, passkeyCount] = await Promise.all([
+  const [badges, passkeyCount, user] = await Promise.all([
     loadUserBadges(session.user.id),
     // Passkeys are the Auth.js Authenticator rows. Zero means the account
     // only has the magic-link fallback, so we surface the add-a-passkey CTA;
     // once the user has at least one, the banner disappears.
     prisma.authenticator.count({ where: { userId: session.user.id } }),
+    // The user-curated display name and avatar the owner edits below. These
+    // are independent of the upstream auth identity and only ever shared with
+    // an app when the owner discloses their profile.
+    prisma.user.findUnique({
+      where: { id: session.user.id },
+      select: { displayName: true, avatarUrl: true },
+    }),
   ]);
   const name = session.user.name ?? session.user.email ?? "Anonymous user";
   const hasPublic = badges.some((b) => b.isPublic);
@@ -66,6 +74,22 @@ export default async function ProfilePage() {
           )}
         </p>
       </header>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Edit your profile</CardTitle>
+          <CardDescription>
+            Your username and photo. Shared with an app only when you choose to disclose your
+            profile to it.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <ProfileForm
+            initialDisplayName={user?.displayName ?? null}
+            initialAvatarUrl={user?.avatarUrl ?? null}
+          />
+        </CardContent>
+      </Card>
 
       <div className="flex items-center justify-between">
         <h2 className="text-lg font-semibold">
