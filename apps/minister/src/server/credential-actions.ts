@@ -600,7 +600,7 @@ export async function markPasskeyEnrolled(): Promise<{ quarantined: boolean }> {
   const all = await prisma.authenticator.findMany({
     where: { userId },
     orderBy: { addedAt: "desc" },
-    select: { credentialID: true, addedAt: true },
+    select: { credentialID: true, addedAt: true, status: true, quarantinedUntil: true },
   });
   const newest = all[0];
   if (!newest) {
@@ -625,8 +625,20 @@ export async function markPasskeyEnrolled(): Promise<{ quarantined: boolean }> {
     return { quarantined: true };
   }
 
-  // Bootstrap first passkey: ensure it is active (defensively clear any
-  // quarantine the default path might carry) and notify.
+  // Bootstrap branch (sole remaining passkey). This branch is client-callable
+  // with no WebAuthn-ceremony binding, so it must NOT become a lever to promote
+  // an in-window quarantined survivor to active. A genuine first bootstrap
+  // passkey is never quarantined (the adapter default is active — auth.ts), so a
+  // sole row that reads as quarantined is by construction a removal survivor: a
+  // hijacked AAL2 session could add a quarantined passkey, remove the victim's
+  // original, then call this to instantly hand the new passkey full power,
+  // defeating the cooldown (DESIGNDECISIONS #5). Judge the row against the clock
+  // via asStatus (lazy expiry): an in-window quarantined sole survivor is left
+  // untouched (stays quarantined until its window lapses), while a lapsed-window
+  // or already-active sole survivor is cleanly stamped active/null.
+  if (asStatus(newest.status, newest.quarantinedUntil) === "quarantined") {
+    return { quarantined: true };
+  }
   await prisma.authenticator.update({
     where: { userId_credentialID: { userId, credentialID: newest.credentialID } },
     data: { status: "active", quarantinedUntil: null },

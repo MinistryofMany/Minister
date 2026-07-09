@@ -427,6 +427,53 @@ describe("markPasskeyEnrolled lifecycle", () => {
     db.authenticator.findMany.mockResolvedValue([]);
     await expect(markPasskeyEnrolled()).rejects.toThrow(/No passkey/i);
   });
+
+  it("does NOT promote a sole in-window quarantined survivor (bootstrap-branch cooldown bypass)", async () => {
+    // Attack: a hijacked AAL2 session adds a quarantined passkey, removePasskeys
+    // the victim's original (the survivor stays in-window quarantined), then
+    // calls markPasskeyEnrolledAction() with no WebAuthn ceremony. The sole
+    // remaining row is now length===1, so the bootstrap branch is reached — but
+    // a genuine bootstrap passkey is never quarantined, so this in-window row is
+    // a removal survivor and must not be promoted to active. Leave the window
+    // intact; do not update, do not notify.
+    setSession(session(2));
+    db.authenticator.findMany.mockResolvedValue([
+      {
+        credentialID: "cred_survivor",
+        addedAt: new Date(),
+        status: "quarantined",
+        quarantinedUntil: new Date(Date.now() + 3_600_000),
+      },
+    ]);
+
+    const r = await markPasskeyEnrolled();
+    expect(r).toEqual({ quarantined: true });
+    expect(db.authenticator.update).not.toHaveBeenCalled();
+    expect(notifyCredentialChange).not.toHaveBeenCalled();
+  });
+
+  it("cleanly stamps a sole lapsed-window quarantined survivor active", async () => {
+    // A lapsed-window sole survivor already reads as active via lazy expiry, so
+    // the bootstrap branch may safely re-stamp it active/null (no cooldown left
+    // to defeat) and notify.
+    setSession(session(2));
+    db.authenticator.findMany.mockResolvedValue([
+      {
+        credentialID: "cred_survivor",
+        addedAt: new Date(),
+        status: "quarantined",
+        quarantinedUntil: new Date(Date.now() - 1000),
+      },
+    ]);
+    db.authenticator.update.mockResolvedValue({});
+
+    const r = await markPasskeyEnrolled();
+    expect(r).toEqual({ quarantined: false });
+    expect(db.authenticator.update).toHaveBeenCalledWith({
+      where: { userId_credentialID: { userId: USER, credentialID: "cred_survivor" } },
+      data: { status: "active", quarantinedUntil: null },
+    });
+  });
 });
 
 // ---------------------------------------------------------------------------
