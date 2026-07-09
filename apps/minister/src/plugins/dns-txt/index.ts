@@ -1,10 +1,9 @@
-import { resolveTxt } from "node:dns/promises";
-
 import { z } from "zod";
 
 import type { Plugin, WizardState } from "@minister/plugin-sdk";
 
 import { randomToken } from "../oauth-common";
+import { CORROBORATING_RESOLVERS, resolveTxtVia } from "./resolve";
 import {
   buildDomainControlBadge,
   challengeHost,
@@ -84,6 +83,37 @@ function isNoRecordError(err: unknown): boolean {
   // ENOTFOUND: NXDOMAIN (the challenge host doesn't exist yet).
   // ENODATA:   the host exists but has no TXT records yet.
   return code === "ENOTFOUND" || code === "ENODATA";
+}
+
+// The result of asking ONE public resolver for the challenge host:
+//  - match:     resolved and a TXT record holds the exact challenge value.
+//  - no-match:  resolved, but no record held the value (present-but-wrong).
+//  - no-record: NXDOMAIN / no TXT records yet (still propagating).
+//  - error:     any other resolver failure (SERVFAIL / timeout / unreachable).
+// Every non-match is retryable; the caller only issues when BOTH say `match`.
+type ResolverOutcome =
+  | { status: "match" }
+  | { status: "no-match" }
+  | { status: "no-record" }
+  | { status: "error"; message: string };
+
+// Ask a single resolver and classify the answer, never throwing: a resolver
+// failure is a failed corroboration, not a crash. Kept off "use server" (this is
+// a plain module) so it can be a sync-returning async helper.
+async function queryResolver(
+  server: string,
+  host: string,
+  expectedValue: string,
+): Promise<ResolverOutcome> {
+  try {
+    const records = await resolveTxtVia(server, host);
+    return txtRecordsContainChallenge(records, expectedValue)
+      ? { status: "match" }
+      : { status: "no-match" };
+  } catch (err) {
+    if (isNoRecordError(err)) return { status: "no-record" };
+    return { status: "error", message: err instanceof Error ? err.message : String(err) };
+  }
 }
 
 export const dnsTxtPlugin: Plugin = {
@@ -172,45 +202,59 @@ export const dnsTxtPlugin: Plugin = {
         }
 
         // DNS-ONLY: a TXT lookup, never an HTTP fetch of the domain, so there is
-        // no SSRF surface. resolveTxt throws on NXDOMAIN / no-records / resolver
-        // failure; every branch here is retryable (the record may still be
-        // propagating), so we keep the info step and let the user click Verify
-        // again.
-        let records: string[][];
-        try {
-          records = await resolveTxt(challengeHost(host));
-        } catch (err) {
-          if (isNoRecordError(err)) {
-            return {
-              kind: "error",
-              message:
-                "We couldn't find the TXT record yet. DNS changes can take a few minutes to " +
-                "propagate — double-check the host and value, then wait a moment and click Verify again.",
-            };
-          }
-          return {
-            kind: "error",
-            message: `DNS lookup failed: ${
-              err instanceof Error ? err.message : String(err)
-            }. Wait a moment and click Verify again.`,
-          };
+        // no SSRF surface. We corroborate the challenge across TWO independent
+        // public resolvers (Cloudflare 1.1.1.1 AND Google 8.8.8.8) instead of the
+        // box's single default resolver: a poisoned answer at one resolver could
+        // otherwise mint an impersonation-relevant `domain-control` claim over a
+        // domain the requester does not own. Both resolvers must independently
+        // return the exact token; anything else — a miss, a disagreement, or a
+        // resolver error — fails closed and stays on the retryable info step.
+        // (This means the box must be able to reach both resolvers on port 53.)
+        const challengeHostName = challengeHost(host);
+        const expectedValue = challengeValue(token);
+        const outcomes = await Promise.all(
+          CORROBORATING_RESOLVERS.map((server) =>
+            queryResolver(server, challengeHostName, expectedValue),
+          ),
+        );
+
+        if (outcomes.every((o) => o.status === "match")) {
+          // Both resolvers agree the token is published. Control is proven. The
+          // domain IS the disclosed value and the Sybil anchor (revealsAnchor),
+          // so it legitimately appears in the badge and in this verified audit
+          // event.
+          await ctx.audit.log("plugin.dns_txt.verified", { domain: host });
+          return { kind: "complete", badges: [buildDomainControlBadge(host)] };
         }
 
-        if (!txtRecordsContainChallenge(records, challengeValue(token))) {
+        // Corroboration failed — fail closed. Every branch below is retryable
+        // (the record may still be propagating unevenly across resolvers); we
+        // keep the info step and surface the most actionable copy. A hard
+        // resolver error takes precedence, then a not-yet-visible record, then a
+        // present-but-wrong / disagreeing value.
+        const errored = outcomes.find(
+          (o): o is Extract<ResolverOutcome, { status: "error" }> => o.status === "error",
+        );
+        if (errored) {
+          return {
+            kind: "error",
+            message: `DNS lookup failed: ${errored.message}. Wait a moment and click Verify again.`,
+          };
+        }
+        if (outcomes.some((o) => o.status === "no-record")) {
           return {
             kind: "error",
             message:
-              "We reached the DNS record but the verification value didn't match yet. If you just " +
-              "added it, DNS can take a few minutes to propagate — wait a moment and click Verify again.",
+              "We couldn't find the TXT record yet. DNS changes can take a few minutes to " +
+              "propagate — double-check the host and value, then wait a moment and click Verify again.",
           };
         }
-
-        // Control is proven. The domain IS the disclosed value and the Sybil
-        // anchor (revealsAnchor), so it legitimately appears in the badge and in
-        // this verified audit event.
-        await ctx.audit.log("plugin.dns_txt.verified", { domain: host });
-
-        return { kind: "complete", badges: [buildDomainControlBadge(host)] };
+        return {
+          kind: "error",
+          message:
+            "We reached the DNS record but the verification value didn't match yet. If you just " +
+            "added it, DNS can take a few minutes to propagate — wait a moment and click Verify again.",
+        };
       }
     }
 
