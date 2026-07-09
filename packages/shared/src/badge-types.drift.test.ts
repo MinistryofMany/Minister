@@ -50,6 +50,12 @@ const EXPECTED: Record<string, Expected> = {
     sample: { email: "user@example.com" },
     strict: false,
   },
+  "domain-control": {
+    credentialType: "MinisterDomainControlCredential",
+    sybilResistance: "moderate",
+    sample: { domain: "example.com" },
+    strict: false,
+  },
   "oauth-account": {
     credentialType: "MinisterOauthAccountCredential",
     sybilResistance: "weak",
