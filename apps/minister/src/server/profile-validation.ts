@@ -122,15 +122,20 @@ export function normalizeProfileInput(raw: UpdateProfileInput): {
 // Main /profile editor: a tagged three-way avatar selection.
 // -------------------------------------------------------------------------
 
-// The three avatar sources, tagged so the editor and the action share one
-// wire shape. `deterministic` carries no value (the generated identicon has no
-// stored URL — a null avatarUrl IS the deterministic case). `gravatar` carries
-// the chosen email; the action verifies it and derives the URL server-side.
-// `url` carries a free-text https URL.
+// The avatar sources, tagged so the editor and the action share one wire shape.
+// `deterministic` carries no value (the generated identicon has no stored URL —
+// a null avatarUrl IS the deterministic case). `gravatar` carries the chosen
+// email; the action verifies it and derives the URL server-side. `url` carries a
+// free-text https URL. `uploaded` carries NO value and means "keep the photo the
+// user already uploaded" — a NEW upload goes through uploadAvatarAction (which
+// stores the blob and sets the serve-route avatarUrl), so through this editor
+// path `uploaded` only ever preserves the existing avatarUrl while the display
+// name is edited. It can therefore never inject a client-chosen URL.
 const AvatarSelection = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("deterministic") }),
   z.object({ kind: z.literal("gravatar"), email: z.string() }),
   z.object({ kind: z.literal("url"), url: z.string() }),
+  z.object({ kind: z.literal("uploaded") }),
 ]);
 
 const ProfileEditorInput = z.object({
@@ -147,7 +152,10 @@ export type ProfileEditorInput = z.infer<typeof ProfileEditorInput>;
 //                      gravatarUrl(email); we can't do that here (no DB), so we
 //                      hand back the normalized email for the action to finish.
 export type NormalizedAvatar =
-  { kind: "deterministic" } | { kind: "url"; url: string } | { kind: "gravatar"; email: string };
+  | { kind: "deterministic" }
+  | { kind: "url"; url: string }
+  | { kind: "gravatar"; email: string }
+  | { kind: "uploaded" };
 
 export function normalizeProfileEditorInput(raw: ProfileEditorInput): {
   displayName: string | null;
@@ -171,6 +179,10 @@ export function normalizeProfileEditorInput(raw: ProfileEditorInput): {
     }
     case "gravatar":
       avatar = { kind: "gravatar", email: normalizeGravatarEmail(parsed.avatar.email) };
+      break;
+    case "uploaded":
+      // No value to normalize — the action keeps the existing uploaded avatar.
+      avatar = { kind: "uploaded" };
       break;
   }
 
