@@ -11,10 +11,15 @@ variables are set. Leave the vars unset and the provider stays hidden. Set them
 to turn it on. Steam and Hacker News need no credentials and are always
 available.
 
-The immutable, un-renameable account identifier is used only as an internal
-Sybil anchor: it is nullified and discarded by the wizard runtime and never
-lands in the credential, the audit log, or wizard state. Only the renameable
-handle (username, persona, or verified email) is disclosed in the badge.
+For most providers the immutable, un-renameable account identifier is used only
+as an internal Sybil anchor: it is nullified and discarded by the wizard runtime
+and never lands in the credential or wizard state, and only the renameable handle
+(username, persona, or verified email) is disclosed in the badge. The exception
+is **Hacker News**, whose username IS both the immutable anchor and the disclosed
+handle (there is no separate id), so the anchor legitimately appears in the
+credential by design (the badge opts out of the anchor-leak guard via
+`revealsAnchor`); `email-exact` is the same shape. In every case the anchor is
+still nullified for dedup and is never written to the audit log.
 
 All redirect/callback URLs below use the production host `https://ministry.id`.
 For local development, substitute your dev origin (for example
