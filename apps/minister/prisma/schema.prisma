@@ -102,7 +102,7 @@ model User {
 
 // A user-uploaded avatar photo, held as a bytea blob. Deliberately a SEPARATE
 // table from User: the blob is read only by the public serve route
-// (/api/users/<id>/avatar), never on the session/profile hot paths, so it must
+// (/api/avatars/<publicId>), never on the session/profile hot paths, so it must
 // not weigh down a User-row SELECT. Only ever PNG/JPEG/WebP — the upload action
 // validates the bytes by magic number and stores the SNIFFED contentType
 // (never a client-declared MIME); SVG and everything else are rejected at the
@@ -110,7 +110,12 @@ model User {
 // generated/gravatar/link avatar the row is deleted, so its presence means "this
 // user currently uses an uploaded photo".
 model UserAvatar {
-  userId      String   @id
+  userId String @id
+  // OPAQUE, unguessable public handle the serve route (and the disclosed
+  // `picture` claim) key on — NEVER the userId. Serving under the raw userId
+  // would leak Minister's global account id to any RP granted the avatar claim
+  // and defeat the pairwise `sub`. Random per row, so it reveals nothing.
+  publicId    String   @unique
   data        Bytes // bytea; the validated image bytes, stored verbatim (not re-encoded)
   contentType String // the SNIFFED type: "image/png" | "image/jpeg" | "image/webp"
   updatedAt   DateTime @updatedAt
