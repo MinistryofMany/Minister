@@ -5,14 +5,29 @@ import { getCurrentSession } from "@/lib/session";
 
 import { MergeClient } from "./merge-client";
 
+interface PageProps {
+  // `donor` is prefilled when the user arrives here from the credentials page,
+  // after trying to add an email that already belongs to another account. It is
+  // only a convenience prefill; the merge still emails that address a prove-it
+  // link, so control of it is proven before anything is merged.
+  searchParams: Promise<{ donor?: string }>;
+}
+
 // Account-merge ceremony entry (slice 5). The signed-in account is the SURVIVOR
 // (DESIGNDECISIONS #12): it keeps its id and its RP identities, and absorbs the
 // donor. The page renders for any signed-in user; the AAL2 floor + not-recovered
 // checks are enforced inside the server actions (startMerge / confirmMerge),
 // which surface a step-up prompt the client catches.
-export default async function MergePage() {
+//
+// There is no standing link to this page: it is reached only from the
+// credential-collision offer (adding an email already on another account) or a
+// donor confirmation link. That keeps merge out of the way until it's relevant.
+export default async function MergePage({ searchParams }: PageProps) {
   const session = await getCurrentSession();
   if (!session?.user?.id) redirect("/");
+
+  const { donor } = await searchParams;
+  const prefillDonor = typeof donor === "string" ? donor.trim().slice(0, 320) : "";
 
   // The client shows a clear warning when the session is below AAL2 or is a
   // recovered session, before the user even tries — the action is the real gate.
@@ -28,6 +43,16 @@ export default async function MergePage() {
           to; the other becomes part of it and can no longer be used on its own.
         </p>
       </header>
+
+      {prefillDonor ? (
+        <div className="rounded-md border border-amber-300 bg-amber-50 p-4 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
+          <p>
+            <span className="font-medium">{prefillDonor}</span> already belongs to another Minister
+            account. If that account is also yours, confirm you control that address below to
+            combine it into this one.
+          </p>
+        </div>
+      ) : null}
 
       <Card>
         <CardHeader>
@@ -74,7 +99,7 @@ export default async function MergePage() {
         </CardContent>
       </Card>
 
-      <MergeClient blocked={recovered || belowAal2} />
+      <MergeClient blocked={recovered || belowAal2} initialDonorEmail={prefillDonor} />
     </div>
   );
 }

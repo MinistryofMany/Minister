@@ -33,9 +33,15 @@ function stepUpMessage(message: string, fallback: string): string {
     : message || fallback;
 }
 
-export function MergeClient({ blocked }: { blocked: boolean }) {
+export function MergeClient({
+  blocked,
+  initialDonorEmail = "",
+}: {
+  blocked: boolean;
+  initialDonorEmail?: string;
+}) {
   const [phase, setPhase] = useState<Phase>("start");
-  const [donorEmail, setDonorEmail] = useState("");
+  const [donorEmail, setDonorEmail] = useState(initialDonorEmail);
   const [donorProof, setDonorProof] = useState("");
   const [donorUserId, setDonorUserId] = useState("");
   const [pending, setPending] = useState(false);

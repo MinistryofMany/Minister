@@ -69,6 +69,20 @@ import type { Session } from "next-auth";
 export type CredentialKind = "email" | "passkey" | "oauth";
 export type CredentialStatus = "active" | "quarantined";
 
+// Raised when addEmail hits the global-unique collision: the address already
+// belongs to some account. addEmailAction turns this into a tagged result the
+// UI branches on to offer an account merge (the user must still prove control
+// of the address, and the merge keeps its own dual-control gate). Carries the
+// normalized email so the merge offer can prefill it.
+export class EmailCollisionError extends Error {
+  readonly email: string;
+  constructor(email: string) {
+    super("That email is already in use on another account.");
+    this.name = "EmailCollisionError";
+    this.email = email;
+  }
+}
+
 export interface CredentialEmail {
   kind: "email";
   id: string;
@@ -366,7 +380,7 @@ export async function addEmail(emailInput: string): Promise<{ id: string; email:
       "code" in err &&
       (err as { code?: unknown }).code === "P2002"
     ) {
-      throw new Error("That email is already in use on an account.");
+      throw new EmailCollisionError(email);
     }
     throw err;
   }
@@ -725,10 +739,28 @@ async function run<T>(fn: () => Promise<T>): Promise<ActionResult<T>> {
   }
 }
 
-export async function addEmailAction(
-  email: string,
-): Promise<ActionResult<{ id: string; email: string }>> {
-  return run(() => addEmail(email));
+// addEmail has one extra outcome the generic run() can't express: a
+// collision with an address already on another account. We surface it as a
+// distinct `collision` result so the UI can offer a merge (prefilling the
+// address) instead of showing a dead-end error. Everything else flows through
+// run() unchanged.
+export type AddEmailResult =
+  | ActionResult<{ id: string; email: string }>
+  | { ok: false; stepUp?: false; collision: true; email: string; error: string };
+
+export async function addEmailAction(email: string): Promise<AddEmailResult> {
+  try {
+    return { ok: true, data: await addEmail(email) };
+  } catch (err) {
+    if (err instanceof StepUpRequiredError) {
+      return { ok: false, stepUp: true, requiredAal: err.requiredAal };
+    }
+    if (err instanceof EmailCollisionError) {
+      return { ok: false, collision: true, email: err.email, error: err.message };
+    }
+    const error = err instanceof Error ? err.message : "Something went wrong.";
+    return { ok: false, error };
+  }
 }
 
 export async function removeEmailAction(emailId: string): Promise<ActionResult<void>> {

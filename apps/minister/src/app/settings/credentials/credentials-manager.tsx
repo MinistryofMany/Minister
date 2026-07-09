@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { signIn as signInWebAuthn } from "next-auth/webauthn";
 import { KeyRound, Mail, ShieldCheck, Trash2, UserCircle } from "lucide-react";
@@ -53,10 +54,14 @@ export function CredentialsManager({ initial }: { initial: CredentialListing }) 
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [newEmail, setNewEmail] = useState("");
+  // Set to the colliding address when the user tries to add an email that
+  // already belongs to another account. Drives the "combine accounts" offer.
+  const [mergeOffer, setMergeOffer] = useState<string | null>(null);
 
   function reset() {
     setError(null);
     setNotice(null);
+    setMergeOffer(null);
   }
 
   async function refresh() {
@@ -92,15 +97,46 @@ export function CredentialsManager({ initial }: { initial: CredentialListing }) 
     });
   }
 
+  // addEmail is handled outside dispatch() because it has an extra outcome the
+  // generic path can't express: a collision with an address already on another
+  // account. On collision we surface a merge offer instead of a dead-end error.
+  // We still run the step-up-then-retry-once dance for the AAL2 floor.
   function handleAddEmail(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const email = newEmail.trim();
     if (!email) return;
-    dispatch(
-      () => addEmailAction(email),
-      () => setNewEmail(""),
-      "Verification email sent. Check that inbox to finish adding the address.",
-    );
+    reset();
+    startTransition(async () => {
+      let res = await addEmailAction(email);
+      if (!res.ok && "stepUp" in res && res.stepUp) {
+        try {
+          const stepUp = await signInWebAuthn("passkey", { redirect: false });
+          if (stepUp && "error" in stepUp && stepUp.error) {
+            setError("Step-up with a passkey is required and was not completed.");
+            return;
+          }
+        } catch {
+          setError("Step-up with a passkey is required and was not completed.");
+          return;
+        }
+        res = await addEmailAction(email);
+      }
+      if (res.ok) {
+        setNewEmail("");
+        setNotice("Verification email sent. Check that inbox to finish adding the address.");
+        await refresh();
+        return;
+      }
+      if ("collision" in res && res.collision) {
+        setMergeOffer(res.email);
+        return;
+      }
+      if ("stepUp" in res && res.stepUp) {
+        setError("This action requires a passkey. Add or use a passkey, then try again.");
+        return;
+      }
+      setError(res.error);
+    });
   }
 
   // Passkey enrollment: gate on the bootstrap rule, run the WebAuthn register
@@ -257,6 +293,26 @@ export function CredentialsManager({ initial }: { initial: CredentialListing }) 
               Add email
             </Button>
           </form>
+
+          {mergeOffer ? (
+            <div className="flex flex-col gap-2 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-300">
+              <p>
+                <span className="font-medium">{mergeOffer}</span> already belongs to another
+                Minister account, so it can&apos;t be added here. If that account is also yours, you
+                can combine it into this one. You&apos;ll confirm you control that address first.
+              </p>
+              <div className="flex gap-2">
+                <Button asChild size="sm">
+                  <Link href={`/settings/merge?donor=${encodeURIComponent(mergeOffer)}`}>
+                    Combine that account in
+                  </Link>
+                </Button>
+                <Button type="button" size="sm" variant="ghost" onClick={() => setMergeOffer(null)}>
+                  Not now
+                </Button>
+              </div>
+            </div>
+          ) : null}
         </CardContent>
       </Card>
 

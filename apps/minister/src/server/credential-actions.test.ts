@@ -92,6 +92,7 @@ function setSession(s: Session | null): void {
 
 import {
   addEmail,
+  addEmailAction,
   canAddPasskey,
   listCredentials,
   markPasskeyEnrolled,
@@ -202,6 +203,21 @@ describe("addEmail", () => {
     const e = Object.assign(new Error("unique"), { code: "P2002" });
     db.userEmail.create.mockRejectedValue(e);
     await expect(addEmail("taken@example.com")).rejects.toThrow(/already in use/i);
+    expect(notifyCredentialChange).not.toHaveBeenCalled();
+  });
+
+  it("surfaces a collision as a tagged result (merge offer) via addEmailAction", async () => {
+    setSession(session(2));
+    const e = Object.assign(new Error("unique"), { code: "P2002" });
+    db.userEmail.create.mockRejectedValue(e);
+
+    const result = await addEmailAction("Taken@Example.com");
+    expect(result).toEqual({
+      ok: false,
+      collision: true,
+      email: "taken@example.com",
+      error: expect.stringContaining("already in use"),
+    });
     expect(notifyCredentialChange).not.toHaveBeenCalled();
   });
 
