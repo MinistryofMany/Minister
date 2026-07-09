@@ -98,20 +98,41 @@ function anchorAppearsAsValue(node: unknown, anchor: string): boolean {
   return false;
 }
 
+// Per-provider display noun for an oauth-account-family `taken` refusal. github
+// keeps the exact wording pinned by the discard/signet-race tests; the other
+// providers get their own noun so the copy is correct once the oauth-account
+// type is no longer github-only. An unknown provider falls back to generic.
+const OAUTH_PROVIDER_NOUNS: Record<string, string> = {
+  github: "GitHub account",
+  google: "Google account",
+  discord: "Discord account",
+  reddit: "Reddit account",
+  steam: "Steam account",
+  hackernews: "Hacker News account",
+  x: "X account",
+};
+
 // The user-facing credential noun for a `taken` (one-credential-one-account)
-// refusal, keyed on the badge type. github-family types keep the exact wording
-// that shipped in Phase 1; the email types get their own noun (Phase 5, when
-// email became the second anchor-emitting plugin). Fallback is generic.
-function takenCredentialNoun(badgeType: string): string {
+// refusal, keyed on the badge type and (for the oauth family) the provider. The
+// email types get their own noun (Phase 5, when email became the second
+// anchor-emitting plugin). Fallback is generic.
+function takenCredentialNoun(badgeType: string, provider?: string): string {
   if (badgeType === "email-domain" || badgeType === "email-exact") return "email address";
   if (
     badgeType === "oauth-account" ||
     badgeType === "account-age" ||
     badgeType === "social-following"
   ) {
-    return "GitHub account";
+    return (provider ? OAUTH_PROVIDER_NOUNS[provider] : undefined) ?? "connected account";
   }
   return "credential";
+}
+
+// The `provider` claim on an oauth-account-family badge, if present, so the
+// `taken` copy can name the right service.
+function providerOf(badge: IssuedBadge): string | undefined {
+  const p = (badge.claims as { provider?: unknown }).provider;
+  return typeof p === "string" ? p : undefined;
 }
 
 // Wizard-state is persisted as JSON, but only the `currentStep` and
@@ -424,9 +445,9 @@ async function issueBadgesAndComplete(args: {
   // registerDedup and the mint-side re-validation re-register). The credential
   // noun is derived from the badge type so the copy is correct per anchor plugin
   // (github vs email); the oauth phrasing is unchanged from before Phase 5.
-  const takenError = (badgeType: string) =>
+  const takenError = (badge: IssuedBadge) =>
     new SybilTakenError(
-      `This ${takenCredentialNoun(badgeType)} is already linked to another Minister account.`,
+      `This ${takenCredentialNoun(badge.type, providerOf(badge))} is already linked to another Minister account.`,
     );
 
   for (const badge of issued) {
@@ -465,7 +486,7 @@ async function issueBadgesAndComplete(args: {
       });
       if (reg.status === "taken") {
         await compensateBatch();
-        throw takenError(badge.type);
+        throw takenError(badge);
       }
       nullifierRef = reg.entryRef;
       if (reg.status === "registered") freshRegs.push({ ref: reg.entryRef, handle: ownerHandle });
@@ -582,7 +603,7 @@ async function issueBadgesAndComplete(args: {
             ownerHandle: handle,
           });
           if (reReg.status === "taken") {
-            throw takenError(badge.type);
+            throw takenError(badge);
           }
           if (reReg.status === "registered") {
             freshRegs.push({ ref: reReg.entryRef, handle });
