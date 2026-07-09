@@ -94,6 +94,28 @@ model User {
   recoveryCodes    RecoveryCode[]
   recoveryAttempts RecoveryAttempt[]
   subjectOverrides SubjectOverride[]
+
+  // An uploaded avatar image, stored as a Postgres blob in its OWN table so a
+  // large photo never bloats the hot User-row reads (session, profile, /u).
+  userAvatar UserAvatar?
+}
+
+// A user-uploaded avatar photo, held as a bytea blob. Deliberately a SEPARATE
+// table from User: the blob is read only by the public serve route
+// (/api/users/<id>/avatar), never on the session/profile hot paths, so it must
+// not weigh down a User-row SELECT. Only ever PNG/JPEG/WebP — the upload action
+// validates the bytes by magic number and stores the SNIFFED contentType
+// (never a client-declared MIME); SVG and everything else are rejected at the
+// door (an SVG can carry script → stored XSS). When the user switches back to a
+// generated/gravatar/link avatar the row is deleted, so its presence means "this
+// user currently uses an uploaded photo".
+model UserAvatar {
+  userId      String   @id
+  data        Bytes // bytea; the validated image bytes, stored verbatim (not re-encoded)
+  contentType String // the SNIFFED type: "image/png" | "image/jpeg" | "image/webp"
+  updatedAt   DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 model Account {
