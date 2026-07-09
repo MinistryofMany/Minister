@@ -7,6 +7,12 @@ import type { NextConfig } from "next";
 // only thing in the way.
 const config: NextConfig = {
   reactStrictMode: true,
+  // Build-date stamp surfaced in the footer's "Beta" label. Resolved once at
+  // build/start time (ISO date, no clock component) and inlined as a public env
+  // var; the footer falls back to "dev" when it isn't set.
+  env: {
+    NEXT_PUBLIC_BUILD_DATE: new Date().toISOString().slice(0, 10),
+  },
 };
 
 export default config;
