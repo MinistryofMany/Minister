@@ -112,9 +112,20 @@ export interface CredentialListing {
 
 // Narrow a stored status string to the union, defaulting unknowns to active
 // (the column default). Quarantine is only meaningful while it's the literal
-// "quarantined".
-function asStatus(value: string): CredentialStatus {
-  return value === "quarantined" ? "quarantined" : "active";
+// "quarantined" AND its window is still open: a quarantine whose
+// `quarantinedUntil` has already lapsed reads as active (lazy expiry). Nothing
+// else re-stamps the status column when a window elapses, so this read-time
+// check is the single point where an expired quarantine stops displaying — and,
+// once H-1 is enforced, stops gating. A quarantined row with a null
+// `quarantinedUntil` has no window to lapse, so it stays quarantined.
+function asStatus(
+  value: string,
+  quarantinedUntil: Date | null,
+  now: number = Date.now(),
+): CredentialStatus {
+  if (value !== "quarantined") return "active";
+  if (quarantinedUntil !== null && quarantinedUntil.getTime() <= now) return "active";
+  return "quarantined";
 }
 
 // Load the acting principal, throwing a plain "Not signed in" (distinct from
@@ -284,7 +295,7 @@ export async function listCredentials(): Promise<CredentialListing> {
       email: e.email,
       isPrimary: e.isPrimary,
       verified: e.verifiedAt !== null,
-      status: asStatus(e.status),
+      status: asStatus(e.status, e.quarantinedUntil),
       quarantinedUntil: e.quarantinedUntil?.toISOString() ?? null,
       createdAt: e.createdAt.toISOString(),
     })),
@@ -292,7 +303,7 @@ export async function listCredentials(): Promise<CredentialListing> {
       kind: "passkey" as const,
       credentialID: p.credentialID,
       label: p.label,
-      status: asStatus(p.status),
+      status: asStatus(p.status, p.quarantinedUntil),
       quarantinedUntil: p.quarantinedUntil?.toISOString() ?? null,
       addedAt: p.addedAt.toISOString(),
       lastUsedAt: p.lastUsedAt?.toISOString() ?? null,
@@ -302,7 +313,7 @@ export async function listCredentials(): Promise<CredentialListing> {
       provider: a.provider,
       providerAccountId: a.providerAccountId,
       label: a.label,
-      status: asStatus(a.status),
+      status: asStatus(a.status, a.quarantinedUntil),
       quarantinedUntil: a.quarantinedUntil?.toISOString() ?? null,
       lastUsedAt: a.lastUsedAt?.toISOString() ?? null,
     })),
@@ -655,26 +666,16 @@ export async function removePasskey(credentialID: string): Promise<void> {
     where: { userId_credentialID: { userId, credentialID } },
   });
 
-  // If the removal leaves exactly one passkey, that survivor is now the sole
-  // phishing-resistant factor — the same position as a bootstrap first passkey,
-  // which is always active (DESIGNDECISIONS #4). A quarantine stamped while it
-  // was a second/replacement passkey is now stale: there is no longer another
-  // passkey for the cooldown to guard against. Clear it, otherwise a user who
-  // adds a second (quarantined) passkey and then removes the original is left
-  // with an only passkey that displays — and, once H-1 is enforced, behaves —
-  // as permanently quarantined.
-  const survivors = await prisma.authenticator.findMany({
-    where: { userId },
-    select: { credentialID: true, status: true },
-  });
-  const lone = survivors.length === 1 ? survivors[0] : undefined;
-  if (lone && lone.status === "quarantined") {
-    await prisma.authenticator.update({
-      where: { userId_credentialID: { userId, credentialID: lone.credentialID } },
-      data: { status: "active", quarantinedUntil: null },
-    });
-  }
-
+  // We do NOT touch a surviving passkey's quarantine here. Promoting an
+  // in-window quarantined survivor on removal would defeat the cooldown
+  // (DESIGNDECISIONS #5): a hijacked AAL2 session could add a quarantined
+  // passkey, then remove the victim's original (total was 2, so the
+  // last-passkey refusal above still passes) to instantly hand the new passkey
+  // full power. Instead we leave the window intact — a survivor whose window is
+  // still open stays quarantined until it lapses, and a survivor whose window
+  // has already lapsed reads as active via asStatus's lazy expiry. That is also
+  // what fixes the "my only passkey is quarantined forever" display bug: the
+  // status is judged against the clock at read time, not rewritten on removal.
   await notifyCredentialChange(userId, "a passkey was removed");
 }
 

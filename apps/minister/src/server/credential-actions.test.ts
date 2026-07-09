@@ -93,6 +93,7 @@ function setSession(s: Session | null): void {
 import {
   addEmail,
   canAddPasskey,
+  listCredentials,
   markPasskeyEnrolled,
   removeEmail,
   removePasskey,
@@ -447,9 +448,6 @@ describe("removePasskey last-passkey refusal", () => {
     db.authenticator.findUnique.mockResolvedValue({ credentialID: "cred_2", userId: USER });
     db.authenticator.count.mockResolvedValue(2);
     db.authenticator.delete.mockResolvedValue({});
-    // Two remain before the delete; the surviving one is already active, so no
-    // quarantine recompute fires.
-    db.authenticator.findMany.mockResolvedValue([{ credentialID: "cred_1", status: "active" }]);
 
     await removePasskey("cred_2");
     expect(db.authenticator.delete).toHaveBeenCalledWith({
@@ -458,35 +456,30 @@ describe("removePasskey last-passkey refusal", () => {
     expect(notifyCredentialChange).toHaveBeenCalledWith(USER, expect.stringContaining("removed"));
   });
 
-  it("clears stale quarantine when the removal leaves a sole quarantined passkey", async () => {
-    // User had an original (active) passkey plus a second (quarantined) one,
-    // then removes the original. The lone survivor must not stay quarantined.
+  it("does not promote an in-window quarantined survivor (add-then-remove attack)", async () => {
+    // A hijacked AAL2 session adds a still-quarantined passkey, then removes the
+    // victim's original (total was 2, so the last-passkey refusal above passes).
+    // The survivor must NOT be promoted to active by the removal — its cooldown
+    // window is left intact (DESIGNDECISIONS #5). Lapsed windows are handled at
+    // read time by lazy expiry, not by a rewrite here.
     setSession(session(2));
     db.authenticator.findUnique.mockResolvedValue({ credentialID: "cred_1", userId: USER });
     db.authenticator.count.mockResolvedValue(2);
     db.authenticator.delete.mockResolvedValue({});
-    db.authenticator.findMany.mockResolvedValue([
-      { credentialID: "cred_2", status: "quarantined" },
-    ]);
-    db.authenticator.update.mockResolvedValue({});
 
     await removePasskey("cred_1");
 
     expect(db.authenticator.delete).toHaveBeenCalledWith({
       where: { userId_credentialID: { userId: USER, credentialID: "cred_1" } },
     });
-    expect(db.authenticator.update).toHaveBeenCalledWith({
-      where: { userId_credentialID: { userId: USER, credentialID: "cred_2" } },
-      data: { status: "active", quarantinedUntil: null },
-    });
+    expect(db.authenticator.update).not.toHaveBeenCalled();
   });
 
-  it("leaves a sole active survivor untouched (no quarantine rewrite)", async () => {
+  it("never rewrites a surviving passkey's status on removal", async () => {
     setSession(session(2));
     db.authenticator.findUnique.mockResolvedValue({ credentialID: "cred_2", userId: USER });
     db.authenticator.count.mockResolvedValue(2);
     db.authenticator.delete.mockResolvedValue({});
-    db.authenticator.findMany.mockResolvedValue([{ credentialID: "cred_1", status: "active" }]);
 
     await removePasskey("cred_2");
     expect(db.authenticator.update).not.toHaveBeenCalled();
@@ -499,5 +492,56 @@ describe("removePasskey last-passkey refusal", () => {
       userId: "someone_else",
     });
     await expect(removePasskey("cred_x")).rejects.toThrow(/not found/i);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Lazy quarantine expiry — a quarantine is judged against the clock at read
+// time (asStatus, via listCredentials), so a lapsed window stops displaying as
+// "Quarantined" without anything re-stamping the status column. This is what
+// fixes "my only passkey is quarantined forever" and, together with removePasskey
+// no longer promoting survivors, keeps an in-window quarantine intact.
+// ---------------------------------------------------------------------------
+
+describe("lazy quarantine expiry (listCredentials)", () => {
+  function passkeyRow(quarantinedUntil: Date | null) {
+    return {
+      credentialID: "cred_1",
+      label: null,
+      status: "quarantined",
+      quarantinedUntil,
+      addedAt: new Date(),
+      lastUsedAt: null,
+    };
+  }
+
+  beforeEach(() => {
+    setSession(session(2));
+    db.userEmail.findMany.mockResolvedValue([]);
+    db.account.findMany.mockResolvedValue([]);
+  });
+
+  it("reads a lapsed-window quarantined passkey as active", async () => {
+    db.authenticator.findMany.mockResolvedValue([passkeyRow(new Date(Date.now() - 1000))]);
+
+    const listing = await listCredentials();
+    expect(listing.passkeys[0]!.status).toBe("active");
+    // The raw timestamp is still surfaced (display/countdown context); only the
+    // derived status flips once the window lapses.
+    expect(listing.passkeys[0]!.quarantinedUntil).not.toBeNull();
+  });
+
+  it("keeps an in-window quarantined passkey quarantined", async () => {
+    db.authenticator.findMany.mockResolvedValue([passkeyRow(new Date(Date.now() + 3_600_000))]);
+
+    const listing = await listCredentials();
+    expect(listing.passkeys[0]!.status).toBe("quarantined");
+  });
+
+  it("treats a quarantined row with no window as still quarantined", async () => {
+    db.authenticator.findMany.mockResolvedValue([passkeyRow(null)]);
+
+    const listing = await listCredentials();
+    expect(listing.passkeys[0]!.status).toBe("quarantined");
   });
 });
