@@ -38,3 +38,27 @@ export function buildCheckAuthParams(openidParams: Record<string, string>): URLS
 export function assertionIsValid(responseBody: string): boolean {
   return responseBody.split(/\r?\n/u).some((line) => line.trim() === "is_valid:true");
 }
+
+// OpenID 2.0 §10.1/§11.4: the RP MUST confirm the fields it relies on are
+// actually covered by the signature. check_authentication only attests that the
+// signature is valid over WHATEVER `openid.signed` names — a forged callback can
+// present a reduced `signed` list (dropping claimed_id or return_to), swap those
+// now-unsigned fields, and still get back `is_valid:true`. So we require every
+// field we trust to be present in the comma-separated `openid.signed` set.
+export const REQUIRED_SIGNED_FIELDS = [
+  "claimed_id",
+  "identity",
+  "return_to",
+  "response_nonce",
+  "assoc_handle",
+  "op_endpoint",
+] as const;
+
+// True only when `openid.signed` (comma-separated, `openid.`-prefix-stripped
+// field names) covers every field in REQUIRED_SIGNED_FIELDS. Missing/empty ⇒
+// false (fail closed).
+export function signedFieldsCoverRequired(signed: string | undefined): boolean {
+  if (!signed) return false;
+  const present = new Set(signed.split(",").map((f) => f.trim()));
+  return REQUIRED_SIGNED_FIELDS.every((f) => present.has(f));
+}

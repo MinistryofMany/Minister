@@ -8,6 +8,7 @@ import {
   assertionIsValid,
   buildCheckAuthParams,
   parseSteamId,
+  signedFieldsCoverRequired,
 } from "./verify";
 
 const STEP_AUTHORIZE = "steam-openid";
@@ -123,6 +124,26 @@ export const steamPlugin: Plugin = {
       typeof state.data.expectedReturnTo === "string" ? state.data.expectedReturnTo : "";
     if (!expectedReturnTo || openid["openid.return_to"] !== expectedReturnTo) {
       return { kind: "error", message: "Steam assertion did not match this request — restart it" };
+    }
+
+    // OpenID 2.0 signature-coverage check: unless the fields we trust are all in
+    // `openid.signed`, a `is_valid:true` from check_authentication proves nothing
+    // about claimed_id / return_to — they could be unsigned and attacker-swapped.
+    if (!signedFieldsCoverRequired(openid["openid.signed"])) {
+      return {
+        kind: "error",
+        message: "Steam assertion did not sign the required fields — restart it",
+      };
+    }
+
+    // Pin the OP endpoint. `op_endpoint` is one of the signed fields (checked
+    // above), so requiring it to equal Steam's endpoint stops a signature minted
+    // by a different OpenID provider from being replayed here.
+    if (openid["openid.op_endpoint"] !== STEAM_OPENID_ENDPOINT) {
+      return {
+        kind: "error",
+        message: "Steam assertion came from an unexpected OpenID endpoint — restart it",
+      };
     }
 
     const claimedId = openid["openid.claimed_id"] ?? "";

@@ -15,6 +15,9 @@ function ctx(): PluginContext {
 
 const RETURN_TO = "http://localhost:3000/badges/new/steam/callback?state=STATE";
 const CLAIMED = "https://steamcommunity.com/openid/id/76561198000000000";
+const OP_ENDPOINT = "https://steamcommunity.com/openid/login";
+// The full signed-field set Steam covers on a genuine assertion.
+const SIGNED_ALL = "signed,op_endpoint,claimed_id,identity,return_to,response_nonce,assoc_handle";
 
 describe("steamPlugin.startWizard", () => {
   it("redirects to steam OpenID with return_to carrying our state token", async () => {
@@ -78,12 +81,73 @@ describe("steamPlugin.handleStep validation", () => {
         openid: {
           "openid.mode": "id_res",
           "openid.return_to": RETURN_TO,
+          "openid.signed": SIGNED_ALL,
+          "openid.op_endpoint": OP_ENDPOINT,
           "openid.claimed_id": "https://evil.example.com/openid/id/76561198000000000",
         },
       },
       ctx(),
     );
     expect(result.kind).toBe("error");
+  });
+
+  it("rejects an assertion whose signed list omits claimed_id", async () => {
+    const result = await steamPlugin.handleStep(
+      authState(),
+      {
+        openid: {
+          "openid.mode": "id_res",
+          "openid.return_to": RETURN_TO,
+          // claimed_id absent from the signed set — check_authentication would
+          // still say is_valid:true, but the RP must refuse.
+          "openid.signed": "op_endpoint,identity,return_to,response_nonce,assoc_handle",
+          "openid.op_endpoint": OP_ENDPOINT,
+          "openid.claimed_id": CLAIMED,
+        },
+      },
+      ctx(),
+    );
+    expect(result.kind).toBe("error");
+    if (result.kind !== "error") throw new Error("kind");
+    expect(result.message).toContain("did not sign the required fields");
+  });
+
+  it("rejects an assertion whose signed list omits return_to", async () => {
+    const result = await steamPlugin.handleStep(
+      authState(),
+      {
+        openid: {
+          "openid.mode": "id_res",
+          "openid.return_to": RETURN_TO,
+          "openid.signed": "op_endpoint,claimed_id,identity,response_nonce,assoc_handle",
+          "openid.op_endpoint": OP_ENDPOINT,
+          "openid.claimed_id": CLAIMED,
+        },
+      },
+      ctx(),
+    );
+    expect(result.kind).toBe("error");
+    if (result.kind !== "error") throw new Error("kind");
+    expect(result.message).toContain("did not sign the required fields");
+  });
+
+  it("rejects an assertion whose op_endpoint is not Steam's", async () => {
+    const result = await steamPlugin.handleStep(
+      authState(),
+      {
+        openid: {
+          "openid.mode": "id_res",
+          "openid.return_to": RETURN_TO,
+          "openid.signed": SIGNED_ALL,
+          "openid.op_endpoint": "https://evil.example.com/openid/login",
+          "openid.claimed_id": CLAIMED,
+        },
+      },
+      ctx(),
+    );
+    expect(result.kind).toBe("error");
+    if (result.kind !== "error") throw new Error("kind");
+    expect(result.message).toContain("unexpected OpenID endpoint");
   });
 });
 
@@ -116,6 +180,8 @@ describe("steamPlugin.handleStep verification", () => {
     "openid.mode": "id_res",
     "openid.return_to": RETURN_TO,
     "openid.claimed_id": CLAIMED,
+    "openid.signed": SIGNED_ALL,
+    "openid.op_endpoint": OP_ENDPOINT,
     "openid.sig": "sig",
   };
 
