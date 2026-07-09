@@ -1,5 +1,6 @@
 import type { Plugin } from "@minister/plugin-sdk";
 
+import { dnsTxtPlugin } from "./dns-txt";
 import { emailDomainPlugin } from "./email-domain";
 import { emailExactPlugin } from "./email-exact";
 import { githubPlugin } from "./github";
@@ -16,6 +17,7 @@ import { xPlugin } from "./x";
 const PLUGINS: Plugin[] = [
   emailDomainPlugin,
   emailExactPlugin,
+  dnsTxtPlugin,
   githubPlugin,
   googlePlugin,
   redditPlugin,
