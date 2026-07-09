@@ -49,6 +49,10 @@ describe("redditPlugin.startWizard", () => {
     );
     expect(state.currentStep.payload.expectedState).toBe(url.searchParams.get("state"));
     expect(state.data.redirectUri).toBe("http://localhost:3000/badges/new/reddit/callback");
+    // PKCE S256 on the authorize redirect; the verifier is stashed server-side.
+    expect(url.searchParams.get("code_challenge_method")).toBe("S256");
+    expect(url.searchParams.get("code_challenge")).toBeTruthy();
+    expect(typeof state.data.codeVerifier).toBe("string");
   });
 });
 
@@ -70,7 +74,10 @@ describe("redditPlugin.handleStep", () => {
         kind: "redirect",
         payload: { url: "https://www.reddit.com/api/v1/authorize?...", expectedState: "STATE" },
       },
-      data: { redirectUri: "http://localhost:3000/badges/new/reddit/callback" },
+      data: {
+        redirectUri: "http://localhost:3000/badges/new/reddit/callback",
+        codeVerifier: "verifier-abc",
+      },
     };
   }
 
@@ -108,6 +115,8 @@ describe("redditPlugin.handleStep", () => {
     const body = new URLSearchParams(init?.body as string);
     expect(body.get("client_secret")).toBeNull();
     expect(body.get("grant_type")).toBe("authorization_code");
+    // PKCE verifier completes the exchange.
+    expect(body.get("code_verifier")).toBe("verifier-abc");
   });
 
   it("never logs the immutable fullname anchor", async () => {

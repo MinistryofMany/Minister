@@ -2,7 +2,7 @@ import { z } from "zod";
 
 import type { Plugin } from "@minister/plugin-sdk";
 
-import { randomToken } from "../oauth-common";
+import { pkcePair, randomToken } from "../oauth-common";
 import { buildRedditBadges } from "./derive";
 
 const STEP_AUTHORIZE = "reddit-authorize";
@@ -64,6 +64,9 @@ export const redditPlugin: Plugin = {
     }
 
     const state = randomToken();
+    // PKCE (S256): the verifier is stashed server-side and replayed at the token
+    // exchange, binding this authorization code to this browser session.
+    const { verifier, challenge } = pkcePair();
     const redirectUri = `${ctx.origin}/badges/new/reddit/callback`;
     const authorizeUrl = new URL(REDDIT_AUTHORIZE_URL);
     authorizeUrl.searchParams.set("client_id", creds.clientId);
@@ -73,6 +76,8 @@ export const redditPlugin: Plugin = {
     // A temporary token is all we need — we read /me once, then discard it.
     authorizeUrl.searchParams.set("duration", "temporary");
     authorizeUrl.searchParams.set("scope", REQUESTED_SCOPES);
+    authorizeUrl.searchParams.set("code_challenge", challenge);
+    authorizeUrl.searchParams.set("code_challenge_method", "S256");
 
     await ctx.audit.log("plugin.reddit.authorize_initiated", {});
 
@@ -89,8 +94,9 @@ export const redditPlugin: Plugin = {
           expectedState: state,
         },
       },
-      // Reddit requires the same redirect_uri at /access_token; stash it.
-      data: { redirectUri },
+      // Reddit requires the same redirect_uri at /access_token; stash it alongside
+      // the PKCE verifier. Both are server-side only (toClientState scrubs `data`).
+      data: { redirectUri, codeVerifier: verifier },
     };
   },
 
@@ -113,12 +119,14 @@ export const redditPlugin: Plugin = {
     }
 
     const redirectUri = typeof state.data.redirectUri === "string" ? state.data.redirectUri : "";
-    if (!redirectUri) {
-      return { kind: "error", message: "Wizard state missing redirect URI — restart the flow" };
+    const codeVerifier = typeof state.data.codeVerifier === "string" ? state.data.codeVerifier : "";
+    if (!redirectUri || !codeVerifier) {
+      return { kind: "error", message: "Wizard state missing PKCE data — restart the flow" };
     }
 
     // Exchange the code for an access token. Reddit authenticates the client
-    // with HTTP Basic (client_id:client_secret), NOT body params.
+    // with HTTP Basic (client_id:client_secret), NOT body params, and completes
+    // PKCE with the code_verifier.
     const basic = Buffer.from(`${creds.clientId}:${creds.clientSecret}`).toString("base64");
     let tokenResponse: Response;
     try {
@@ -134,6 +142,7 @@ export const redditPlugin: Plugin = {
           grant_type: "authorization_code",
           code: parsed.data.code,
           redirect_uri: redirectUri,
+          code_verifier: codeVerifier,
         }).toString(),
       });
     } catch (err) {

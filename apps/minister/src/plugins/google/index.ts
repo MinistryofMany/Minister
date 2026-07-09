@@ -2,7 +2,7 @@ import { z } from "zod";
 
 import type { IssuedBadge, Plugin } from "@minister/plugin-sdk";
 
-import { randomToken } from "../oauth-common";
+import { pkcePair, randomToken } from "../oauth-common";
 
 const STEP_AUTHORIZE = "google-authorize";
 
@@ -59,6 +59,9 @@ export const googlePlugin: Plugin = {
     }
 
     const state = randomToken();
+    // PKCE (S256): the verifier is stashed server-side and replayed at the token
+    // exchange, binding this authorization code to this browser session.
+    const { verifier, challenge } = pkcePair();
     const redirectUri = `${ctx.origin}/badges/new/google/callback`;
     const authorizeUrl = new URL(GOOGLE_AUTHORIZE_URL);
     authorizeUrl.searchParams.set("client_id", creds.clientId);
@@ -66,6 +69,8 @@ export const googlePlugin: Plugin = {
     authorizeUrl.searchParams.set("response_type", "code");
     authorizeUrl.searchParams.set("scope", REQUESTED_SCOPES);
     authorizeUrl.searchParams.set("state", state);
+    authorizeUrl.searchParams.set("code_challenge", challenge);
+    authorizeUrl.searchParams.set("code_challenge_method", "S256");
 
     await ctx.audit.log("plugin.google.authorize_initiated", {});
 
@@ -82,7 +87,9 @@ export const googlePlugin: Plugin = {
           expectedState: state,
         },
       },
-      data: { redirectUri },
+      // redirectUri must match at the token endpoint; codeVerifier completes the
+      // PKCE exchange. Both are server-side only (toClientState scrubs `data`).
+      data: { redirectUri, codeVerifier: verifier },
     };
   },
 
@@ -105,8 +112,9 @@ export const googlePlugin: Plugin = {
     }
 
     const redirectUri = typeof state.data.redirectUri === "string" ? state.data.redirectUri : "";
-    if (!redirectUri) {
-      return { kind: "error", message: "Wizard state missing redirect URI — restart the flow" };
+    const codeVerifier = typeof state.data.codeVerifier === "string" ? state.data.codeVerifier : "";
+    if (!redirectUri || !codeVerifier) {
+      return { kind: "error", message: "Wizard state missing PKCE data — restart the flow" };
     }
 
     let tokenResponse: Response;
@@ -123,6 +131,7 @@ export const googlePlugin: Plugin = {
           code: parsed.data.code,
           redirect_uri: redirectUri,
           grant_type: "authorization_code",
+          code_verifier: codeVerifier,
         }).toString(),
       });
     } catch (err) {

@@ -36,6 +36,10 @@ describe("googlePlugin.startWizard", () => {
     expect(url.searchParams.get("redirect_uri")).toBe(
       "http://localhost:3000/badges/new/google/callback",
     );
+    // PKCE S256 on the authorize redirect; the verifier is stashed server-side.
+    expect(url.searchParams.get("code_challenge_method")).toBe("S256");
+    expect(url.searchParams.get("code_challenge")).toBeTruthy();
+    expect(typeof state.data.codeVerifier).toBe("string");
   });
 });
 
@@ -57,7 +61,10 @@ describe("googlePlugin.handleStep", () => {
         kind: "redirect",
         payload: { url: "https://accounts.google.com/...", expectedState: "STATE" },
       },
-      data: { redirectUri: "http://localhost:3000/badges/new/google/callback" },
+      data: {
+        redirectUri: "http://localhost:3000/badges/new/google/callback",
+        codeVerifier: "verifier-abc",
+      },
     };
   }
 
@@ -76,6 +83,29 @@ describe("googlePlugin.handleStep", () => {
     if (result.kind !== "complete") throw new Error("kind");
     expect(result.badges[0]!.claims).toEqual({ provider: "google", handle: "a@b.com" });
     expect(result.badges[0]!.sybilAnchor).toBe("1029384756");
+  });
+
+  it("sends the PKCE code_verifier on the token exchange", async () => {
+    fetchSpy
+      .mockResolvedValueOnce(mockOk({ access_token: "tok" }))
+      .mockResolvedValueOnce(mockOk({ sub: "1", email: "a@b.com", email_verified: true }));
+    await googlePlugin.handleStep(authState(), { code: "C" }, ctx());
+    const [tokenUrl, init] = fetchSpy.mock.calls[0]!;
+    expect(tokenUrl).toBe("https://oauth2.googleapis.com/token");
+    const body = new URLSearchParams(init?.body as string);
+    expect(body.get("code_verifier")).toBe("verifier-abc");
+    expect(body.get("grant_type")).toBe("authorization_code");
+  });
+
+  it("errors when the wizard state is missing the PKCE verifier", async () => {
+    const noPkce: WizardState = {
+      ...authState(),
+      data: { redirectUri: "http://localhost:3000/badges/new/google/callback" },
+    };
+    const result = await googlePlugin.handleStep(noPkce, { code: "C" }, ctx());
+    expect(result.kind).toBe("error");
+    if (result.kind !== "error") throw new Error("kind");
+    expect(result.message).toContain("PKCE");
   });
 
   it("omits the handle when the email is unverified", async () => {
