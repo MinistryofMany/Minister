@@ -258,7 +258,13 @@ export async function listCredentials(): Promise<CredentialListing> {
       },
     }),
     prisma.account.findMany({
-      where: { userId },
+      // "Linked accounts" is the OAuth section. Auth.js also writes an Account
+      // row for a registered passkey (type="webauthn", provider="passkey") and
+      // could for a magic-link ("email") — those are NOT OAuth links and have
+      // their own UI (the passkey list). Include only genuine OAuth/OIDC
+      // providers (github/discord => "oauth", google => "oidc") so a passkey
+      // stops masquerading as a linked "passkey" account here.
+      where: { userId, type: { in: ["oauth", "oidc"] } },
       orderBy: { createdAt: "asc" },
       select: {
         provider: true,
@@ -648,6 +654,27 @@ export async function removePasskey(credentialID: string): Promise<void> {
   await prisma.authenticator.delete({
     where: { userId_credentialID: { userId, credentialID } },
   });
+
+  // If the removal leaves exactly one passkey, that survivor is now the sole
+  // phishing-resistant factor — the same position as a bootstrap first passkey,
+  // which is always active (DESIGNDECISIONS #4). A quarantine stamped while it
+  // was a second/replacement passkey is now stale: there is no longer another
+  // passkey for the cooldown to guard against. Clear it, otherwise a user who
+  // adds a second (quarantined) passkey and then removes the original is left
+  // with an only passkey that displays — and, once H-1 is enforced, behaves —
+  // as permanently quarantined.
+  const survivors = await prisma.authenticator.findMany({
+    where: { userId },
+    select: { credentialID: true, status: true },
+  });
+  const lone = survivors.length === 1 ? survivors[0] : undefined;
+  if (lone && lone.status === "quarantined") {
+    await prisma.authenticator.update({
+      where: { userId_credentialID: { userId, credentialID: lone.credentialID } },
+      data: { status: "active", quarantinedUntil: null },
+    });
+  }
+
   await notifyCredentialChange(userId, "a passkey was removed");
 }
 

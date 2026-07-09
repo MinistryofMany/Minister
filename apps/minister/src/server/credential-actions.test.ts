@@ -447,12 +447,49 @@ describe("removePasskey last-passkey refusal", () => {
     db.authenticator.findUnique.mockResolvedValue({ credentialID: "cred_2", userId: USER });
     db.authenticator.count.mockResolvedValue(2);
     db.authenticator.delete.mockResolvedValue({});
+    // Two remain before the delete; the surviving one is already active, so no
+    // quarantine recompute fires.
+    db.authenticator.findMany.mockResolvedValue([{ credentialID: "cred_1", status: "active" }]);
 
     await removePasskey("cred_2");
     expect(db.authenticator.delete).toHaveBeenCalledWith({
       where: { userId_credentialID: { userId: USER, credentialID: "cred_2" } },
     });
     expect(notifyCredentialChange).toHaveBeenCalledWith(USER, expect.stringContaining("removed"));
+  });
+
+  it("clears stale quarantine when the removal leaves a sole quarantined passkey", async () => {
+    // User had an original (active) passkey plus a second (quarantined) one,
+    // then removes the original. The lone survivor must not stay quarantined.
+    setSession(session(2));
+    db.authenticator.findUnique.mockResolvedValue({ credentialID: "cred_1", userId: USER });
+    db.authenticator.count.mockResolvedValue(2);
+    db.authenticator.delete.mockResolvedValue({});
+    db.authenticator.findMany.mockResolvedValue([
+      { credentialID: "cred_2", status: "quarantined" },
+    ]);
+    db.authenticator.update.mockResolvedValue({});
+
+    await removePasskey("cred_1");
+
+    expect(db.authenticator.delete).toHaveBeenCalledWith({
+      where: { userId_credentialID: { userId: USER, credentialID: "cred_1" } },
+    });
+    expect(db.authenticator.update).toHaveBeenCalledWith({
+      where: { userId_credentialID: { userId: USER, credentialID: "cred_2" } },
+      data: { status: "active", quarantinedUntil: null },
+    });
+  });
+
+  it("leaves a sole active survivor untouched (no quarantine rewrite)", async () => {
+    setSession(session(2));
+    db.authenticator.findUnique.mockResolvedValue({ credentialID: "cred_2", userId: USER });
+    db.authenticator.count.mockResolvedValue(2);
+    db.authenticator.delete.mockResolvedValue({});
+    db.authenticator.findMany.mockResolvedValue([{ credentialID: "cred_1", status: "active" }]);
+
+    await removePasskey("cred_2");
+    expect(db.authenticator.update).not.toHaveBeenCalled();
   });
 
   it("refuses when the passkey belongs to another user", async () => {
