@@ -93,7 +93,16 @@ function anchorAppearsAsValue(node: unknown, anchor: string): boolean {
   if (typeof node === "string") return node === anchor;
   if (Array.isArray(node)) return node.some((v) => anchorAppearsAsValue(v, anchor));
   if (node !== null && typeof node === "object") {
-    return Object.values(node).some((v) => anchorAppearsAsValue(v, anchor));
+    // `provider` is a fixed, low-cardinality plugin CONSTANT (the slug: "steam",
+    // "reddit", "hackernews", …), never derived from user input, so it can never
+    // be an anchor-leak vector. Exempt it so a user whose id/handle happens to
+    // equal their provider slug — an HN account literally named "hackernews" —
+    // doesn't trip the guard on the account-age badge, which carries `provider`
+    // but not the handle (and so, unlike oauth-account, has no revealsAnchor).
+    // A real leak into any OTHER field is still caught.
+    return Object.entries(node).some(
+      ([key, v]) => key !== "provider" && anchorAppearsAsValue(v, anchor),
+    );
   }
   return false;
 }

@@ -345,6 +345,47 @@ describe("wizard runtime — Sybil-anchor discard + scrub", () => {
     expect(h.tables.nullifierEntry).toHaveLength(0);
   });
 
+  // FIX 5 — an HN user literally named "hackernews" makes claims.provider equal
+  // the anchor. The `provider` field is a fixed plugin slug, never an anchor-leak
+  // vector, so it must be exempt from the value guard — else the account-age badge
+  // (which carries `provider` but has no revealsAnchor) is wrongly refused,
+  // denying that user every HN badge. Availability edge case, must not fire.
+  it("issues an account-age badge when the provider slug equals the anchor", async () => {
+    const anchorEqualsProvider: IssuedBadge = {
+      type: "account-age",
+      attributes: { provider: "hackernews", olderThanMonths: 24 },
+      claims: { provider: "hackernews", olderThanMonths: 24 },
+      sybilAnchor: "hackernews",
+    };
+    vi.mocked(getPlugin).mockReturnValue(fakePlugin([anchorEqualsProvider]));
+    seedSession("ws-hn");
+
+    const result = await submitStep("ws-hn", USER, "http://localhost:3000", { code: "x" });
+    expect(result.kind).toBe("complete");
+    expect(h.tables.badge).toHaveLength(1);
+    expect(h.tables.badge[0]!.nullifierRef).toBe(h.tables.nullifierEntry[0]!.id);
+  });
+
+  // The provider exemption must not blind the guard to a REAL leak that also
+  // carries a matching provider slug: the anchor copied into any OTHER field
+  // still fails closed.
+  it("still refuses a real leak into a non-provider field even when provider matches", async () => {
+    const leakyWithProvider: IssuedBadge = {
+      type: "account-age",
+      attributes: { provider: "hackernews", olderThanMonths: 24, leaked: "hackernews" },
+      claims: { provider: "hackernews", olderThanMonths: 24 },
+      sybilAnchor: "hackernews",
+    };
+    vi.mocked(getPlugin).mockReturnValue(fakePlugin([leakyWithProvider]));
+    seedSession("ws-hn-leak");
+
+    await expect(
+      submitStep("ws-hn-leak", USER, "http://localhost:3000", { code: "x" }),
+    ).rejects.toThrow(/leaked a Sybil anchor/);
+    expect(h.tables.badge).toHaveLength(0);
+    expect(h.tables.nullifierEntry).toHaveLength(0);
+  });
+
   // Finding 1 — the delete-vs-reissue TOCTOU. Mint-side re-validation must
   // self-heal when a concurrent deleteBadge of the last sibling releases the
   // entry in the window between this re-issue's `already_yours` and its lagging
