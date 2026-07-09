@@ -98,7 +98,11 @@ export const hackernewsPlugin: Plugin = {
         }
         const token = `minister-${randomToken(9)}`;
 
-        await ctx.audit.log("plugin.hackernews.challenge_issued", { handle: username });
+        // Do NOT log the user-typed handle here: ownership is unproven at this
+        // point, so recording an arbitrary third-party username against the
+        // requester would be an unverified-claim leak. The handle is logged only
+        // on the verified event below (the revealsAnchor exception).
+        await ctx.audit.log("plugin.hackernews.challenge_issued", {});
 
         return {
           kind: "continue",

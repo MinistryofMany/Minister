@@ -142,14 +142,16 @@ describe("githubPlugin.handleStep — code exchange + /user fetch", () => {
     const result = await githubPlugin.handleStep(authState(), { code: "GH_CODE" }, c);
     expect(result.kind).toBe("complete");
 
-    // Exact-object match: any extra key (a re-added accountId) breaks it.
+    // Exact-object match: any extra key (a re-added accountId or the handle)
+    // breaks it. The AuditLog keeps no account-identifying value.
     expect(c.audit.log).toHaveBeenCalledWith("plugin.github.verified", {
-      handle: "octocat",
       issuedTypes: ["oauth-account"],
     });
-    // Belt-and-suspenders: the numeric id appears in NO serialized audit call.
+    // Belt-and-suspenders: neither the numeric id nor the handle appears in any
+    // serialized audit call.
     for (const call of vi.mocked(c.audit.log).mock.calls) {
       expect(JSON.stringify(call)).not.toContain("998877665544");
+      expect(JSON.stringify(call)).not.toContain("octocat");
     }
   });
 

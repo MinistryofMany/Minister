@@ -208,12 +208,11 @@ export const githubPlugin: Plugin = {
       new Date(),
     );
 
-    // Audit the derived badge TYPES + the revealed handle only. The numeric
-    // github id (the Sybil anchor) is DELIBERATELY NOT logged: it is a raw
-    // anchor that must be discarded after nullification, and the AuditLog is one
-    // of the at-rest stores it must never land in (this used to leak it).
+    // Audit the derived badge TYPES only. Neither the numeric github id (the
+    // Sybil anchor, discarded after nullification) NOR the handle is logged: the
+    // AuditLog keeps no account-identifying value, matching the other oauth
+    // providers (reddit/steam/x). Hacker News is the sole revealsAnchor exception.
     await ctx.audit.log("plugin.github.verified", {
-      handle: ghUser.login,
       issuedTypes: badges.map((b) => b.type),
     });
 

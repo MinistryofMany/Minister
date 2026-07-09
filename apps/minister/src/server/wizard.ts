@@ -1,4 +1,5 @@
 import type { IssuedBadge, PluginContext, WizardState } from "@minister/plugin-sdk";
+import { OAUTH_PROVIDERS } from "@minister/shared";
 
 import type { Prisma } from "@/generated/prisma";
 import { audit } from "@/lib/audit";
@@ -89,20 +90,25 @@ async function deleteExpiredSession(id: string): Promise<void> {
 // can legitimately equal the id's digits, and flagging it would refuse a real
 // credential — the badge types that carry numbers are exactly the ones that
 // collide. Fail-closed on a real string match.
+const PROVIDER_SLUGS = new Set<string>(OAUTH_PROVIDERS);
 function anchorAppearsAsValue(node: unknown, anchor: string): boolean {
   if (typeof node === "string") return node === anchor;
   if (Array.isArray(node)) return node.some((v) => anchorAppearsAsValue(v, anchor));
   if (node !== null && typeof node === "object") {
     // `provider` is a fixed, low-cardinality plugin CONSTANT (the slug: "steam",
     // "reddit", "hackernews", …), never derived from user input, so it can never
-    // be an anchor-leak vector. Exempt it so a user whose id/handle happens to
-    // equal their provider slug — an HN account literally named "hackernews" —
+    // be an anchor-leak vector — exempt it so a user whose id/handle happens to
+    // equal their provider slug (an HN account literally named "hackernews")
     // doesn't trip the guard on the account-age badge, which carries `provider`
     // but not the handle (and so, unlike oauth-account, has no revealsAnchor).
-    // A real leak into any OTHER field is still caught.
-    return Object.entries(node).some(
-      ([key, v]) => key !== "provider" && anchorAppearsAsValue(v, anchor),
-    );
+    // The exemption is narrowed to a value that really IS a registered slug, so a
+    // field-swap bug that put a raw id under a `provider` key is still caught.
+    return Object.entries(node).some(([key, v]) => {
+      if (key === "provider" && typeof v === "string" && PROVIDER_SLUGS.has(v)) {
+        return false;
+      }
+      return anchorAppearsAsValue(v, anchor);
+    });
   }
   return false;
 }

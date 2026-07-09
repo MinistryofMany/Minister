@@ -18,8 +18,10 @@ and never lands in the credential or wizard state, and only the renameable handl
 is **Hacker News**, whose username IS both the immutable anchor and the disclosed
 handle (there is no separate id), so the anchor legitimately appears in the
 credential by design (the badge opts out of the anchor-leak guard via
-`revealsAnchor`); `email-exact` is the same shape. In every case the anchor is
-still nullified for dedup and is never written to the audit log.
+`revealsAnchor`); `email-exact` is the same shape. The anchor is always nullified
+for dedup. It is never written to the audit log either, with the same Hacker News
+exception: HN logs its disclosed handle only on the verified event, because for
+Hacker News the handle IS the anchor.
 
 All redirect/callback URLs below use the production host `https://ministry.id`.
 For local development, substitute your dev origin (for example
