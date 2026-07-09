@@ -2,12 +2,40 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { PluginContext, WizardState } from "@minister/plugin-sdk";
 
-// Mock the DNS resolver so these tests are fully offline. resolveTxt is the only
-// network call the plugin makes.
-const resolveTxt = vi.fn<(host: string) => Promise<string[][]>>();
+// Mock the DNS resolver so these tests are fully offline. The plugin corroborates
+// the challenge across two pinned public resolvers (1.1.1.1 and 8.8.8.8) via a
+// fresh `Resolver` per lookup — `setServers([server])` then `resolveTxt(host)`.
+// We stand in a fake Resolver that dispatches to a per-server mock, so each test
+// can script Cloudflare and Google independently (agree / disagree / error).
+const resolveByServer = new Map<string, (host: string) => Promise<string[][]>>();
 vi.mock("node:dns/promises", () => ({
-  resolveTxt: (host: string) => resolveTxt(host),
+  Resolver: class {
+    private server = "";
+    setServers(servers: string[]): void {
+      this.server = servers[0] ?? "";
+    }
+    resolveTxt(host: string): Promise<string[][]> {
+      const impl = resolveByServer.get(this.server);
+      if (!impl) return Promise.reject(new Error(`no resolver mock for server ${this.server}`));
+      return impl(host);
+    }
+  },
 }));
+
+// Script both corroborating resolvers at once. Pass a per-server implementation
+// (records array to resolve, or an Error/rejection to throw).
+function setResolvers(cf: () => Promise<string[][]>, google: () => Promise<string[][]>): void {
+  resolveByServer.set("1.1.1.1", cf);
+  resolveByServer.set("8.8.8.8", google);
+}
+
+// Convenience: both resolvers return the same TXT records.
+function bothReturn(records: string[][]): void {
+  setResolvers(
+    () => Promise.resolve(records),
+    () => Promise.resolve(records),
+  );
+}
 
 import { dnsTxtPlugin } from "./index";
 import { challengeValue } from "./verify";
@@ -29,8 +57,11 @@ function dnsError(code: string): NodeJS.ErrnoException {
 }
 
 beforeEach(() => {
-  resolveTxt.mockReset();
-  resolveTxt.mockRejectedValue(new Error("unexpected resolveTxt call"));
+  // Default: any un-scripted resolver lookup is an unexpected call and fails the
+  // test loudly rather than silently resolving.
+  resolveByServer.clear();
+  const unexpected = () => Promise.reject(new Error("unexpected resolveTxt call"));
+  setResolvers(unexpected, unexpected);
 });
 
 describe("dnsTxtPlugin form step", () => {
@@ -71,10 +102,12 @@ describe("dnsTxtPlugin verify step", () => {
     return cont.state;
   }
 
-  it("issues a domain-control badge when the TXT record matches", async () => {
+  it("issues a domain-control badge when BOTH resolvers return the token", async () => {
     const state = await verifyState();
     const token = String(state.data.token);
-    resolveTxt.mockResolvedValueOnce([["v=spf1 -all"], [challengeValue(token)]]);
+    const cf = vi.fn(() => Promise.resolve([["v=spf1 -all"], [challengeValue(token)]]));
+    const google = vi.fn(() => Promise.resolve([[challengeValue(token)], ["other=thing"]]));
+    setResolvers(cf, google);
 
     const c = ctx();
     const result = await dnsTxtPlugin.handleStep(state, {}, c);
@@ -87,41 +120,53 @@ describe("dnsTxtPlugin verify step", () => {
     expect(badge.revealsAnchor).toBe(true);
     // The verified event logs the now-proven domain (revealsAnchor exception).
     expect(c.audit.log).toHaveBeenCalledWith("plugin.dns_txt.verified", { domain: "example.com" });
-    // The exact challenge host was queried.
-    expect(resolveTxt).toHaveBeenCalledWith("_minister-challenge.example.com");
+    // The exact challenge host was queried on BOTH resolvers (corroboration).
+    expect(cf).toHaveBeenCalledWith("_minister-challenge.example.com");
+    expect(google).toHaveBeenCalledWith("_minister-challenge.example.com");
   });
 
-  it("returns a retryable error (keeping the step) when the record is present but wrong", async () => {
+  it("fails closed when only ONE resolver has the token (the other is missing it)", async () => {
     const state = await verifyState();
-    resolveTxt.mockResolvedValueOnce([[challengeValue("some-other-token")]]);
-    const result = await dnsTxtPlugin.handleStep(state, {}, ctx());
+    const token = String(state.data.token);
+    // Cloudflare sees it; Google does not (present-but-wrong / disagreement).
+    setResolvers(
+      () => Promise.resolve([[challengeValue(token)]]),
+      () => Promise.resolve([["v=spf1 -all"]]),
+    );
+    const c = ctx();
+    const result = await dnsTxtPlugin.handleStep(state, {}, c);
     expect(result.kind).toBe("error");
     if (result.kind !== "error") throw new Error("kind");
+    expect(result.message).toContain("didn't match yet");
     expect(result.message).toContain("Verify again");
+    // Fail-closed: no badge, no verified audit event.
+    expect(c.audit.log).not.toHaveBeenCalledWith("plugin.dns_txt.verified", expect.anything());
   });
 
-  it("gives an add-the-record message on NXDOMAIN", async () => {
+  it("fails closed when the two resolvers disagree (one has it, one NXDOMAIN)", async () => {
     const state = await verifyState();
-    resolveTxt.mockRejectedValueOnce(dnsError("ENOTFOUND"));
+    const token = String(state.data.token);
+    // Cloudflare resolves the token; Google returns NXDOMAIN (not propagated).
+    setResolvers(
+      () => Promise.resolve([[challengeValue(token)]]),
+      () => Promise.reject(dnsError("ENOTFOUND")),
+    );
     const result = await dnsTxtPlugin.handleStep(state, {}, ctx());
     expect(result.kind).toBe("error");
     if (result.kind !== "error") throw new Error("kind");
+    // A not-yet-visible record wins the copy over the matching resolver.
     expect(result.message).toContain("couldn't find the TXT record");
     expect(result.message).toContain("Verify again");
   });
 
-  it("gives an add-the-record message when the host has no TXT records (ENODATA)", async () => {
+  it("fails closed (no crash) when ONE resolver throws, even if the other matches", async () => {
     const state = await verifyState();
-    resolveTxt.mockRejectedValueOnce(dnsError("ENODATA"));
-    const result = await dnsTxtPlugin.handleStep(state, {}, ctx());
-    expect(result.kind).toBe("error");
-    if (result.kind !== "error") throw new Error("kind");
-    expect(result.message).toContain("couldn't find the TXT record");
-  });
-
-  it("gives a generic retry message on a transient resolver failure", async () => {
-    const state = await verifyState();
-    resolveTxt.mockRejectedValueOnce(dnsError("ESERVFAIL"));
+    const token = String(state.data.token);
+    // Cloudflare matches; Google throws a transient SERVFAIL. Error copy wins.
+    setResolvers(
+      () => Promise.resolve([[challengeValue(token)]]),
+      () => Promise.reject(dnsError("ESERVFAIL")),
+    );
     const result = await dnsTxtPlugin.handleStep(state, {}, ctx());
     expect(result.kind).toBe("error");
     if (result.kind !== "error") throw new Error("kind");
@@ -129,13 +174,60 @@ describe("dnsTxtPlugin verify step", () => {
     expect(result.message).toContain("Verify again");
   });
 
+  it("fails closed when BOTH resolvers error (NXDOMAIN) with the add-the-record copy", async () => {
+    const state = await verifyState();
+    setResolvers(
+      () => Promise.reject(dnsError("ENOTFOUND")),
+      () => Promise.reject(dnsError("ENODATA")),
+    );
+    const result = await dnsTxtPlugin.handleStep(state, {}, ctx());
+    expect(result.kind).toBe("error");
+    if (result.kind !== "error") throw new Error("kind");
+    expect(result.message).toContain("couldn't find the TXT record");
+  });
+
+  it("gives a generic retry message when both resolvers transiently fail", async () => {
+    const state = await verifyState();
+    setResolvers(
+      () => Promise.reject(dnsError("ESERVFAIL")),
+      () => Promise.reject(dnsError("ETIMEOUT")),
+    );
+    const result = await dnsTxtPlugin.handleStep(state, {}, ctx());
+    expect(result.kind).toBe("error");
+    if (result.kind !== "error") throw new Error("kind");
+    expect(result.message).toContain("DNS lookup failed");
+    expect(result.message).toContain("Verify again");
+  });
+
+  it("returns a retryable error when both agree the record is present but wrong", async () => {
+    const state = await verifyState();
+    bothReturn([[challengeValue("some-other-token")]]);
+    const result = await dnsTxtPlugin.handleStep(state, {}, ctx());
+    expect(result.kind).toBe("error");
+    if (result.kind !== "error") throw new Error("kind");
+    expect(result.message).toContain("didn't match yet");
+    expect(result.message).toContain("Verify again");
+  });
+
   it("errors (does not resolve) when the flow lost its token", async () => {
     const state = await verifyState();
     const stripped: WizardState = { ...state, data: {} };
+    // Any resolver lookup here is a bug: bail before touching DNS.
+    let called = false;
+    setResolvers(
+      () => {
+        called = true;
+        return Promise.reject(new Error("should not query"));
+      },
+      () => {
+        called = true;
+        return Promise.reject(new Error("should not query"));
+      },
+    );
     const result = await dnsTxtPlugin.handleStep(stripped, {}, ctx());
     expect(result.kind).toBe("error");
     if (result.kind !== "error") throw new Error("kind");
     expect(result.message).toContain("lost its challenge token");
-    expect(resolveTxt).not.toHaveBeenCalled();
+    expect(called).toBe(false);
   });
 });
