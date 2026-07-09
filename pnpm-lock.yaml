@@ -40,7 +40,7 @@ importers:
         version: 15.5.19(@playwright/test@1.61.1)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
       next-auth:
         specifier: 5.0.0-beta.31
-        version: 5.0.0-beta.31(@simplewebauthn/browser@9.0.1)(@simplewebauthn/server@9.0.3)(next@15.5.19(@playwright/test@1.61.1)(react-dom@19.2.7(react@19.2.7))(react@19.2.7))(nodemailer@8.0.11)(react@19.2.7)
+        version: 5.0.0-beta.31(@simplewebauthn/browser@9.0.1)(@simplewebauthn/server@9.0.3)(next@15.5.19(@playwright/test@1.61.1)(react-dom@19.2.7(react@19.2.7))(react@19.2.7))(nodemailer@9.0.1)(react@19.2.7)
       react:
         specifier: ^19.0.0
         version: 19.2.7
@@ -89,7 +89,7 @@ importers:
     dependencies:
       '@auth/prisma-adapter':
         specifier: ^2.7.4
-        version: 2.11.2(@prisma/client@6.19.3(prisma@6.19.3(typescript@5.9.3))(typescript@5.9.3))(@simplewebauthn/browser@9.0.1)(@simplewebauthn/server@9.0.3)(nodemailer@8.0.11)
+        version: 2.11.2(@prisma/client@6.19.3(prisma@6.19.3(typescript@5.9.3))(typescript@5.9.3))(@simplewebauthn/browser@9.0.1)(@simplewebauthn/server@9.0.3)(nodemailer@9.0.1)
       '@aws-sdk/client-ssm':
         specifier: ^3.700.0
         version: 3.1079.0
@@ -155,10 +155,10 @@ importers:
         version: 15.5.19(@playwright/test@1.61.1)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
       next-auth:
         specifier: 5.0.0-beta.31
-        version: 5.0.0-beta.31(@simplewebauthn/browser@9.0.1)(@simplewebauthn/server@9.0.3)(next@15.5.19(@playwright/test@1.61.1)(react-dom@19.2.7(react@19.2.7))(react@19.2.7))(nodemailer@8.0.11)(react@19.2.7)
+        version: 5.0.0-beta.31(@simplewebauthn/browser@9.0.1)(@simplewebauthn/server@9.0.3)(next@15.5.19(@playwright/test@1.61.1)(react-dom@19.2.7(react@19.2.7))(react@19.2.7))(nodemailer@9.0.1)(react@19.2.7)
       nodemailer:
-        specifier: ^8.0.11
-        version: 8.0.11
+        specifier: ^9.0.1
+        version: 9.0.1
       openpgp:
         specifier: ^6.3.1
         version: 6.3.1
@@ -2717,8 +2717,8 @@ packages:
       encoding:
         optional: true
 
-  nodemailer@8.0.11:
-    resolution: {integrity: sha512-nrO/pDAUKl+wXX+lx16tDLbnm0fW6sK/x8mgohaCpg+CdCEl482bD4tCuAZk2DyliruiNTIZxRCoWkDqJEnAiA==}
+  nodemailer@9.0.1:
+    resolution: {integrity: sha512-Gwv8SQewT616ZM/URn0H54b8PWo/Wum7md3EW2aWy1lO27+WZCX+Xyak3J+NlmHUjDh5ME+uesJUDRbR3Ye8Bw==}
     engines: {node: '>=6.0.0'}
 
   nypm@0.6.7:
@@ -3432,7 +3432,7 @@ snapshots:
 
   '@alloc/quick-lru@5.2.0': {}
 
-  '@auth/core@0.41.2(@simplewebauthn/browser@9.0.1)(@simplewebauthn/server@9.0.3)(nodemailer@8.0.11)':
+  '@auth/core@0.41.2(@simplewebauthn/browser@9.0.1)(@simplewebauthn/server@9.0.3)(nodemailer@9.0.1)':
     dependencies:
       '@panva/hkdf': 1.2.1
       jose: 6.2.3
@@ -3442,11 +3442,11 @@ snapshots:
     optionalDependencies:
       '@simplewebauthn/browser': 9.0.1
       '@simplewebauthn/server': 9.0.3
-      nodemailer: 8.0.11
+      nodemailer: 9.0.1
 
-  '@auth/prisma-adapter@2.11.2(@prisma/client@6.19.3(prisma@6.19.3(typescript@5.9.3))(typescript@5.9.3))(@simplewebauthn/browser@9.0.1)(@simplewebauthn/server@9.0.3)(nodemailer@8.0.11)':
+  '@auth/prisma-adapter@2.11.2(@prisma/client@6.19.3(prisma@6.19.3(typescript@5.9.3))(typescript@5.9.3))(@simplewebauthn/browser@9.0.1)(@simplewebauthn/server@9.0.3)(nodemailer@9.0.1)':
     dependencies:
-      '@auth/core': 0.41.2(@simplewebauthn/browser@9.0.1)(@simplewebauthn/server@9.0.3)(nodemailer@8.0.11)
+      '@auth/core': 0.41.2(@simplewebauthn/browser@9.0.1)(@simplewebauthn/server@9.0.3)(nodemailer@9.0.1)
       '@prisma/client': 6.19.3(prisma@6.19.3(typescript@5.9.3))(typescript@5.9.3)
     transitivePeerDependencies:
       - '@simplewebauthn/browser'
@@ -5943,15 +5943,15 @@ snapshots:
 
   natural-compare@1.4.0: {}
 
-  next-auth@5.0.0-beta.31(@simplewebauthn/browser@9.0.1)(@simplewebauthn/server@9.0.3)(next@15.5.19(@playwright/test@1.61.1)(react-dom@19.2.7(react@19.2.7))(react@19.2.7))(nodemailer@8.0.11)(react@19.2.7):
+  next-auth@5.0.0-beta.31(@simplewebauthn/browser@9.0.1)(@simplewebauthn/server@9.0.3)(next@15.5.19(@playwright/test@1.61.1)(react-dom@19.2.7(react@19.2.7))(react@19.2.7))(nodemailer@9.0.1)(react@19.2.7):
     dependencies:
-      '@auth/core': 0.41.2(@simplewebauthn/browser@9.0.1)(@simplewebauthn/server@9.0.3)(nodemailer@8.0.11)
+      '@auth/core': 0.41.2(@simplewebauthn/browser@9.0.1)(@simplewebauthn/server@9.0.3)(nodemailer@9.0.1)
       next: 15.5.19(@playwright/test@1.61.1)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
       react: 19.2.7
     optionalDependencies:
       '@simplewebauthn/browser': 9.0.1
       '@simplewebauthn/server': 9.0.3
-      nodemailer: 8.0.11
+      nodemailer: 9.0.1
 
   next@15.5.19(@playwright/test@1.61.1)(react-dom@19.2.7(react@19.2.7))(react@19.2.7):
     dependencies:
@@ -5990,7 +5990,7 @@ snapshots:
     dependencies:
       whatwg-url: 5.0.0
 
-  nodemailer@8.0.11: {}
+  nodemailer@9.0.1: {}
 
   nypm@0.6.7:
     dependencies:
