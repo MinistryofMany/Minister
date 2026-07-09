@@ -9,6 +9,7 @@ import { inviteCodePlugin } from "./invite-code";
 import { redditPlugin } from "./reddit";
 import { steamPlugin } from "./steam";
 import { tlsnAttestationPlugin } from "./tlsn-attestation";
+import { walletPlugin } from "./wallet";
 import { xPlugin } from "./x";
 
 // In-process registry — CLAUDE.md explicitly forbids dynamic loading.
@@ -22,6 +23,7 @@ const PLUGINS: Plugin[] = [
   steamPlugin,
   hackernewsPlugin,
   xPlugin,
+  walletPlugin,
   inviteCodePlugin,
   tlsnAttestationPlugin,
 ];
