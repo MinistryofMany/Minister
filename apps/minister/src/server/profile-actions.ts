@@ -1,5 +1,7 @@
 "use server";
 
+import { randomBytes } from "node:crypto";
+
 import { revalidatePath } from "next/cache";
 
 import { audit } from "@/lib/audit";
@@ -182,15 +184,30 @@ export async function uploadAvatarAction(
     return { error: "Uploads are unavailable right now. Try again later." };
   }
 
-  const saved = await prisma.userAvatar.upsert({
-    where: { userId },
-    create: { userId, data: Buffer.from(bytes), contentType: result.contentType },
-    update: { data: Buffer.from(bytes), contentType: result.contentType },
-    select: { updatedAt: true },
-  });
+  // An OPAQUE, unguessable public handle for this blob — NEVER the userId. The
+  // serve route (and the disclosed `picture` claim) key on this instead of the
+  // account id, so an RP granted the avatar claim can't recover the global
+  // Minister userId and correlate the user across RPs (which would defeat the
+  // pairwise `sub`). Only consumed on the create branch; a replace keeps the
+  // existing publicId (upsert.update leaves it untouched), so the URL stays
+  // stable across re-uploads while `?v=` busts caches.
+  const publicId = randomBytes(16).toString("base64url");
 
-  const avatarUrl = buildUploadedAvatarUrl(origin, userId, saved.updatedAt.getTime());
-  await prisma.user.update({ where: { id: userId }, data: { displayName, avatarUrl } });
+  // Persist the blob and repoint avatarUrl in ONE interactive transaction: the
+  // blob is publicly served the instant it exists, so a mid-action failure
+  // between the two writes must never leave a servable blob behind a stale
+  // avatarUrl (or a fresh avatarUrl pointing at no blob). The callback form is
+  // required because the URL needs the upserted publicId + updatedAt.
+  await prisma.$transaction(async (tx) => {
+    const saved = await tx.userAvatar.upsert({
+      where: { userId },
+      create: { userId, publicId, data: Buffer.from(bytes), contentType: result.contentType },
+      update: { data: Buffer.from(bytes), contentType: result.contentType },
+      select: { publicId: true, updatedAt: true },
+    });
+    const url = buildUploadedAvatarUrl(origin, saved.publicId, saved.updatedAt.getTime());
+    await tx.user.update({ where: { id: userId }, data: { displayName, avatarUrl: url } });
+  });
 
   // Non-sensitive fields only: the content type is not user data, and the URL
   // is an internal serve route (no email hash, unlike Gravatar).
