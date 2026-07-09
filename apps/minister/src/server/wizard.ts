@@ -124,7 +124,6 @@ const OAUTH_PROVIDER_NOUNS: Record<string, string> = {
   reddit: "Reddit account",
   steam: "Steam account",
   hackernews: "Hacker News account",
-  x: "X account",
 };
 
 // The user-facing credential noun for a `taken` (one-credential-one-account)

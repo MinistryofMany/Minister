@@ -68,11 +68,11 @@ describe("accountAgeBadge", () => {
   });
 
   it("returns null for an account too new to clear the lowest bucket", () => {
-    expect(accountAgeBadge("x", new Date("2025-06-01T00:00:00Z"), "1", now)).toBeNull();
+    expect(accountAgeBadge("github", new Date("2025-06-01T00:00:00Z"), "1", now)).toBeNull();
   });
 
   it("returns null for a missing date", () => {
-    expect(accountAgeBadge("x", null, "1", now)).toBeNull();
+    expect(accountAgeBadge("github", null, "1", now)).toBeNull();
   });
 });
 

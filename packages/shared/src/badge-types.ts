@@ -68,7 +68,6 @@ export const OAUTH_PROVIDERS = [
   "reddit",
   "steam",
   "hackernews",
-  "x",
 ] as const;
 export type OAuthProvider = (typeof OAUTH_PROVIDERS)[number];
 // accountId REMOVED (crypto-core Phase 1): the provider's numeric account id was
