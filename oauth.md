@@ -111,24 +111,6 @@ whose handle is the user's **verified** email; the Sybil anchor is the immutable
 review and verification**. That is deliberately out of scope here; wire it as a
 separate flow once the review is done.
 
-## X (Twitter)
-
-- **Register at:** https://developer.twitter.com/en/portal/dashboard -> create a
-  project + app -> set up "User authentication settings" -> **OAuth 2.0**,
-  app type **Web App / Confidential client**.
-- **Redirect / callback URI:** `https://ministry.id/badges/new/x/callback`
-- **Scopes:** `users.read tweet.read`
-- **Env (.env):**
-  ```
-  X_CLIENT_ID=...
-  X_CLIENT_SECRET=...
-  ```
-
-Notes: **X requires a paid developer account with billing enabled** to use the
-API. The flow is OAuth 2.0 auth-code with **PKCE (S256, mandatory)** and Basic
-auth for the confidential client. Issues `oauth-account` (handle = @username)
-and `account-age` (from `created_at`); the Sybil anchor is the numeric user id.
-
 ## Instagram - deferred (do not build)
 
 Instagram has **no personal-account identity API** since Basic Display was shut
