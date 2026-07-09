@@ -56,7 +56,21 @@ export const EmailExactClaims = z.object({
 });
 export type EmailExactClaims = z.infer<typeof EmailExactClaims>;
 
-export const OAUTH_PROVIDERS = ["github", "google", "discord"] as const;
+// MIRROR: this list is hand-transcribed into the SEPARATE @minister/client repo
+// (minister-client/src/badges). Adding a provider here is only half the contract
+// — the SDK mirror AND the planned cross-repo drift-check must be updated before
+// any relying party gates on a badge from a newly added provider, or the RP will
+// silently reject it. See oauth.md ("Mirror + drift-check").
+export const OAUTH_PROVIDERS = [
+  "github",
+  "google",
+  "discord",
+  "reddit",
+  "steam",
+  "hackernews",
+  "x",
+] as const;
+export type OAuthProvider = (typeof OAUTH_PROVIDERS)[number];
 // accountId REMOVED (crypto-core Phase 1): the provider's numeric account id was
 // the raw Sybil anchor and leaked into the signed VC + AuditLog. It is now
 // nullified into an opaque Badge.nullifierRef and DISCARDED. Only the renameable
