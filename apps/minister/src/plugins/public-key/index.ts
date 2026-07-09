@@ -19,12 +19,17 @@ const STEP_FORM = "pubkey-key";
 const STEP_SIGN = "pubkey-sign";
 const STEP_VERIFY = "pubkey-verify";
 
+// Cap both inputs: a real public key or SSHSIG is a few KB, so 64 KB is
+// generous. Without a cap the only bound is Next's implicit server-action body
+// limit, and a ~1 MB armored "key" would make signature verification burn CPU on
+// an authenticated request (wizard actions are not rate-limited).
+const MAX_INPUT_CHARS = 65_536;
 const KeyInput = z.object({
-  publicKey: z.string().min(1),
+  publicKey: z.string().min(1).max(MAX_INPUT_CHARS),
 });
 
 const SignatureInput = z.object({
-  signature: z.string().min(1),
+  signature: z.string().min(1).max(MAX_INPUT_CHARS),
 });
 
 function makeFormStep(userId: string): WizardState {

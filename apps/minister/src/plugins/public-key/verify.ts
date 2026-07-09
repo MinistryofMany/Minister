@@ -150,6 +150,10 @@ export async function verifyPgpSignature(
   } catch {
     return false;
   }
+  // Defense-in-depth: a public-key proof must verify against a PUBLIC key.
+  // STEP_FORM already rejects a private-key paste, but re-check here so a future
+  // direct caller can't slip a private key past the verifier.
+  if (key.isPrivate()) return false;
 
   // Clearsigned message: the cleartext is inside the block.
   if (input.includes("BEGIN PGP SIGNED MESSAGE")) {
