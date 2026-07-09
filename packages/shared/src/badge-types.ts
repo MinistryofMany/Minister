@@ -14,7 +14,16 @@ import { z } from "zod";
 // exhaustiveness: adding a badge type with an unmapped icon fails the
 // typecheck instead of silently degrading to a fallback glyph.
 export type BadgeIconKey =
-  "at-sign" | "cake" | "globe" | "link" | "mail" | "map-pin" | "shield-check" | "ticket" | "users";
+  | "at-sign"
+  | "cake"
+  | "globe"
+  | "key"
+  | "link"
+  | "mail"
+  | "map-pin"
+  | "shield-check"
+  | "ticket"
+  | "users";
 
 // How much Sybil resistance a badge of this type provides — the HONEST claim is
 // "one credential", never "one person". Informational (surfaced in docs +
@@ -169,6 +178,34 @@ export const TlsnAttestationClaims = z
   .strict();
 export type TlsnAttestationClaims = z.infer<typeof TlsnAttestationClaims>;
 
+// Public-key control — the holder proved they hold the private key for an
+// asymmetric public key by signing a Minister-issued challenge (Keybase-style).
+// `kind` is the key family, `fingerprint` is the key's canonical fingerprint
+// (lowercase hex for PGP, `SHA256:…` for SSH), and `algorithm` is a short
+// descriptor (e.g. "ed25519", "rsa-3072", "ecdsa-nistp256").
+//
+// The fingerprint IS the disclosed value AND the Sybil anchor: unlike the wallet
+// address or the OAuth account id (which stay hidden), a public key's whole point
+// is being named, so the plugin marks the badge `revealsAnchor` and the
+// fingerprint legitimately rides the claim — exactly like `domain-control`. The
+// runtime still nullifies it so one key issues at most one badge.
+//
+// MIRROR: this type is NOT yet in the SEPARATE @minister/client repo
+// (minister-client/src/badges). Adding it here is only half the contract — the
+// SDK mirror AND the planned cross-repo drift-check must carry `public-key`
+// before any relying party gates on it, or the RP will silently reject the
+// badge. Do NOT edit that repo from here; track it as a follow-on.
+export const PUBLIC_KEY_KINDS = ["pgp", "ssh"] as const;
+export type PublicKeyKind = (typeof PUBLIC_KEY_KINDS)[number];
+export const PublicKeyClaims = z
+  .object({
+    kind: z.enum(PUBLIC_KEY_KINDS),
+    fingerprint: z.string().min(1),
+    algorithm: z.string().min(1),
+  })
+  .strict();
+export type PublicKeyClaims = z.infer<typeof PublicKeyClaims>;
+
 // ---------------------------------------------------------------------------
 // Registry
 // ---------------------------------------------------------------------------
@@ -274,6 +311,16 @@ export const BADGE_TYPES: Record<string, BadgeTypeMeta> = {
     schema: TlsnAttestationClaims,
     // Type-level value until per-plugin nullifiers land (Tyler-owned).
     sybilResistance: "none",
+  },
+  "public-key": {
+    type: "public-key",
+    label: "Public key",
+    description: "Holder proved they control the private key for the named public key.",
+    iconKey: "key",
+    // A fresh keypair is free to generate, so this dedups the specific key
+    // (one key -> one badge) but resists nothing broader.
+    schema: PublicKeyClaims,
+    sybilResistance: "weak",
   },
   ...Object.fromEntries(AGE_THRESHOLDS.map((t) => [`age-over-${t}`, ageOverEntry(t)] as const)),
 };
