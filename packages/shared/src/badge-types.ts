@@ -56,6 +56,27 @@ export const EmailExactClaims = z.object({
 });
 export type EmailExactClaims = z.infer<typeof EmailExactClaims>;
 
+// Domain control — the holder proved control of a DNS domain by publishing a
+// one-time TXT record. The domain IS the disclosed value (and the Sybil anchor),
+// so it legitimately appears in the credential; the dns-txt plugin marks the
+// badge `revealsAnchor`. Same shape/regex as EmailDomainClaims: a lowercase
+// hostname with at least one dot and an alphabetic TLD (the plugin validates the
+// input far more strictly before ever building a challenge).
+//
+// MIRROR: like OAUTH_PROVIDERS below, this badge type is hand-transcribed into
+// the SEPARATE @minister/client repo (minister-client/src/badges). Adding it here
+// is only half the contract — the SDK mirror AND the planned cross-repo
+// drift-check must be updated before any relying party gates on `domain-control`,
+// or the RP will silently reject the badge (strict drift fails closed).
+export const DomainControlClaims = z.object({
+  domain: z
+    .string()
+    .min(1)
+    .toLowerCase()
+    .regex(/^[a-z0-9.-]+\.[a-z]{2,}$/u, "Not a valid domain"),
+});
+export type DomainControlClaims = z.infer<typeof DomainControlClaims>;
+
 // MIRROR: this list is hand-transcribed into the SEPARATE @minister/client repo
 // (minister-client/src/badges). Adding a provider here is only half the contract
 // — the SDK mirror AND the planned cross-repo drift-check must be updated before
@@ -202,6 +223,16 @@ export const BADGE_TYPES: Record<string, BadgeTypeMeta> = {
     iconKey: "mail",
     schema: EmailExactClaims,
     sybilResistance: "weak",
+  },
+  "domain-control": {
+    type: "domain-control",
+    label: "Domain control",
+    description: "Holder controls the named DNS domain, proven via a one-time TXT record.",
+    iconKey: "globe",
+    schema: DomainControlClaims,
+    // A registered domain costs money and is harder to farm than a catch-all
+    // email or a throwaway account, but not as costly as an aged/followed one.
+    sybilResistance: "moderate",
   },
   "oauth-account": {
     type: "oauth-account",
