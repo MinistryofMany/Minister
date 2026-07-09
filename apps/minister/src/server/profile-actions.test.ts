@@ -1,37 +1,155 @@
 import { describe, expect, it } from "vitest";
 
-// normalizeProfileInput lives in profile-validation.ts (not "use server"),
-// not profile-actions.ts: a "use server" file may only export async
-// functions, and importing one here would drag in the next-auth/session
-// chain this pure-function test deliberately avoids.
-import { normalizeProfileInput } from "@/server/profile-validation";
+// The validators live in profile-validation.ts (not "use server"), not
+// profile-actions.ts: a "use server" file may only export async functions, and
+// importing one here would drag in the next-auth/session chain these
+// pure-function tests deliberately avoid.
+import { normalizeProfileEditorInput, normalizeProfileInput } from "@/server/profile-validation";
 
-describe("normalizeProfileInput", () => {
-  it("normalizes empty strings to null for both fields", () => {
-    const result = normalizeProfileInput({ displayName: "", avatarUrl: "" });
+const DET = { kind: "deterministic" } as const;
+
+describe("normalizeProfileEditorInput — display name", () => {
+  it("normalizes an empty display name to null", () => {
+    const result = normalizeProfileEditorInput({ displayName: "", avatar: DET });
     expect(result.displayName).toBeNull();
-    expect(result.avatarUrl).toBeNull();
   });
 
   it("normalizes a whitespace-only display name to null", () => {
-    const result = normalizeProfileInput({ displayName: "   ", avatarUrl: "" });
+    const result = normalizeProfileEditorInput({ displayName: "   ", avatar: DET });
     expect(result.displayName).toBeNull();
   });
 
-  it("accepts a normal display name", () => {
-    const result = normalizeProfileInput({ displayName: "  Ada Lovelace  ", avatarUrl: "" });
+  it("accepts and trims a normal display name", () => {
+    const result = normalizeProfileEditorInput({ displayName: "  Ada Lovelace  ", avatar: DET });
     expect(result.displayName).toBe("Ada Lovelace");
   });
 
   it("rejects a display name over 80 characters", () => {
     const tooLong = "a".repeat(81);
-    expect(() => normalizeProfileInput({ displayName: tooLong, avatarUrl: "" })).toThrow();
+    expect(() => normalizeProfileEditorInput({ displayName: tooLong, avatar: DET })).toThrow();
   });
 
   it("accepts an 80-character display name (boundary)", () => {
     const exact = "a".repeat(80);
-    const result = normalizeProfileInput({ displayName: exact, avatarUrl: "" });
+    const result = normalizeProfileEditorInput({ displayName: exact, avatar: DET });
     expect(result.displayName).toBe(exact);
+  });
+});
+
+describe("normalizeProfileEditorInput — deterministic avatar", () => {
+  it("passes the deterministic kind through with no URL", () => {
+    const result = normalizeProfileEditorInput({ displayName: "", avatar: DET });
+    expect(result.avatar).toEqual({ kind: "deterministic" });
+  });
+});
+
+describe("normalizeProfileEditorInput — url avatar", () => {
+  it("accepts a valid https avatar URL", () => {
+    const result = normalizeProfileEditorInput({
+      displayName: "",
+      avatar: { kind: "url", url: "https://x/y.png" },
+    });
+    expect(result.avatar).toEqual({ kind: "url", url: "https://x/y.png" });
+  });
+
+  it("rejects an http avatar URL", () => {
+    expect(() =>
+      normalizeProfileEditorInput({
+        displayName: "",
+        avatar: { kind: "url", url: "http://x/y.png" },
+      }),
+    ).toThrow();
+  });
+
+  it("rejects a javascript: avatar URL", () => {
+    expect(() =>
+      normalizeProfileEditorInput({
+        displayName: "",
+        avatar: { kind: "url", url: "javascript:alert(1)" },
+      }),
+    ).toThrow();
+  });
+
+  it("rejects a data: avatar URL", () => {
+    expect(() =>
+      normalizeProfileEditorInput({
+        displayName: "",
+        avatar: { kind: "url", url: "data:text/plain;base64,aGVsbG8=" },
+      }),
+    ).toThrow();
+  });
+
+  it("rejects a relative path avatar URL", () => {
+    expect(() =>
+      normalizeProfileEditorInput({ displayName: "", avatar: { kind: "url", url: "/avatar.png" } }),
+    ).toThrow();
+  });
+
+  it("rejects an empty url selection (choose another option instead)", () => {
+    expect(() =>
+      normalizeProfileEditorInput({ displayName: "", avatar: { kind: "url", url: "   " } }),
+    ).toThrow();
+  });
+
+  it("strips control chars (CR/LF/tab/NUL/C1) from an avatar URL so none survive into the output", () => {
+    // The WHATWG URL parser silently ignores CR/LF/tab while parsing, so without
+    // stripping they would ride into the persisted value and the picture claim
+    // (a header / log-injection surface). Build the input via char codes so the
+    // SOURCE stays plain ASCII - never embed a literal control byte, which makes
+    // the file binary in git and fragile under normalization.
+    const controls =
+      String.fromCharCode(13) + // CR
+      String.fromCharCode(10) + // LF
+      String.fromCharCode(9) + // tab
+      String.fromCharCode(0) + // NUL
+      String.fromCharCode(0x85); // C1 (NEL)
+    const result = normalizeProfileEditorInput({
+      displayName: "",
+      avatar: { kind: "url", url: `https://example.com/${controls}avatar.png` },
+    });
+    const url = result.avatar.kind === "url" ? result.avatar.url : null;
+    expect(url).toBe("https://example.com/avatar.png");
+    // No C0 (incl. NUL), DEL, or C1 byte survives - the full range stripControlChars removes.
+    const survivingControl = [...(url ?? "")].some((ch) => {
+      const c = ch.charCodeAt(0);
+      return c <= 0x1f || c === 0x7f || (c >= 0x80 && c <= 0x9f);
+    });
+    expect(survivingControl).toBe(false);
+  });
+});
+
+describe("normalizeProfileEditorInput — gravatar avatar", () => {
+  it("trims and lowercases the gravatar email (hashing is case-insensitive)", () => {
+    const result = normalizeProfileEditorInput({
+      displayName: "",
+      avatar: { kind: "gravatar", email: "  Ada@Example.COM  " },
+    });
+    expect(result.avatar).toEqual({ kind: "gravatar", email: "ada@example.com" });
+  });
+
+  it("rejects a malformed gravatar email", () => {
+    expect(() =>
+      normalizeProfileEditorInput({
+        displayName: "",
+        avatar: { kind: "gravatar", email: "not-an-email" },
+      }),
+    ).toThrow();
+  });
+
+  it("rejects an empty gravatar email", () => {
+    expect(() =>
+      normalizeProfileEditorInput({ displayName: "", avatar: { kind: "gravatar", email: "" } }),
+    ).toThrow();
+  });
+});
+
+// The legacy free-text validator still backs the per-RP persona editor and
+// consent seeding, where empty avatar URL means "clear the field" (-> null).
+describe("normalizeProfileInput — legacy free-text shape", () => {
+  it("normalizes empty strings to null for both fields", () => {
+    const result = normalizeProfileInput({ displayName: "", avatarUrl: "" });
+    expect(result.displayName).toBeNull();
+    expect(result.avatarUrl).toBeNull();
   });
 
   it("accepts a valid https avatar URL", () => {
@@ -47,43 +165,5 @@ describe("normalizeProfileInput", () => {
     expect(() =>
       normalizeProfileInput({ displayName: "", avatarUrl: "javascript:alert(1)" }),
     ).toThrow();
-  });
-
-  it("rejects a data: avatar URL", () => {
-    expect(() =>
-      normalizeProfileInput({
-        displayName: "",
-        avatarUrl: "data:text/plain;base64,aGVsbG8=",
-      }),
-    ).toThrow();
-  });
-
-  it("rejects a relative path avatar URL", () => {
-    expect(() => normalizeProfileInput({ displayName: "", avatarUrl: "/avatar.png" })).toThrow();
-  });
-
-  it("strips control chars (CR/LF/tab/NUL/C1) from an avatar URL so none survive into the output", () => {
-    // The WHATWG URL parser silently ignores CR/LF/tab while parsing, so without
-    // stripping they would ride into the persisted value and the picture claim
-    // (a header / log-injection surface). Build the input via char codes so the
-    // SOURCE stays plain ASCII - never embed a literal control byte, which makes
-    // the file binary in git and fragile under normalization.
-    const controls =
-      String.fromCharCode(13) + // CR
-      String.fromCharCode(10) + // LF
-      String.fromCharCode(9) + // tab
-      String.fromCharCode(0) + // NUL
-      String.fromCharCode(0x85); // C1 (NEL)
-    const result = normalizeProfileInput({
-      displayName: "",
-      avatarUrl: `https://example.com/${controls}avatar.png`,
-    });
-    expect(result.avatarUrl).toBe("https://example.com/avatar.png");
-    // No C0 (incl. NUL), DEL, or C1 byte survives - the full range stripControlChars removes.
-    const survivingControl = [...(result.avatarUrl ?? "")].some((ch) => {
-      const c = ch.charCodeAt(0);
-      return c <= 0x1f || c === 0x7f || (c >= 0x80 && c <= 0x9f);
-    });
-    expect(survivingControl).toBe(false);
   });
 });

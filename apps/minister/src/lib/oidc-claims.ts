@@ -132,6 +132,12 @@ export function resolveUserClaims(
     if (name !== null) resolved.name = name;
   }
   if (profile.avatar) {
+    // The curated avatarUrl is an external https URL (a custom link or a
+    // Gravatar). A DETERMINISTIC avatar has no stored URL (avatarUrl is null),
+    // so `picture` is simply OMITTED — we never synthesize a `data:` URI of the
+    // generated identicon into the claim (it would bloat the token, and there
+    // is nothing the user curated to disclose). The RP falls back to its own
+    // default avatar. As before, the upstream User.image is never a source.
     const picture = override ? override.avatarUrl : user.avatarUrl;
     if (picture !== null) resolved.picture = picture;
   }

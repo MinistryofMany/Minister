@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 
+import { Avatar } from "@/components/avatar";
 import { BadgeCard } from "@/components/badge-card";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { loadPublicBadges } from "@/lib/badges";
@@ -14,7 +15,10 @@ export default async function PublicProfile({ params }: PageProps) {
 
   const user = await prisma.user.findUnique({
     where: { id: userId },
-    select: { id: true, displayName: true, name: true, image: true, avatarUrl: true },
+    // `image` (the upstream Google/GitHub avatar) is deliberately NOT selected:
+    // the public profile shows only the user-curated avatarUrl, and falls back
+    // to the deterministic identicon — never the upstream auth identity.
+    select: { id: true, displayName: true, name: true, avatarUrl: true },
   });
   if (!user) notFound();
 
@@ -24,16 +28,7 @@ export default async function PublicProfile({ params }: PageProps) {
   return (
     <div className="mx-auto flex max-w-2xl flex-col gap-6 px-4 py-12">
       <header className="flex items-center gap-4">
-        {(user.avatarUrl ?? user.image) ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={user.avatarUrl ?? user.image ?? undefined}
-            alt=""
-            className="h-12 w-12 rounded-full border border-neutral-200 object-cover dark:border-neutral-800"
-          />
-        ) : (
-          <div aria-hidden className="h-12 w-12 rounded-full bg-neutral-200 dark:bg-neutral-800" />
-        )}
+        <Avatar seed={user.id} avatarUrl={user.avatarUrl} size={48} className="h-12 w-12" />
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">{name}</h1>
           <p className="text-sm text-neutral-500">

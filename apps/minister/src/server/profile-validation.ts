@@ -1,14 +1,23 @@
 import { z } from "zod";
 
-// Pure validation for the profile editor. Deliberately NOT "use server" —
+// Pure validation for the profile editors. Deliberately NOT "use server" —
 // unlike profile-actions.ts, this module has no session/Prisma dependency,
 // so it (and its test) can import plain Node without dragging in the
 // next-auth/next/server module chain that "use server" actions carry.
 // Mirrors the oidc-consent-minimize.ts split (pure helper vs. the "use
 // server" action file that calls it).
+//
+// Two entry points:
+//   - normalizeProfileInput       — the legacy { displayName, avatarUrl }
+//     free-text shape, still used by the per-RP persona editor
+//     (rp-profile-actions) and consent seeding (oidc-actions). Empty avatar
+//     URL -> null (clears the field).
+//   - normalizeProfileEditorInput — the main /profile editor's three-way
+//     avatar selection (deterministic | gravatar | url).
 
 export const MAX_DISPLAY_NAME_LENGTH = 80;
 export const MAX_AVATAR_URL_LENGTH = 2048;
+export const MAX_EMAIL_LENGTH = 254;
 
 // Strips C0/C1 control characters and line breaks a user could paste into a
 // plain-text input (e.g. from a compromised clipboard or a copy-pasted
@@ -30,8 +39,9 @@ function stripControlChars(value: string): string {
 // public profile, /u/[userId], and the consent screen, so accepting http:,
 // data:, javascript:, blob:, or a relative path would open mixed-content or
 // script-injection surface. Rejecting everything but https: is deliberate
-// and not merely a default.
-function normalizeAvatarUrl(raw: string): string | null {
+// and not merely a default. Empty -> null (the caller decides what that means:
+// "clear the field" for the persona editor, an error for the URL avatar kind).
+function normalizeAvatarUrlOrNull(raw: string): string | null {
   // Strip C0/C1/DEL control chars BEFORE parsing: the WHATWG URL parser
   // silently ignores tab, CR, and LF while parsing, so a URL with an embedded
   // "\r\n" or "\t" would validate as https: yet carry those control chars into
@@ -65,6 +75,28 @@ function normalizeDisplayName(raw: string): string | null {
   return cleaned;
 }
 
+// Conservative shape check + normalization for the Gravatar email. The action
+// re-checks that this address is actually PROVEN on the account before building
+// a Gravatar URL from it — this only rejects obvious garbage and normalizes the
+// address the same way Gravatar hashes it (trim + lowercase).
+function normalizeGravatarEmail(raw: string): string {
+  const cleaned = stripControlChars(raw).trim().toLowerCase();
+  if (cleaned.length === 0) {
+    throw new Error("Choose which verified email to use for your Gravatar");
+  }
+  if (cleaned.length > MAX_EMAIL_LENGTH) {
+    throw new Error("That email address is too long");
+  }
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleaned)) {
+    throw new Error("Choose a valid verified email for your Gravatar");
+  }
+  return cleaned;
+}
+
+// -------------------------------------------------------------------------
+// Legacy free-text shape (per-RP persona editor + consent seeding).
+// -------------------------------------------------------------------------
+
 const UpdateProfileInput = z.object({
   displayName: z.string(),
   avatarUrl: z.string(),
@@ -82,6 +114,65 @@ export function normalizeProfileInput(raw: UpdateProfileInput): {
   const parsed = UpdateProfileInput.parse(raw);
   return {
     displayName: normalizeDisplayName(parsed.displayName),
-    avatarUrl: normalizeAvatarUrl(parsed.avatarUrl),
+    avatarUrl: normalizeAvatarUrlOrNull(parsed.avatarUrl),
   };
+}
+
+// -------------------------------------------------------------------------
+// Main /profile editor: a tagged three-way avatar selection.
+// -------------------------------------------------------------------------
+
+// The three avatar sources, tagged so the editor and the action share one
+// wire shape. `deterministic` carries no value (the generated identicon has no
+// stored URL — a null avatarUrl IS the deterministic case). `gravatar` carries
+// the chosen email; the action verifies it and derives the URL server-side.
+// `url` carries a free-text https URL.
+const AvatarSelection = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("deterministic") }),
+  z.object({ kind: z.literal("gravatar"), email: z.string() }),
+  z.object({ kind: z.literal("url"), url: z.string() }),
+]);
+
+const ProfileEditorInput = z.object({
+  displayName: z.string(),
+  avatar: AvatarSelection,
+});
+
+export type ProfileEditorInput = z.infer<typeof ProfileEditorInput>;
+
+// The normalized avatar the action resolves to a stored avatarUrl:
+//   - deterministic -> store null (the identicon renders from the user id)
+//   - url           -> store the validated https URL
+//   - gravatar      -> the action verifies the email is proven, then stores
+//                      gravatarUrl(email); we can't do that here (no DB), so we
+//                      hand back the normalized email for the action to finish.
+export type NormalizedAvatar =
+  { kind: "deterministic" } | { kind: "url"; url: string } | { kind: "gravatar"; email: string };
+
+export function normalizeProfileEditorInput(raw: ProfileEditorInput): {
+  displayName: string | null;
+  avatar: NormalizedAvatar;
+} {
+  const parsed = ProfileEditorInput.parse(raw);
+  const displayName = normalizeDisplayName(parsed.displayName);
+
+  let avatar: NormalizedAvatar;
+  switch (parsed.avatar.kind) {
+    case "deterministic":
+      avatar = { kind: "deterministic" };
+      break;
+    case "url": {
+      const url = normalizeAvatarUrlOrNull(parsed.avatar.url);
+      if (url === null) {
+        throw new Error("Enter an image link, or choose a different avatar option");
+      }
+      avatar = { kind: "url", url };
+      break;
+    }
+    case "gravatar":
+      avatar = { kind: "gravatar", email: normalizeGravatarEmail(parsed.avatar.email) };
+      break;
+  }
+
+  return { displayName, avatar };
 }

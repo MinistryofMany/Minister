@@ -9,6 +9,7 @@ import { RelyingParties } from "@/components/relying-parties";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { loadUserBadges } from "@/lib/badges";
+import { gravatarUrl } from "@/lib/gravatar";
 import { prisma } from "@/lib/prisma";
 import { getCurrentSession } from "@/lib/session";
 
@@ -16,7 +17,7 @@ export default async function ProfilePage() {
   const session = await getCurrentSession();
   if (!session?.user) redirect("/");
 
-  const [badges, passkeyCount, user] = await Promise.all([
+  const [badges, passkeyCount, user, provenEmails] = await Promise.all([
     loadUserBadges(session.user.id),
     // Passkeys are the Auth.js Authenticator rows. Zero means the account
     // only has the magic-link fallback, so we surface the add-a-passkey CTA;
@@ -29,7 +30,24 @@ export default async function ProfilePage() {
       where: { id: session.user.id },
       select: { displayName: true, avatarUrl: true },
     }),
+    // Verified emails only — the Gravatar option is offered strictly for an
+    // address the user has already PROVEN they control (never an unverified
+    // one). The action re-checks this on save; passing it here is just to
+    // populate the picker.
+    prisma.userEmail.findMany({
+      where: { userId: session.user.id, verifiedAt: { not: null } },
+      orderBy: [{ isPrimary: "desc" }, { createdAt: "asc" }],
+      select: { email: true },
+    }),
   ]);
+
+  // Precompute each proven email's Gravatar URL server-side so the editor can
+  // preview the choice without shipping the SHA-256 hashing (node:crypto) to
+  // the browser. These hashes only ever reach the user's own page.
+  const gravatarOptions = provenEmails.map((e) => ({
+    email: e.email,
+    url: gravatarUrl(e.email),
+  }));
   const name = session.user.name ?? session.user.email ?? "Anonymous user";
   const hasPublic = badges.some((b) => b.isPublic);
 
@@ -85,8 +103,10 @@ export default async function ProfilePage() {
         </CardHeader>
         <CardContent>
           <ProfileForm
+            userId={session.user.id}
             initialDisplayName={user?.displayName ?? null}
             initialAvatarUrl={user?.avatarUrl ?? null}
+            gravatarOptions={gravatarOptions}
           />
         </CardContent>
       </Card>
