@@ -125,6 +125,12 @@ export function summarizeAttributes(type: string, attributes: Record<string, unk
       if (claim && domain) return `${claim} · ${domain}`;
       return claim || domain;
     }
+    case "public-key": {
+      const algorithm = typeof attributes.algorithm === "string" ? attributes.algorithm : "";
+      const fingerprint = typeof attributes.fingerprint === "string" ? attributes.fingerprint : "";
+      if (algorithm && fingerprint) return `${algorithm} · ${fingerprint}`;
+      return algorithm || fingerprint;
+    }
     default:
       if (type.startsWith("age-over-")) {
         const t = type.slice("age-over-".length);

@@ -7,6 +7,7 @@ import { githubPlugin } from "./github";
 import { googlePlugin } from "./google";
 import { hackernewsPlugin } from "./hackernews";
 import { inviteCodePlugin } from "./invite-code";
+import { publicKeyPlugin } from "./public-key";
 import { redditPlugin } from "./reddit";
 import { steamPlugin } from "./steam";
 import { tlsnAttestationPlugin } from "./tlsn-attestation";
@@ -26,6 +27,7 @@ const PLUGINS: Plugin[] = [
   walletPlugin,
   inviteCodePlugin,
   tlsnAttestationPlugin,
+  publicKeyPlugin,
 ];
 
 const byId = new Map(PLUGINS.map((p) => [p.manifest.id, p]));
