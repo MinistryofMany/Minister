@@ -190,6 +190,59 @@ export const TlsnAttestationClaims = z
 export type TlsnAttestationClaims = z.infer<typeof TlsnAttestationClaims>;
 
 // ---------------------------------------------------------------------------
+// Wallet-ownership badge types
+//
+// Issued by the `wallet` plugin after a paste-signature proof of control over
+// an Ethereum (EIP-191 personal_sign) or Bitcoin (BIP-137) address. The address
+// itself is a Sybil anchor: it is nullified and DISCARDED at issuance and never
+// appears in any claim below — the claims disclose only coarse, non-identifying
+// facts (which chain, a lower-bound age bucket, a named on-chain event).
+//
+// MIRROR: these types are hand-transcribed into the SEPARATE @minister/client
+// repo (minister-client/src/badges). Adding or changing one here is only half
+// the contract — the SDK mirror AND the planned cross-repo drift-check must be
+// updated before any relying party gates on a wallet badge, or the RP will
+// silently reject it. Do NOT edit that repo from here.
+// ---------------------------------------------------------------------------
+
+export const WALLET_CHAINS = ["ethereum", "bitcoin"] as const;
+export type WalletChain = (typeof WALLET_CHAINS)[number];
+
+// Controls a verified wallet on the named chain. The address is NOT disclosed —
+// only which chain the proven key lives on.
+export const WalletControlClaims = z
+  .object({
+    chain: z.enum(WALLET_CHAINS),
+  })
+  .strict();
+export type WalletControlClaims = z.infer<typeof WalletControlClaims>;
+
+// Wallet age — a COARSE "older than N months" lower bound derived from the
+// wallet's first on-chain transaction, never the exact date. Same buckets as
+// account-age so RPs reason about both uniformly. Best-effort: skipped (not
+// failed) when the chain explorer can't be reached.
+export const WalletAgeClaims = z
+  .object({
+    chain: z.enum(WALLET_CHAINS),
+    olderThanMonths: z.union([z.literal(12), z.literal(24), z.literal(36), z.literal(60)]),
+  })
+  .strict();
+export type WalletAgeClaims = z.infer<typeof WalletAgeClaims>;
+
+// On-chain event participation. The event LABEL is disclosed; the address that
+// proves participation is not. v1 carries a single event — the eth2 (Beacon
+// Chain) genesis depositor set — but the shape is an extensible enum so more
+// curated event lists drop in later without a schema change to the claim shape.
+export const ONCHAIN_EVENTS = ["eth2-genesis-depositor"] as const;
+export type OnchainEvent = (typeof ONCHAIN_EVENTS)[number];
+export const OnchainEventClaims = z
+  .object({
+    event: z.enum(ONCHAIN_EVENTS),
+  })
+  .strict();
+export type OnchainEventClaims = z.infer<typeof OnchainEventClaims>;
+
+// ---------------------------------------------------------------------------
 // Registry
 // ---------------------------------------------------------------------------
 
@@ -304,6 +357,35 @@ export const BADGE_TYPES: Record<string, BadgeTypeMeta> = {
     schema: TlsnAttestationClaims,
     // Type-level value until per-plugin nullifiers land (Tyler-owned).
     sybilResistance: "none",
+  },
+  "wallet-control": {
+    type: "wallet-control",
+    label: "Wallet control",
+    description:
+      "Holder controls a verified wallet on the named chain. The address is not disclosed.",
+    iconKey: "shield-check",
+    schema: WalletControlClaims,
+    // Any address is free to generate, so control of one address is cheap; the
+    // one-address-one-badge nullifier still stops a single wallet minting many.
+    sybilResistance: "weak",
+  },
+  "wallet-age": {
+    type: "wallet-age",
+    label: "Wallet age",
+    description: "Holder's verified wallet is at least the stated number of months old.",
+    iconKey: "cake",
+    schema: WalletAgeClaims,
+    // An aged wallet with real history is costlier to farm than a fresh key.
+    sybilResistance: "moderate",
+  },
+  "onchain-event": {
+    type: "onchain-event",
+    label: "On-chain event",
+    description: "Holder's verified wallet took part in the named on-chain event.",
+    iconKey: "ticket",
+    schema: OnchainEventClaims,
+    // Genesis participation is scarce and expensive to fake retroactively.
+    sybilResistance: "moderate",
   },
   ...Object.fromEntries(AGE_THRESHOLDS.map((t) => [`age-over-${t}`, ageOverEntry(t)] as const)),
 };

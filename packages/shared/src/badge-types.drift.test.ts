@@ -104,6 +104,24 @@ const EXPECTED: Record<string, Expected> = {
     sample: { domain: "id.me", claim: "verified" },
     strict: true,
   },
+  "wallet-control": {
+    credentialType: "MinisterWalletControlCredential",
+    sybilResistance: "weak",
+    sample: { chain: "ethereum" },
+    strict: true,
+  },
+  "wallet-age": {
+    credentialType: "MinisterWalletAgeCredential",
+    sybilResistance: "moderate",
+    sample: { chain: "ethereum", olderThanMonths: 24 },
+    strict: true,
+  },
+  "onchain-event": {
+    credentialType: "MinisterOnchainEventCredential",
+    sybilResistance: "moderate",
+    sample: { event: "eth2-genesis-depositor" },
+    strict: true,
+  },
   ...Object.fromEntries(
     AGE_THRESHOLDS.map((t) => [
       `age-over-${t}`,
