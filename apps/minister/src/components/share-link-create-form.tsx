@@ -17,6 +17,20 @@ interface Props {
 
 const TTL_OPTIONS = [1, 7, 30, 90] as const;
 
+// The badge sub-line shown in the share builder. A share link is handed to
+// arbitrary third parties, so email-exact — which discloses the WHOLE address,
+// not just the domain — gets an explicit, plain-language warning rather than
+// the bare value the shared summarizer returns. Everything else uses the terse
+// shared summary. This never selects the badge; it only describes it, so the
+// disclosure stays opt-in (the checkbox defaults off).
+function shareSummary(type: string, attributes: Record<string, unknown>): string {
+  if (type === "email-exact") {
+    const email = typeof attributes.email === "string" ? attributes.email : "";
+    return email ? `Shows your full email address: ${email}` : "Shows your full email address";
+  }
+  return summarizeAttributes(type, attributes);
+}
+
 export function ShareLinkCreateForm({ badges, origin }: Props) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -111,9 +125,9 @@ export function ShareLinkCreateForm({ badges, origin }: Props) {
             />
             <span className="flex-1">
               <span className="block font-medium">{b.meta.label}</span>
-              {summarizeAttributes(b.type, b.attributes) ? (
+              {shareSummary(b.type, b.attributes) ? (
                 <span className="text-neutral-600 dark:text-neutral-400">
-                  {summarizeAttributes(b.type, b.attributes)}
+                  {shareSummary(b.type, b.attributes)}
                 </span>
               ) : null}
             </span>
