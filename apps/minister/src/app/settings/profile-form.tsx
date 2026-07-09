@@ -36,14 +36,13 @@ const ACCEPT = ALLOWED_AVATAR_TYPES.join(",");
 //   - a gravatar.com URL      -> gravatar (matched back to its email if we can)
 //   - any other https URL     -> custom URL
 function inferInitial(
-  userId: string,
   avatarUrl: string | null,
   options: GravatarOption[],
 ): { kind: AvatarKind; gravatarEmail: string; url: string } {
   if (!avatarUrl) {
     return { kind: "deterministic", gravatarEmail: options[0]?.email ?? "", url: "" };
   }
-  if (isUploadedAvatarUrl(avatarUrl, userId)) {
+  if (isUploadedAvatarUrl(avatarUrl)) {
     return { kind: "uploaded", gravatarEmail: options[0]?.email ?? "", url: "" };
   }
   if (avatarUrl.startsWith(GRAVATAR_PREFIX)) {
@@ -63,11 +62,11 @@ export function ProfileForm({
   initialAvatarUrl,
   gravatarOptions,
 }: ProfileFormProps) {
-  const initial = inferInitial(userId, initialAvatarUrl, gravatarOptions);
+  const initial = inferInitial(initialAvatarUrl, gravatarOptions);
 
   // The already-uploaded photo's serve URL (present only if the user currently
   // uses an upload), used for the preview when no new file has been chosen.
-  const uploadedUrl = isUploadedAvatarUrl(initialAvatarUrl, userId) ? initialAvatarUrl : null;
+  const uploadedUrl = isUploadedAvatarUrl(initialAvatarUrl) ? initialAvatarUrl : null;
 
   const [displayName, setDisplayName] = useState(initialDisplayName ?? "");
   const [kind, setKind] = useState<AvatarKind>(initial.kind);
@@ -258,7 +257,9 @@ export function ProfileForm({
             <span className="flex w-full flex-col">
               <span className="text-sm font-medium">Upload a photo</span>
               <span className="text-xs text-neutral-500 dark:text-neutral-400">
-                Use your own picture. PNG, JPEG, or WebP, up to 512 KB.
+                Use your own picture. PNG, JPEG, or WebP, up to 512 KB. Heads up: a photo of you is
+                recognizable on its own, so any apps you share it with could use it to tell it is
+                the same person.
               </span>
               {kind === "uploaded" ? (
                 <>
