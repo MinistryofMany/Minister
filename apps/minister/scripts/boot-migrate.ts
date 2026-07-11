@@ -52,13 +52,25 @@ import { loadSecretsFromSsm } from "../src/lib/secrets";
 async function main(): Promise<void> {
   await loadSecretsFromSsm();
 
-  const result = spawnSync("pnpm", ["prisma", "migrate", "deploy"], {
+  const migrate = spawnSync("pnpm", ["prisma", "migrate", "deploy"], {
     stdio: "inherit",
     env: process.env,
   });
 
-  if (result.error) throw result.error;
-  process.exit(result.status ?? 1);
+  if (migrate.error) throw migrate.error;
+  if (migrate.status !== 0) process.exit(migrate.status ?? 1);
+
+  // Seed the anti-sybil / recovery config tables AFTER the schema is migrated.
+  // Idempotent + insert-only (never clobbers operator edits), and fail-closed:
+  // a non-zero seed exit stops the container rather than booting into a
+  // half-seeded config the boot-check would (correctly) reject in prod.
+  const seed = spawnSync("pnpm", ["exec", "tsx", "scripts/seed-sybil-config.ts"], {
+    stdio: "inherit",
+    env: process.env,
+  });
+
+  if (seed.error) throw seed.error;
+  process.exit(seed.status ?? 1);
 }
 
 main().catch((err: unknown) => {

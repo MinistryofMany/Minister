@@ -337,6 +337,11 @@ model OidcAuthorizationCode {
   // from these flags — never from the `profile` scope alone.
   profileName         Boolean   @default(false)
   profileAvatar       Boolean   @default(false)
+  // Granular sybil-score disclosure. Snapshotted at consent; the resolver emits
+  // `sybil_bucket` strictly from this flag + bucket, never recomputed at token
+  // /userinfo time. sybilScore false whenever `sybil-score` not in scopes.
+  sybilScore          Boolean   @default(false)
+  sybilBucket         Int?
   // Required by OIDC Core §3.1.2.1 — echoed back in id_token so RPs can
   // detect replay across user agents.
   nonce               String
@@ -369,6 +374,11 @@ model OidcAccessToken {
   // OidcAuthorizationCode for the rationale.
   profileName      Boolean   @default(false)
   profileAvatar    Boolean   @default(false)
+  // Sybil-score disclosure, denormalized from the auth code (see
+  // OidcAuthorizationCode). The token/userinfo path emits `sybil_bucket`
+  // strictly from these, never recomputing.
+  sybilScore       Boolean   @default(false)
+  sybilBucket      Int?
   issuedAt         DateTime  @default(now())
   expiresAt        DateTime
   revokedAt        DateTime?
@@ -691,4 +701,59 @@ model NullifierRpCheck {
   createdAt DateTime @default(now())
 
   @@unique([entryRef, clientId])
+}
+
+// Anti-sybil / recovery weight config (design spec §3, phase-1 impl brief §1).
+// One row per (badgeType, qualifier). Carries TWO operator-editable weights for
+// two threat models that must never be conflated: `sybilWeight` (cost to farm a
+// fake human, feeds only the RP-facing score) and `recoveryWeight` (contribution
+// to the account-recovery threshold, migrated from assurance.ts). Category
+// membership is FK-by-name to SybilCategory (validated in app, not a DB FK).
+model BadgeWeight {
+  badgeType             String
+  qualifier             String // "*" or a resolved qualifier token (e.g. "github", "github:24")
+  sybilWeight           Int
+  recoveryWeight        Int // live/effective recovery contribution
+  category              String // FK-by-name to SybilCategory.name (validated in app, not DB FK)
+  allowSoloRecovery     Boolean   @default(false)
+  // Delayed-apply for RECOVERY weakening only (weight INCREASE). null = no pending change.
+  pendingRecoveryWeight Int?
+  recoveryEffectiveAt   DateTime?
+  updatedAt             DateTime  @updatedAt
+
+  @@id([badgeType, qualifier])
+  @@index([category])
+}
+
+// Operator-editable sybil category with a per-category cap. Membership lives on
+// each BadgeWeight row's `category` column; this table holds just name + cap.
+model SybilCategory {
+  name String @id
+  cap  Int
+}
+
+// Singleton (single row, id = "singleton"). Four raw-score cutoffs + two
+// qualifying-category breadth floors that gate buckets 3 and 4.
+model SybilBucketConfig {
+  id             String   @id @default("singleton")
+  // raw-score cutoffs
+  bucket1Raw     Int // >= this -> at least bucket 1
+  bucket2Raw     Int
+  bucket3Raw     Int
+  bucket4Raw     Int
+  // qualifying-category breadth floors
+  bucket3MinCats Int
+  bucket4MinCats Int
+  updatedAt      DateTime @updatedAt
+}
+
+// Singleton (id = "singleton"). Recovery threshold with delayed-apply. The live
+// read honors `pendingThreshold`/`thresholdEffectiveAt` (a threshold DECREASE is
+// a weakening and takes effect only after the delay window).
+model RecoveryConfig {
+  id                   String    @id @default("singleton")
+  threshold            Int // live/effective (seed 100; bounds [100,1000])
+  pendingThreshold     Int? // delayed weakening (threshold DECREASE)
+  thresholdEffectiveAt DateTime?
+  updatedAt            DateTime  @updatedAt
 }

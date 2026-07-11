@@ -70,4 +70,45 @@ export async function register(): Promise<void> {
       );
     }
   }
+
+  // Anti-sybil config integrity (anti-sybil phase 1, §3/§5). Assert every
+  // knownBadgeTypes() has a `*` BadgeWeight row and every referenced category
+  // exists — otherwise the scorer silently contributes 0 for a type and
+  // recovery would fail closed mid-attempt. Dynamic import so the edge bundle
+  // drops it.
+  //
+  // Resilient to a transient DB outage the same way the Signet check is: a
+  // QUERY error (DB briefly unreachable at boot) is logged and skipped rather
+  // than crash-looping the box; a SUCCESSFUL query that reveals genuine DRIFT
+  // is fail-loud in prod (throw) and a console.warn in dev.
+  {
+    const { checkSybilConfigDrift } = await import("@/lib/sybil-config");
+    try {
+      const { missingStarRows, danglingCategories } = await checkSybilConfigDrift();
+      if (missingStarRows.length > 0 || danglingCategories.length > 0) {
+        const detail =
+          `[instrumentation] sybil config drift: ` +
+          `${missingStarRows.length} type(s) missing a '*' BadgeWeight row ` +
+          `[${missingStarRows.join(", ")}]; ` +
+          `${danglingCategories.length} row category(ies) with no SybilCategory ` +
+          `[${danglingCategories.join(", ")}]. Run \`sybil:seed\`.`;
+        if (process.env.NODE_ENV === "production") throw new Error(detail);
+        console.warn(detail);
+      }
+    } catch (err) {
+      // A drift Error we threw above must propagate in prod. Only a genuine
+      // query/connection failure is tolerated (deferred), never masked as clean.
+      if (
+        process.env.NODE_ENV === "production" &&
+        err instanceof Error &&
+        err.message.startsWith("[instrumentation] sybil config drift:")
+      ) {
+        throw err;
+      }
+      console.warn(
+        "[instrumentation] sybil config check deferred " +
+          `(DB unreachable at boot): ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
 }
