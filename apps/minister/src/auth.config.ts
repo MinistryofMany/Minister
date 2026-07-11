@@ -72,6 +72,13 @@ export const authConfig: NextAuthConfig = {
         token.gen = user.sessionGeneration ?? 0;
       }
       if (account) {
+        // `account` is present only on a real authentication event (initial
+        // sign-in or a step-up re-auth), never on a plain JWT refresh. Stamp
+        // the authentication time so recency-sensitive actions
+        // (requireAuthRecency) can require a FRESH re-auth. A refresh (no
+        // `account`) intentionally leaves auth_time untouched — re-stamping it
+        // on refresh would let a stale session pass a recency check.
+        token.auth_time = Math.floor(Date.now() / 1000);
         const newAal = aalForProvider(account.provider);
         const existingAal = typeof token.aal === "number" ? (token.aal as Aal) : 0;
         token.aal = Math.max(existingAal, newAal) as Aal;
@@ -101,6 +108,7 @@ export const authConfig: NextAuthConfig = {
         session.sessionGeneration = token.gen;
       }
       session.aal = typeof token.aal === "number" ? (token.aal as Aal) : 0;
+      session.auth_time = typeof token.auth_time === "number" ? token.auth_time : undefined;
       if (token.recovered === true) {
         session.recovered = true;
       }
@@ -128,6 +136,10 @@ declare module "next-auth" {
     };
     sessionGeneration?: number;
     aal?: Aal;
+    // Unix seconds of the last real authentication (sign-in / step-up), stamped
+    // on the JWT only when `account` is present. Recency-sensitive actions
+    // (requireAuthRecency) gate on it; undefined means "no fresh auth on record".
+    auth_time?: number;
     recovered?: boolean;
   }
 
@@ -143,6 +155,9 @@ declare module "next-auth/jwt" {
     id?: string;
     gen?: number;
     aal?: Aal;
+    // Unix seconds of the last real authentication; set only when `account` is
+    // present (sign-in / step-up), preserved across refreshes.
+    auth_time?: number;
     recovered?: boolean;
   }
 }

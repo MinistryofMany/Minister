@@ -1,9 +1,10 @@
 import { randomBytes } from "node:crypto";
 
 import { Prisma } from "@/generated/prisma";
-import { recoveryWeightFor, RECOVERY_ELIGIBLE_TYPES, RECOVERY_THRESHOLD } from "@/lib/assurance";
+import { RECOVERY_ELIGIBLE_TYPES, RECOVERY_THRESHOLD } from "@/lib/assurance";
 import { prisma } from "@/lib/prisma";
 import { issueRecoveryTicket } from "@/lib/recovery-ticket";
+import { loadEffectiveThreshold, recoveryWeightForLive } from "@/lib/sybil-config";
 
 // Weighted-badge-threshold recovery — the accounting engine (slice 4).
 //
@@ -85,7 +86,12 @@ export type RecordReProofError =
   | { ok: false; reason: "attempt-expired" }
   | { ok: false; reason: "type-not-eligible" }
   | { ok: false; reason: "badge-not-held" }
-  | { ok: false; reason: "already-proven" };
+  | { ok: false; reason: "already-proven" }
+  // The live recovery-weight read failed (missing config row or DB read
+  // failure). We FAIL CLOSED: abort the re-proof rather than under-count the
+  // weight. Recovery is the account-takeover surface, so a config outage must
+  // never silently weaken the threshold. (impl brief §5.)
+  | { ok: false; reason: "config-unavailable" };
 
 export type RecordReProofOutcome = ({ ok: true } & ReProofResult) | RecordReProofError;
 
@@ -105,15 +111,20 @@ export interface ReProofContext {
 // the handle the UI drives every live re-proof against.
 export async function startRecoveryAttempt(
   userId: string,
-  requiredScore: number = RECOVERY_THRESHOLD,
+  requiredScore?: number,
 ): Promise<StartedRecoveryAttempt> {
+  // The live effective threshold (honoring RecoveryConfig's delayed-apply) is
+  // the default; an explicit caller override wins. RECOVERY_THRESHOLD remains
+  // the seed + the [100,1000] floor, not the runtime source of truth. We can't
+  // `await` in a default param, so resolve it here.
+  const score = requiredScore ?? (await loadEffectiveThreshold());
   const nonce = randomBytes(NONCE_BYTES).toString("base64url");
   const attempt = await prisma.recoveryAttempt.create({
     data: {
       userId,
       nonce,
       status: "pending",
-      requiredScore,
+      requiredScore: score,
       accumulatedScore: 0,
       expiresAt: new Date(Date.now() + RECOVERY_ATTEMPT_TTL_MS),
     },
@@ -181,7 +192,20 @@ export async function recordReProof(
   });
   if (!held) return { ok: false, reason: "badge-not-held" };
 
-  const weight = recoveryWeightFor(badgeType, context.provenance);
+  // Live effective recovery weight (honors the row's delayed-apply window).
+  // FAIL CLOSED: if the read throws — a missing config row
+  // (MissingRecoveryWeightError) or a DB read failure — abort the re-proof
+  // BEFORE the transaction, so accumulatedScore is never incremented. We must
+  // NEVER fall back to 0, the seed, or the pure oracle: under-weighting
+  // recovery is the account-takeover surface (impl brief §5). The weight read
+  // sits outside the P2002 try/catch below, so a config outage can never be
+  // mistaken for the "already-proven" uniqueness rejection.
+  let weight: number;
+  try {
+    weight = await recoveryWeightForLive(badgeType, context.provenance);
+  } catch {
+    return { ok: false, reason: "config-unavailable" };
+  }
 
   // Atomic: insert the proof and bump the score together. The unique
   // constraint on (attemptId, badgeType) makes the insert the no-double-count

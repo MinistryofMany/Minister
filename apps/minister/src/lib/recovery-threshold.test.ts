@@ -41,7 +41,7 @@ interface BadgeRow {
 // The store + client are built inside vi.hoisted so they exist before the
 // hoisted vi.mock("@/lib/prisma") factory runs (vi.mock is lifted to the top
 // of the module; a plain top-level const would not yet be initialized).
-const { db, client } = vi.hoisted(() => {
+const { db, client, sybil } = vi.hoisted(() => {
   const store = {
     attempts: new Map<string, AttemptRow>(),
     proofs: [] as ProofRow[],
@@ -193,10 +193,30 @@ const { db, client } = vi.hoisted(() => {
     $transaction: vi.fn(async (fn: (tx: unknown) => Promise<unknown>) => fn(prismaClient)),
   };
 
-  return { db: store, client: prismaClient };
+  // The DB-backed sybil-config loaders the engine now calls. Left un-implemented
+  // here; beforeEach installs the default behavior (recoveryWeightForLive
+  // delegates to the REAL pure `recoveryWeightFor` so every weight-correctness
+  // assertion below stays meaningful and also proves the live-read wiring;
+  // loadEffectiveThreshold returns the seed RECOVERY_THRESHOLD). Individual
+  // tests override per-case (a rejected weight read, a custom threshold).
+  const sybilMocks = {
+    recoveryWeightForLive: vi.fn(),
+    loadEffectiveThreshold: vi.fn(),
+  };
+
+  return { db: store, client: prismaClient, sybil: sybilMocks };
 });
 
 vi.mock("@/lib/prisma", () => ({ prisma: client }));
+
+// The engine reads the live effective recovery weight + threshold from
+// sybil-config (U0). Mock the module so recoveryWeightForLive delegates to the
+// real pure `recoveryWeightFor` oracle — keeping every weight-correctness
+// assertion here meaningful while exercising the new DB-backed call path.
+vi.mock("@/lib/sybil-config", () => ({
+  recoveryWeightForLive: sybil.recoveryWeightForLive,
+  loadEffectiveThreshold: sybil.loadEffectiveThreshold,
+}));
 
 // The engine's no-double-count rejection keys on
 // `err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002"`.
@@ -224,7 +244,7 @@ vi.mock("@/lib/recovery-ticket", () => ({
   issueRecoveryTicket: vi.fn(async (userId: string) => `ticket-for:${userId}`),
 }));
 
-import { RECOVERY_THRESHOLD } from "@/lib/assurance";
+import { recoveryWeightFor, RECOVERY_THRESHOLD } from "@/lib/assurance";
 import { issueRecoveryTicket } from "@/lib/recovery-ticket";
 
 import {
@@ -275,6 +295,13 @@ beforeEach(() => {
   db.badges = [];
   db.seq = 0;
   vi.clearAllMocks();
+  // Default live-config behavior, re-installed each test (clearAllMocks wipes
+  // call history but a per-test override — mockRejectedValueOnce /
+  // mockResolvedValueOnce — is consumed once then falls back to these).
+  sybil.recoveryWeightForLive.mockImplementation(async (type: string, provenance?: string) =>
+    recoveryWeightFor(type, provenance),
+  );
+  sybil.loadEffectiveThreshold.mockResolvedValue(RECOVERY_THRESHOLD);
 });
 
 afterEach(() => {
@@ -304,6 +331,53 @@ describe("startRecoveryAttempt", () => {
     const started = await startRecoveryAttempt("user_1", 60);
     expect(started.requiredScore).toBe(60);
     expect(db.attempts.get(started.attemptId)!.requiredScore).toBe(60);
+  });
+});
+
+describe("startRecoveryAttempt — effective threshold (live config)", () => {
+  it("defaults requiredScore to loadEffectiveThreshold() when none is passed", async () => {
+    // A live threshold that differs from the seed proves the attempt snapshots
+    // the DB-backed value, not the RECOVERY_THRESHOLD constant.
+    sybil.loadEffectiveThreshold.mockResolvedValueOnce(250);
+    const started = await startRecoveryAttempt("user_1");
+    expect(started.requiredScore).toBe(250);
+    expect(db.attempts.get(started.attemptId)!.requiredScore).toBe(250);
+    expect(sybil.loadEffectiveThreshold).toHaveBeenCalledTimes(1);
+  });
+
+  it("an explicit requiredScore bypasses loadEffectiveThreshold entirely", async () => {
+    const started = await startRecoveryAttempt("user_1", 60);
+    expect(started.requiredScore).toBe(60);
+    expect(sybil.loadEffectiveThreshold).not.toHaveBeenCalled();
+  });
+});
+
+describe("recordReProof — fail closed on unavailable config", () => {
+  it("aborts and does NOT increment when the live weight read throws", async () => {
+    const { attemptId } = seedAttempt({ holds: [{ type: "oauth-account" }] });
+    // A missing BadgeWeight row / DB read failure surfaces as a throw from
+    // recoveryWeightForLive. The engine must abort — never default the weight
+    // to 0 or the seed, which would under-count recovery (takeover surface).
+    sybil.recoveryWeightForLive.mockRejectedValueOnce(new Error("missing config row"));
+    const r = await recordReProof(attemptId, "oauth-account", { provenance: "github" });
+    expect(r).toEqual({ ok: false, reason: "config-unavailable" });
+    // No proof written, no score moved, attempt left pending for a retry once
+    // config is restored.
+    expect(db.proofs.length).toBe(0);
+    expect(db.attempts.get(attemptId)!.accumulatedScore).toBe(0);
+    expect(db.attempts.get(attemptId)!.status).toBe("pending");
+  });
+
+  it("recovers on the next attempt once config is available again (Once semantics)", async () => {
+    const { attemptId } = seedAttempt({ holds: [{ type: "oauth-account" }] });
+    sybil.recoveryWeightForLive.mockRejectedValueOnce(new Error("transient DB outage"));
+    expect(await recordReProof(attemptId, "oauth-account", { provenance: "github" })).toEqual({
+      ok: false,
+      reason: "config-unavailable",
+    });
+    // The `Once` rejection is spent; the default delegation is back in force.
+    const retry = await recordReProof(attemptId, "oauth-account", { provenance: "github" });
+    expect(retry).toMatchObject({ ok: true, accumulatedScore: 20 });
   });
 });
 

@@ -117,3 +117,23 @@ export function requireAal(session: Session | null, floor: Aal): void {
     throw new StepUpRequiredError(floor, current);
   }
 }
+
+// Authentication-recency guard for the most sensitive actions (editing the
+// recovery-config that governs account takeover — impl brief §5/§6). Passing
+// requireAal is not enough there: an AAL2 session can be hours old, so a
+// captured cookie stays dangerous. This demands a RECENT real authentication
+// (`session.auth_time`, stamped only on sign-in / step-up, never on refresh)
+// within `maxAgeSecs`. A missing auth_time (a pre-auth_time JWT, or a session
+// that never carried one) fails closed, as does a stale one.
+//
+// Throws StepUpRequiredError(2, session.aal ?? 0) so the caller routes into the
+// existing step-up re-auth (a passkey re-auth re-stamps auth_time and clears
+// the check). Like requireAal, this reads ONLY the passed session; pair it with
+// requireSession()/getCurrentSession() for gen/ban/merge enforcement.
+export function requireAuthRecency(session: Session | null, maxAgeSecs: number): void {
+  const authTime = session?.auth_time;
+  const nowSecs = Math.floor(Date.now() / 1000);
+  if (typeof authTime !== "number" || nowSecs - authTime > maxAgeSecs) {
+    throw new StepUpRequiredError(2, session?.aal ?? 0);
+  }
+}
