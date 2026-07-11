@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 
 import { Prisma } from "@/generated/prisma";
-import { RECOVERY_ELIGIBLE_TYPES, RECOVERY_THRESHOLD } from "@/lib/assurance";
+import { RECOVERY_ELIGIBLE_TYPES } from "@/lib/assurance";
 import { prisma } from "@/lib/prisma";
 import { issueRecoveryTicket } from "@/lib/recovery-ticket";
 import { loadEffectiveThreshold, recoveryWeightForLive } from "@/lib/sybil-config";
