@@ -23,6 +23,8 @@ export default async function AdminLayout({ children }: { children: React.ReactN
         <AdminTab href="/admin/users">Users</AdminTab>
         <AdminTab href="/admin/invite-codes">Invite codes</AdminTab>
         <AdminTab href="/admin/oidc-clients">OIDC clients</AdminTab>
+        <AdminTab href="/admin/sybil-score">Sybil score</AdminTab>
+        <AdminTab href="/admin/recovery-config">Recovery config</AdminTab>
         <AdminTab href="/admin/audit">Audit log</AdminTab>
       </nav>
 
