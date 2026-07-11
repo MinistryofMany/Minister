@@ -275,11 +275,12 @@ instantly). Mandatory guardrails:
   threshold _decreases_ take effect after a **72h delay** (reuse
   `CREDENTIAL_QUARANTINE_MS`), with a notification, so a human sees a weakening
   before it gains power. This moots the live-read attack direction.
-- **AAL2 step-up** to edit recovery config (`requireAal`/`StepUpRequiredError`
-  exist). Note: `requireAal` checks the session's AAL, **not recency** - a passkey
-  session is AAL2 for 24h. Minister has no `auth_time` recency today. Either add a
-  small recency check or the spec says "AAL2 session" (not "fresh"); do not claim
-  a property the code can't express. **Decision needed** (§12).
+- **Fresh AAL2 step-up** to edit recovery config. `requireAal` today checks the
+  session's AAL, **not recency** - a passkey session is AAL2 for 24h, and Minister
+  has no `auth_time` recency check. DECIDED (owner): **build a small `auth_time`
+  recency check** so a recovery-config edit requires a _recent_ re-authentication,
+  not just a day-old AAL2 session. This is a Phase-1 deliverable, since it is a
+  precondition for the recovery-weight editor.
 - **Audit + broadcast**: `AuditLog` (actor, before/after, ts) **plus email to all
   admins** on any recovery-config change - a lone compromised admin can't weaken
   recovery silently.
@@ -366,7 +367,9 @@ Three min-bucket dials, each `0` = off: `siteMinBucket`, `discoveryMinBucket`
 (home feed + directory), per-sub-forum `viewMinBucket`. Effective bar for a page =
 **max** of the applicable dials. Defaults: site 0, discovery 0 (public shopfront),
 per-sub-forum 0 (public) - the recommended default from the brainstorm, every
-higher wall one toggle away. Clamp all dials to 0-4 server-side.
+higher wall one toggle away. When an operator **enables** a sub-forum's gate, it
+defaults to **bucket 1** (any single proof - welcoming to newcomers), raisable per
+sub-forum. Clamp all dials to 0-4 server-side.
 
 ### 8.3 Enforcement (choke-point, fail-closed, row-filtering)
 
@@ -466,14 +469,15 @@ Each phase: typecheck + tests + `next build` (the real Next gate) green.
 omission (§4); the stats attribute allowlist + rounding (§6); and the Deforum gate
 choke-point + feed/directory row filtering (§8).
 
-## 12. Decisions still needed from the owner
+## 12. Decisions (resolved 2026-07-11, owner)
 
-- **AAL freshness**: build a small `auth_time` recency check so recovery-config
-  edits require a _fresh_ step-up, or accept "any AAL2 session" and note the gap?
-  (Deep-solver leans: build the recency check - it is small and this is
-  account-security config.)
-- **Default Deforum gate** for opted-in sub-forums: bucket **1** (welcoming: any
-  proof) or **2** (one solid proof)? Reserve 3-4 for `siteMinBucket` scrape-wave
-  emergencies.
-- **Publish raw weights** on the public page (recommended yes, paired with the
-  dollar-cost table) vs categories + bucket meaning only?
+- **AAL freshness**: DECIDED - **build the `auth_time` recency check** so
+  recovery-config edits require a fresh step-up (Phase 1). See §5.4.
+- **Default Deforum gate** for opted-in sub-forums: DECIDED - **bucket 1** (any
+  single proof; welcoming). Raisable per sub-forum; reserve 3-4 for `siteMinBucket`
+  scrape-wave emergencies. See §8.2.
+- **Publish raw weights**: DECIDED - **yes, the full recipe + per-bucket
+  dollar-cost price list** on the public page (§6). Secrecy buys nothing against a
+  probing farmer; transparency is the differentiator.
+
+No open questions remain. Ready for the phased build (each phase auditor-checked).
