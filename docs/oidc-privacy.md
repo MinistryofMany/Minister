@@ -15,9 +15,41 @@ userId || clientId))`. Different per client; never email, never a stable global 
   requests only the types a room requires; with a structured `minister_policy` requirement
   the disclosure is minimized server-side to one minimal satisfying set (see "Disclosure
   model" in `CLAUDE.md` / `docs/status.md`).
+- **`sybil-score` scope** - a single coarse claim, `sybil_bucket` (an integer 0-4), the
+  user's account-strength band. Opt-in, default OFF, snapshotted at consent (see below).
 - **Email is never disclosed.** There is no `email` scope and no email claim anywhere
-  in the OIDC code. `scopes_supported` = `openid`, `profile`, `badge:*`; the claims
-  resolver (`oidc-claims.ts`) never even loads an email field.
+  in the OIDC code. `scopes_supported` = `openid`, `profile`, `sybil-score`, `badge:*`; the
+  claims resolver (`oidc-claims.ts`) never even loads an email field.
+
+## Anti-sybil bucket (`sybil_bucket`) — resolution & correlation posture
+
+The `sybil-score` scope discloses one integer, `sybil_bucket ∈ {0,1,2,3,4}` — a coarse
+"how hard is this account to fake" band, never the raw score and never the underlying
+badges. Privacy properties, all load-bearing:
+
+- **~2.3 bits of entropy, dominated by the pairwise `sub`.** Five buckets carry at most
+  `log2(5) ≈ 2.32` bits. The `sub` an RP already holds is a full pairwise pseudonym
+  (128-bit HMAC), so the bucket adds a _negligible_ within-RP fingerprint on top of an
+  identifier that is already unique. As a **cross-RP** correlator it is near-useless: two
+  colluding RPs see different pairwise `sub`s and, at best, a 5-way bucket that a large
+  fraction of users share — far too coarse to join on.
+- **Do NOT increase the resolution without a fresh privacy re-review.** The whole
+  guarantee rests on the bucket being coarse (5 bands). Widening it (more buckets,
+  exposing the raw score, or adding per-category detail) turns a negligible correlator
+  into a real cross-RP / fingerprinting vector and MUST be re-reviewed before shipping.
+- **It leaks the aggregate existence of undisclosed holdings, by design.** The bucket is
+  computed over _all_ the user's native, unexpired badges — including ones they did NOT
+  disclose to this RP. So a high bucket tells the RP "this account holds strong
+  credentials somewhere" without saying which. This is intentional (it is the point of an
+  anti-sybil signal) and the consent copy states it plainly: _"This shows how hard your
+  account is to fake. It does not reveal which badges you have."_
+- **Snapshotted once, at consent — never recomputed.** The bucket is computed a single
+  time in `approveConsent`, stamped onto the authorization code (`sybilScore` grant bool +
+  `sybilBucket`), and denormalized onto the access token. `/oidc/token` and
+  `/oidc/userinfo` read that stored value back verbatim; they never re-score. So the value
+  an RP sees reflects the user's holdings _at the moment they consented_, and later badge
+  changes do not silently alter an outstanding grant. Compute failure at consent
+  fail-closed-omits the claim (audited, login unaffected).
 
 ## Decided intent (Tyler, 2026-06-17)
 

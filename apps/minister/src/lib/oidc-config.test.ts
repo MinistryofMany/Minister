@@ -87,4 +87,10 @@ describe("getOidcDiscovery", () => {
   it("includes the minister_badges custom claim in claims_supported", () => {
     expect(getOidcDiscovery().claims_supported).toContain("minister_badges");
   });
+
+  it("advertises the sybil-score scope and the sybil_bucket claim", () => {
+    const d = getOidcDiscovery();
+    expect(d.scopes_supported).toContain("sybil-score");
+    expect(d.claims_supported).toContain("sybil_bucket");
+  });
 });

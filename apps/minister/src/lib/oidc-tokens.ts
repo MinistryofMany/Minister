@@ -73,6 +73,10 @@ export interface IdTokenClaims {
   name?: string;
   picture?: string;
   minister_badges?: string[];
+  // Coarse anti-sybil bucket (0-4), snapshotted at consent. Emitted iff
+  // present; an undefined value means "not granted / omitted at consent" and is
+  // dropped from the JWT. 0 is a real value — the `!== undefined` check keeps it.
+  sybil_bucket?: number;
 }
 
 export async function mintIdToken(issuer: Issuer, claims: IdTokenClaims): Promise<string> {
@@ -84,6 +88,8 @@ export async function mintIdToken(issuer: Issuer, claims: IdTokenClaims): Promis
   if (claims.minister_badges && claims.minister_badges.length > 0) {
     payload.minister_badges = claims.minister_badges;
   }
+  // `!== undefined`, never falsy: bucket 0 is a real disclosed value.
+  if (claims.sybil_bucket !== undefined) payload.sybil_bucket = claims.sybil_bucket;
 
   // Tokens sign with the in-process token key (#key-3), never KMS: an id_token
   // can exceed KMS's 4096-byte RAW-sign limit once several badges are embedded.

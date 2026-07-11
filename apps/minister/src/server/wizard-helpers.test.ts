@@ -163,6 +163,7 @@ describe("effectiveScopes", () => {
     expect(
       effectiveScopes(["openid"], {
         approveProfile: false,
+        approveSybilScore: false,
         approvedBadgeIds: [],
         userBadges: [],
       }),
@@ -173,6 +174,7 @@ describe("effectiveScopes", () => {
     expect(
       effectiveScopes(["openid", "profile"], {
         approveProfile: true,
+        approveSybilScore: false,
         approvedBadgeIds: [],
         userBadges: [],
       }),
@@ -180,6 +182,7 @@ describe("effectiveScopes", () => {
     expect(
       effectiveScopes(["openid", "profile"], {
         approveProfile: false,
+        approveSybilScore: false,
         approvedBadgeIds: [],
         userBadges: [],
       }),
@@ -190,6 +193,7 @@ describe("effectiveScopes", () => {
     expect(
       effectiveScopes(["openid", "badge:email-domain"], {
         approveProfile: false,
+        approveSybilScore: false,
         approvedBadgeIds: ["b_1"],
         userBadges,
       }),
@@ -200,6 +204,7 @@ describe("effectiveScopes", () => {
     expect(
       effectiveScopes(["openid", "badge:email-domain"], {
         approveProfile: false,
+        approveSybilScore: false,
         approvedBadgeIds: ["b_2"], // wrong type
         userBadges,
       }),
@@ -210,6 +215,7 @@ describe("effectiveScopes", () => {
     expect(
       effectiveScopes(["openid", "badge:email-domain"], {
         approveProfile: false,
+        approveSybilScore: false,
         approvedBadgeIds: [],
         userBadges,
       }),
@@ -220,6 +226,7 @@ describe("effectiveScopes", () => {
     expect(
       effectiveScopes(["openid", "profile", "badge:email-domain", "badge:oauth-account"], {
         approveProfile: true,
+        approveSybilScore: false,
         approvedBadgeIds: ["b_2"],
         userBadges,
       }),
@@ -230,6 +237,26 @@ describe("effectiveScopes", () => {
     expect(
       effectiveScopes(["openid", "fancy_unknown_scope"], {
         approveProfile: false,
+        approveSybilScore: false,
+        approvedBadgeIds: [],
+        userBadges: [],
+      }),
+    ).toEqual(["openid"]);
+  });
+
+  it("preserves sybil-score only if approveSybilScore is true", () => {
+    expect(
+      effectiveScopes(["openid", "sybil-score"], {
+        approveProfile: false,
+        approveSybilScore: true,
+        approvedBadgeIds: [],
+        userBadges: [],
+      }),
+    ).toEqual(["openid", "sybil-score"]);
+    expect(
+      effectiveScopes(["openid", "sybil-score"], {
+        approveProfile: false,
+        approveSybilScore: false,
         approvedBadgeIds: [],
         userBadges: [],
       }),

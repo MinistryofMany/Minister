@@ -40,7 +40,10 @@ export function validateClientId(clientId: string): ClientIdResult {
 }
 
 export function allOidcScopes(): string[] {
-  return [...BASE_SCOPES, ...badgeScopes()];
+  // `sybil-score` is a non-badge disclosure scope (coarse anti-sybil bucket),
+  // assignable to a client exactly like `profile`. Listed here so the admin
+  // OIDC-client editor can grant it and validateClientScopes accepts it.
+  return [...BASE_SCOPES, "sybil-score", ...badgeScopes()];
 }
 
 export type RedirectUrisResult = { ok: true; uris: string[] } | { ok: false; error: string };

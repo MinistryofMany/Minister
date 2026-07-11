@@ -7,12 +7,15 @@ import { z } from "zod";
 
 import { audit } from "@/lib/audit";
 import { holderCountsByType } from "@/lib/anonymity-sets";
+import { getIssuer } from "@/lib/issuer";
 import { buildErrorRedirect, buildSuccessRedirect } from "@/lib/oidc-authorize";
 import { loadGrant, upsertGrant } from "@/lib/oidc-grants";
 import { type PolicyNode, type UserBadge } from "@/lib/oidc-policy";
 import { verifyOidcRequest } from "@/lib/oidc-request-token";
 import { prisma } from "@/lib/prisma";
 import { getCurrentSession } from "@/lib/session";
+import { loadSybilScoringConfig, type ScorableBadge } from "@/lib/sybil-config";
+import { sybilScore } from "@/lib/sybil-score";
 import { minimizeToPolicy, toPolicyUserBadge } from "@/server/oidc-consent-minimize";
 import { normalizeProfileInput } from "@/server/profile-validation";
 import { effectiveScopes } from "@/server/wizard-helpers";
@@ -24,6 +27,10 @@ const ApproveInput = z.object({
   // approve their display name, their avatar, neither, or both.
   approveName: z.boolean(),
   approveAvatar: z.boolean(),
+  // Whether the user approved disclosing their coarse anti-sybil bucket. The
+  // scope must also have been requested (masked server-side below); the bucket
+  // itself is computed here at consent, never trusted from the client.
+  approveSybilScore: z.boolean(),
   // The raw inline-edit text for the per-RP persona (snapshot per app). Only
   // meaningful for a field whose toggle is on; validated + snapshotted into
   // OidcProfileOverride below. Optional so an old client or a name-only
@@ -153,6 +160,12 @@ export async function approveConsent(
   // persisted separately so the resolver can emit them independently.
   const approveProfile = approveName || approveAvatar;
 
+  // Anti-sybil bucket disclosure (mirrors the profile mask). The scope gates
+  // it authoritatively: a client that never requested `sybil-score` can never
+  // get a bucket even if a tampered POST sets approveSybilScore true.
+  const sybilScoreRequested = request.scopes.includes("sybil-score");
+  const approveSybilScore = sybilScoreRequested && parsed.data.approveSybilScore;
+
   // Per-RP profile persona (snapshot per app). Validate the inline-edit text
   // for whichever field(s) were approved this round, using the same validator
   // the global profile editor uses (it validates BOTH fields together and
@@ -181,6 +194,42 @@ export async function approveConsent(
   if (approveName) overrideWrite.displayName = overrideName;
   if (approveAvatar) overrideWrite.avatarUrl = overrideAvatar;
 
+  // Compute the coarse anti-sybil bucket EXACTLY ONCE, here at consent, and
+  // snapshot it onto the auth code. It is NEVER recomputed at /token or
+  // /userinfo — those read the stamped value back verbatim. FAIL-CLOSED-OMIT:
+  // any error computing the bucket (badge load, config load, issuer load)
+  // leaves `sybilBucket` null so the resolver omits the claim, audits the
+  // omission, and lets the login proceed unaffected. The scorer itself is pure
+  // and never throws; only the surrounding I/O can. Bucket 0 is a real value —
+  // null strictly means "not computed / omitted", distinct from a computed 0.
+  let sybilBucket: number | null = null;
+  if (approveSybilScore) {
+    try {
+      const [scorableBadges, config, issuer] = await Promise.all([
+        loadScorableBadges(session.user.id),
+        loadSybilScoringConfig(),
+        getIssuer(),
+      ]);
+      sybilBucket = sybilScore(scorableBadges, config, {
+        now: Date.now(),
+        nativeIssuerDid: issuer.did,
+      }).bucket;
+    } catch (err) {
+      sybilBucket = null;
+      const reason = err instanceof Error ? err.message : String(err);
+      // audit() is a bare prisma write; guard it so an audit-write failure in a
+      // degraded DB can never itself break the login this omit path protects.
+      try {
+        await audit(session.user.id, "oidc.sybil_score_omitted", {
+          clientId: request.clientId,
+          reason,
+        });
+      } catch (auditErr) {
+        console.error("[oidc-actions] failed to write sybil omit audit:", auditErr);
+      }
+    }
+  }
+
   const code = newAuthCode();
   // The types actually disclosed this round (the minimized set). These — not
   // the whole locked set — are what we record into the grant, so the grant
@@ -202,6 +251,7 @@ export async function approveConsent(
         // scope kept only if at least one badge of that type was disclosed.
         scopes: effectiveScopes(request.scopes, {
           approveProfile,
+          approveSybilScore,
           approvedBadgeIds,
           userBadges,
         }),
@@ -211,6 +261,11 @@ export async function approveConsent(
         // grant off the stale pre-check.
         profileName: approveName,
         profileAvatar: approveAvatar,
+        // Anti-sybil snapshot: the grant boolean + the bucket computed once
+        // above. Masked to false unless `sybil-score` was requested. The bucket
+        // is null when omitted (declined / not requested / compute failed).
+        sybilScore: approveSybilScore,
+        sybilBucket,
         // Echoed back in id_token at /token time — see CLAUDE.md.
         nonce: request.nonce,
         codeChallenge: request.codeChallenge,
@@ -228,6 +283,10 @@ export async function approveConsent(
       badgeIds: approvedBadgeIds,
       profileName: approveName,
       profileAvatar: approveAvatar,
+      // Record that the account-strength bucket was disclosed to this client,
+      // so the next visit's consent pre-checks it (mirrors profile). Union-OR
+      // accumulated inside upsertGrant.
+      sybilScore: approveSybilScore,
     });
     // Snapshot the per-RP profile persona ATOMICALLY with the grant/auth-code:
     // a failed consent must not leave a persona for an RP the user didn't
@@ -255,6 +314,8 @@ export async function approveConsent(
     disclosedBadgeIds: approvedBadgeIds,
     disclosedProfileName: approveName,
     disclosedProfileAvatar: approveAvatar,
+    disclosedSybilScore: approveSybilScore,
+    sybilBucket,
   });
 
   redirect(buildSuccessRedirect(request.redirectUri, code, request.state));
@@ -305,6 +366,24 @@ async function loadBadgesForUser(userId: string, badgeIds: string[]): Promise<Us
     select: { id: true, type: true, attributes: true, issuedAt: true },
   });
   return rows.map(toPolicyUserBadge);
+}
+
+// Load ALL of a user's badges in the shape the pure sybil scorer consumes
+// (`type`, denormalized `attributes`, `expiresAt`, `issuer`). The scorer itself
+// applies the native-issuer + unexpired hygiene, so this is deliberately an
+// unfiltered read of every held badge. Distinct from loadBadgesForUser (which
+// is scoped to submitted ids and shaped for policy minimization).
+async function loadScorableBadges(userId: string): Promise<ScorableBadge[]> {
+  const rows = await prisma.badge.findMany({
+    where: { userId },
+    select: { type: true, attributes: true, expiresAt: true, issuer: true },
+  });
+  return rows.map((row) => ({
+    type: row.type,
+    attributes: row.attributes as Record<string, unknown>,
+    expiresAt: row.expiresAt,
+    issuer: row.issuer,
+  }));
 }
 
 // Union two badge lists by id, preserving the first occurrence. Order is

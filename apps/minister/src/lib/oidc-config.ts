@@ -55,7 +55,7 @@ export function getOidcDiscovery(): OidcDiscovery {
     // unlinkability across RPs.
     subject_types_supported: ["pairwise"],
     id_token_signing_alg_values_supported: ["EdDSA"],
-    scopes_supported: ["openid", "profile", ...badgeScopes()],
+    scopes_supported: ["openid", "profile", "sybil-score", ...badgeScopes()],
     token_endpoint_auth_methods_supported: [
       "client_secret_basic",
       "client_secret_post",
@@ -72,6 +72,9 @@ export function getOidcDiscovery(): OidcDiscovery {
       "name",
       "picture",
       "minister_badges",
+      // Coarse anti-sybil bucket (0-4). Snapshotted at consent, emitted only
+      // when the RP was granted the `sybil-score` scope. See docs/oidc-privacy.md.
+      "sybil_bucket",
     ],
   };
 }

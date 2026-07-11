@@ -84,6 +84,11 @@ export interface ResolvedUserClaims {
   // emit the upstream auth identity.
   name?: string;
   picture?: string;
+  // Coarse anti-sybil bucket (0-4), snapshotted at consent. Present ONLY when
+  // the `sybil-score` grant is true AND a bucket was actually stamped (non-null)
+  // at consent — never recomputed here. Absent (property omitted) otherwise.
+  // 0 is a real value and is emitted; only null/ungranted omit the claim.
+  sybilBucket?: number;
   // The approved badges' VC JWTs. Empty array means "emit no
   // minister_badges claim" — callers check length before attaching.
   ministerBadges: string[];
@@ -119,13 +124,28 @@ export interface ResolvedUserClaims {
 // Pure given its inputs (the global curated profile, the per-RP override
 // snapshot, the per-claim grant, the already loaded badge JWTs) so it can be
 // unit-tested without a database.
+// The sybil-score disclosure is snapshotted at consent (the grant boolean +
+// the bucket stamped on the auth code, denormalized onto the access token) and
+// passed in here — never recomputed. This resolver only GATES emission:
+//   - `sybilScoreGrant` false            -> omit (RP was not granted the scope);
+//   - `sybilBucket` null                 -> omit (compute failed / omitted at
+//                                            consent — fail-closed-omit);
+//   - both satisfied                     -> emit `sybilBucket` verbatim.
+// Bucket 0 is a REAL disclosed value ("hardest to fake: no"), so it must NOT be
+// dropped — the gate is `!== null`, never falsy.
 export function resolveUserClaims(
   user: ClaimsUser,
   profile: ProfileGrant,
   approvedBadgeJwts: string[],
   override: ProfileOverride | null,
+  sybilScoreGrant: boolean,
+  sybilBucket: number | null,
 ): ResolvedUserClaims {
   const resolved: ResolvedUserClaims = { ministerBadges: approvedBadgeJwts };
+
+  if (sybilScoreGrant && sybilBucket !== null) {
+    resolved.sybilBucket = sybilBucket;
+  }
 
   if (profile.name) {
     const name = override ? override.displayName : user.displayName;

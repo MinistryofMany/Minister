@@ -54,6 +54,16 @@ interface Props {
   // update it or untick to stop. A field never shared with this client stays
   // default OFF - "always unselected by default" applies to new disclosures.
   previouslyShared: { name: boolean; avatar: boolean };
+  // Whether the RP requested the `sybil-score` scope this round. When false the
+  // account-strength card is not rendered.
+  wantsSybilScore: boolean;
+  // The coarse account-strength bucket (0-4) previewed on the card, or null
+  // when it could not be computed (the numeral is then dropped). Advisory only;
+  // consent-approve recomputes the authoritative snapshot server-side.
+  sybilBucketPreview: number | null;
+  // Whether the user has EVER disclosed their account-strength bucket to this
+  // client (durable grant). Re-login pre-checks it, mirroring name/avatar.
+  previouslySybilScore: boolean;
   badgeChoices: BadgeChoiceGroup[];
   // Phase-3 transparency: badge types already disclosed to this client AND
   // requested by this room. Rendered in a separate locked section, auto-
@@ -72,6 +82,9 @@ export function ConsentScreen({
   wantsProfile,
   profilePreview,
   previouslyShared,
+  wantsSybilScore,
+  sybilBucketPreview,
+  previouslySybilScore,
   badgeChoices,
   alreadyGranted,
   policyView,
@@ -100,6 +113,12 @@ export function ConsentScreen({
   // (the server masks too, but keep the UI truthful).
   const [nameAllowed, setNameAllowed] = useState(wantsProfile && previouslyShared.name);
   const [avatarAllowed, setAvatarAllowed] = useState(wantsProfile && previouslyShared.avatar);
+  // Account-strength disclosure. Default OFF for a client the user never shared
+  // it with; pre-checked only on a re-login where they previously did (mirrors
+  // the name/avatar re-login default).
+  const [sybilScoreAllowed, setSybilScoreAllowed] = useState(
+    wantsSybilScore && previouslySybilScore,
+  );
   // Editable per-RP persona (snapshot per app), seeded from the effective
   // value (override ?? global). Only sent for a field whose toggle is on.
   const [nameValue, setNameValue] = useState(profilePreview.displayName ?? "");
@@ -169,6 +188,9 @@ export function ConsentScreen({
         approvedBadgeIds,
         approveName: nameAllowed,
         approveAvatar: avatarAllowed,
+        // Account-strength disclosure. The server re-gates on the requested
+        // scope and computes the bucket itself; this is only the user's choice.
+        approveSybilScore: sybilScoreAllowed,
         // The per-RP persona text. Only meaningful (and only persisted) for a
         // field whose toggle is on; the server re-gates on approveName/Avatar.
         nameValue,
@@ -289,6 +311,43 @@ export function ConsentScreen({
               This name and avatar are used only for {clientName} and override your global default.
               You can change or remove them anytime in Settings → Connected apps.
             </p>
+          </CardContent>
+        </Card>
+      ) : null}
+
+      {wantsSybilScore ? (
+        <Card>
+          <CardContent className="space-y-3 py-4">
+            <div>
+              <h3 className="text-sm font-semibold">Account strength</h3>
+              <p className="text-sm text-neutral-600 dark:text-neutral-400">
+                {sybilBucketPreview !== null
+                  ? `Share your account-strength level: ${sybilBucketPreview} of 4.`
+                  : "Share your account-strength level."}{" "}
+                This shows how hard your account is to fake. It does not reveal which badges you
+                have.
+              </p>
+            </div>
+
+            <div className="rounded-md border border-neutral-200 p-2 dark:border-neutral-800">
+              <label htmlFor="scope-sybil-score" className="flex items-start gap-3">
+                <input
+                  id="scope-sybil-score"
+                  type="checkbox"
+                  className="mt-1 h-4 w-4"
+                  checked={sybilScoreAllowed}
+                  onChange={(e) => setSybilScoreAllowed(e.target.checked)}
+                />
+                <span className="flex-1 text-sm">
+                  <span className="block font-medium">Account-strength level</span>
+                  <span className="text-neutral-600 dark:text-neutral-400">
+                    {previouslySybilScore
+                      ? `You currently share your account-strength level with ${clientName}. Untick to stop sharing.`
+                      : `Share your account-strength level with ${clientName}.`}
+                  </span>
+                </span>
+              </label>
+            </div>
           </CardContent>
         </Card>
       ) : null}

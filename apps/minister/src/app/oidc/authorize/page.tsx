@@ -8,6 +8,7 @@ import { ConsentScreen } from "@/components/consent-screen";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { holderCountsByType } from "@/lib/anonymity-sets";
 import { loadUserBadges, summarizeAttributes, type DisplayBadge } from "@/lib/badges";
+import { getIssuer } from "@/lib/issuer";
 import { buildErrorRedirect, validateAuthorizeRequest } from "@/lib/oidc-authorize";
 import { loadProfileOverride } from "@/lib/oidc-claims";
 import { grantedRelevantBadgeIds, loadGrant } from "@/lib/oidc-grants";
@@ -22,6 +23,8 @@ import { signOidcRequest } from "@/lib/oidc-request-token";
 import { prisma } from "@/lib/prisma";
 import { clientIpFrom, oidcAuthorizeLimiter } from "@/lib/rate-limit";
 import { getCurrentSession } from "@/lib/session";
+import { loadSybilScoringConfig } from "@/lib/sybil-config";
+import { sybilScore } from "@/lib/sybil-score";
 
 interface PageProps {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
@@ -144,6 +147,32 @@ export default async function OidcAuthorizePage({ searchParams }: PageProps) {
     avatarUrl: profileOverride ? profileOverride.avatarUrl : (profileUser?.avatarUrl ?? null),
   };
 
+  // Anti-sybil bucket preview for the consent card. Advisory only: consent-
+  // approve recomputes the authoritative snapshot (and fail-closed-omits on
+  // error). So here we fail SOFT — any error renders the card without a numeral
+  // (null) rather than blocking the login. Phase 1 shows only the bucket number
+  // + fixed copy; no live bucket-class-size hint (needs Phase-2 stats).
+  const wantsSybilScore = request.scopes.includes("sybil-score");
+  let sybilBucketPreview: number | null = null;
+  if (wantsSybilScore) {
+    try {
+      const [sybilConfig, issuer] = await Promise.all([loadSybilScoringConfig(), getIssuer()]);
+      sybilBucketPreview = sybilScore(
+        allBadges.map((b) => ({
+          type: b.type,
+          attributes: b.attributes,
+          expiresAt: b.expiresAt,
+          issuer: b.issuer,
+        })),
+        sybilConfig,
+        { now: Date.now(), nativeIssuerDid: issuer.did },
+      ).bucket;
+    } catch (err) {
+      console.error("[authorize] failed to preview sybil bucket:", err);
+      sybilBucketPreview = null;
+    }
+  }
+
   return (
     <div className="mx-auto flex max-w-lg flex-col gap-6 px-4 py-12">
       <header className="space-y-1">
@@ -159,6 +188,9 @@ export default async function OidcAuthorizePage({ searchParams }: PageProps) {
         wantsProfile={wantsProfile}
         profilePreview={profilePreview}
         previouslyShared={{ name: grant.profileName, avatar: grant.profileAvatar }}
+        wantsSybilScore={wantsSybilScore}
+        sybilBucketPreview={sybilBucketPreview}
+        previouslySybilScore={grant.sybilScore}
         badgeChoices={badgeChoices}
         alreadyGranted={alreadyGranted}
         policyView={policyView}

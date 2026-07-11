@@ -125,6 +125,10 @@ export async function GET(request: Request) {
     { name: row.profileName, avatar: row.profileAvatar },
     approvedBadgeJwts,
     profileOverride,
+    // Anti-sybil snapshot denormalized onto the access-token row at /token —
+    // read back, never recomputed, so /userinfo matches the ID token exactly.
+    row.sybilScore,
+    row.sybilBucket,
   );
 
   const claims: Record<string, unknown> = {
@@ -137,6 +141,8 @@ export async function GET(request: Request) {
   // independent name/avatar gate the ID token applies.
   if (resolved.name !== undefined) claims.name = resolved.name;
   if (resolved.picture !== undefined) claims.picture = resolved.picture;
+  // `!== undefined`, never falsy: bucket 0 is a real disclosed value.
+  if (resolved.sybilBucket !== undefined) claims.sybil_bucket = resolved.sybilBucket;
 
   if (resolved.ministerBadges.length > 0) {
     claims.minister_badges = resolved.ministerBadges;

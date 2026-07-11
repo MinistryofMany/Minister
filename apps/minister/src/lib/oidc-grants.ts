@@ -23,6 +23,10 @@ export interface GrantState {
   badgeIds: string[];
   profileName: boolean;
   profileAvatar: boolean;
+  // Whether the coarse anti-sybil bucket was ever disclosed to this client.
+  // Drives the consent pre-check default only (mirrors profileName/avatar);
+  // the authoritative per-grant disclosure is snapshotted on the auth code.
+  sybilScore: boolean;
 }
 
 const EMPTY_GRANT: GrantState = {
@@ -30,6 +34,7 @@ const EMPTY_GRANT: GrantState = {
   badgeIds: [],
   profileName: false,
   profileAvatar: false,
+  sybilScore: false,
 };
 
 // Read the durable grant for a user+client. Returns an empty grant (no
@@ -39,7 +44,13 @@ const EMPTY_GRANT: GrantState = {
 export async function loadGrant(userId: string, clientId: string): Promise<GrantState> {
   const row = await prisma.oidcGrant.findUnique({
     where: { userId_clientId: { userId, clientId } },
-    select: { badgeTypes: true, badgeIds: true, profileName: true, profileAvatar: true },
+    select: {
+      badgeTypes: true,
+      badgeIds: true,
+      profileName: true,
+      profileAvatar: true,
+      sybilScore: true,
+    },
   });
   if (!row) return { ...EMPTY_GRANT };
   return {
@@ -47,6 +58,7 @@ export async function loadGrant(userId: string, clientId: string): Promise<Grant
     badgeIds: row.badgeIds,
     profileName: row.profileName,
     profileAvatar: row.profileAvatar,
+    sybilScore: row.sybilScore,
   };
 }
 
@@ -92,12 +104,19 @@ export async function upsertGrant(
     badgeIds: string[];
     profileName: boolean;
     profileAvatar: boolean;
+    sybilScore: boolean;
   },
 ): Promise<void> {
-  const { userId, clientId, badgeTypes, badgeIds, profileName, profileAvatar } = params;
+  const { userId, clientId, badgeTypes, badgeIds, profileName, profileAvatar, sybilScore } = params;
   const existing = await tx.oidcGrant.findUnique({
     where: { userId_clientId: { userId, clientId } },
-    select: { badgeTypes: true, badgeIds: true, profileName: true, profileAvatar: true },
+    select: {
+      badgeTypes: true,
+      badgeIds: true,
+      profileName: true,
+      profileAvatar: true,
+      sybilScore: true,
+    },
   });
   const mergedTypes = unionTypes(existing?.badgeTypes ?? [], badgeTypes);
   const mergedIds = unionTypes(existing?.badgeIds ?? [], badgeIds);
@@ -110,12 +129,14 @@ export async function upsertGrant(
       badgeIds: mergedIds,
       profileName,
       profileAvatar,
+      sybilScore,
     },
     update: {
       badgeTypes: { set: mergedTypes },
       badgeIds: { set: mergedIds },
       profileName: (existing?.profileName ?? false) || profileName,
       profileAvatar: (existing?.profileAvatar ?? false) || profileAvatar,
+      sybilScore: (existing?.sybilScore ?? false) || sybilScore,
     },
   });
 }

@@ -234,6 +234,7 @@ describe("flat / no-policy granted fold — W1 over-disclosure", () => {
       badgeIds: ["github"],
       profileName: false,
       profileAvatar: false,
+      sybilScore: false,
     };
     // The room re-requests oauth-account with NO policy; the user re-ticks
     // nothing (the locked box shows only github).
@@ -258,6 +259,7 @@ describe("flat / no-policy granted fold — W1 over-disclosure", () => {
       badgeIds: ["github"],
       profileName: false,
       profileAvatar: false,
+      sybilScore: false,
     };
     // User this time chooses to also disclose google (submitted explicitly).
     const foldedIds = grantedRelevantBadgeIds(grant, requestedTypes, owned);
@@ -273,6 +275,7 @@ describe("flat / no-policy granted fold — W1 over-disclosure", () => {
       badgeIds: ["github"],
       profileName: false,
       profileAvatar: false,
+      sybilScore: false,
     };
     // Submitted is empty (the locked box was stripped client-side); the fold
     // re-adds github from the grant, but never google.

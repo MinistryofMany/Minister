@@ -174,6 +174,11 @@ export async function POST(request: Request) {
     { name: stored.profileName, avatar: stored.profileAvatar },
     minister_badges,
     profileOverride,
+    // Snapshotted anti-sybil disclosure from the auth code — the bucket is
+    // NEVER recomputed here; the resolver only gates emission on the stamped
+    // grant + bucket.
+    stored.sybilScore,
+    stored.sybilBucket,
   );
 
   const idToken = await mintIdToken(issuer, {
@@ -184,6 +189,8 @@ export async function POST(request: Request) {
     name: userClaims.name,
     picture: userClaims.picture,
     minister_badges: userClaims.ministerBadges.length > 0 ? userClaims.ministerBadges : undefined,
+    // undefined when not granted / omitted at consent — mintIdToken drops it.
+    sybil_bucket: userClaims.sybilBucket,
   });
 
   // jti links the access JWT to a server-side OidcAccessToken row.
@@ -203,6 +210,10 @@ export async function POST(request: Request) {
       // exact same name/avatar the ID token did.
       profileName: stored.profileName,
       profileAvatar: stored.profileAvatar,
+      // Denormalize the anti-sybil snapshot so /userinfo emits the identical
+      // bucket the ID token carried — never a recomputed one.
+      sybilScore: stored.sybilScore,
+      sybilBucket: stored.sybilBucket,
       expiresAt: accessTokenExpiresAt,
     },
   });

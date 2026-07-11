@@ -421,6 +421,11 @@ model OidcGrant {
   // client. Union-OR accumulated. Drives the transparency display only.
   profileName   Boolean  @default(false)
   profileAvatar Boolean  @default(false)
+  // Whether the coarse anti-sybil bucket was ever disclosed to this client.
+  // Union-OR accumulated. Drives the consent pre-check default only (mirrors
+  // profileName/profileAvatar) — never a substitute for the per-grant snapshot
+  // on OidcAuthorizationCode/OidcAccessToken.
+  sybilScore    Boolean  @default(false)
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 

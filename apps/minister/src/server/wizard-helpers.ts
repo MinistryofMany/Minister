@@ -73,12 +73,15 @@ export function toClientState(state: WizardState): WizardState {
 //     consent has already happened by the time we get here).
 //   - `profile` is preserved only if the user ticked the profile-card
 //     toggle.
+//   - `sybil-score` is preserved only if the user approved the
+//     account-strength disclosure.
 //   - `badge:<type>` is preserved only if at least one badge of that
 //     type was actually disclosed.
 // Any unknown scope is dropped defensively (validation should have
 // caught it upstream, but belt + suspenders).
 export interface EffectiveScopesInput {
   approveProfile: boolean;
+  approveSybilScore: boolean;
   approvedBadgeIds: string[];
   userBadges: Array<{ id: string; type: string }>;
 }
@@ -92,6 +95,10 @@ export function effectiveScopes(requestedScopes: string[], input: EffectiveScope
     }
     if (scope === "profile") {
       if (input.approveProfile) out.push(scope);
+      continue;
+    }
+    if (scope === "sybil-score") {
+      if (input.approveSybilScore) out.push(scope);
       continue;
     }
     if (scope.startsWith("badge:")) {

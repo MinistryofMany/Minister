@@ -35,6 +35,7 @@ describe("grantedRelevantBadgeIds", () => {
     badgeIds: ["github", "resid", "email"],
     profileName: false,
     profileAvatar: false,
+    sybilScore: false,
   };
   const owned = [
     { id: "github", type: "oauth-account" },
@@ -79,6 +80,7 @@ describe("grantedRelevantBadgeIds", () => {
       badgeIds: [],
       profileName: false,
       profileAvatar: false,
+      sybilScore: false,
     };
     expect(grantedRelevantBadgeIds(empty, new Set(["oauth-account"]), owned)).toEqual([]);
   });
