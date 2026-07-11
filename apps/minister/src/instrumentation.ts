@@ -84,20 +84,26 @@ export async function register(): Promise<void> {
   {
     const { checkSybilConfigDrift } = await import("@/lib/sybil-config");
     try {
-      const { missingStarRows, danglingCategories } = await checkSybilConfigDrift();
-      if (missingStarRows.length > 0 || danglingCategories.length > 0) {
+      const { missingStarRows, danglingCategories, missingSingletons } =
+        await checkSybilConfigDrift();
+      if (
+        missingStarRows.length > 0 ||
+        danglingCategories.length > 0 ||
+        missingSingletons.length > 0
+      ) {
         const detail =
           `[instrumentation] sybil config drift: ` +
           `${missingStarRows.length} type(s) missing a '*' BadgeWeight row ` +
           `[${missingStarRows.join(", ")}]; ` +
           `${danglingCategories.length} row category(ies) with no SybilCategory ` +
-          `[${danglingCategories.join(", ")}]. Run \`sybil:seed\`.`;
+          `[${danglingCategories.join(", ")}]; ` +
+          `${missingSingletons.length} missing singleton row(s) ` +
+          `[${missingSingletons.join(", ")}]. Run \`sybil:seed\`.`;
         if (process.env.NODE_ENV === "production") throw new Error(detail);
         console.warn(detail);
       }
     } catch (err) {
-      // A drift Error we threw above must propagate in prod. Only a genuine
-      // query/connection failure is tolerated (deferred), never masked as clean.
+      // A drift Error we threw above must propagate in prod.
       if (
         process.env.NODE_ENV === "production" &&
         err instanceof Error &&
@@ -105,10 +111,32 @@ export async function register(): Promise<void> {
       ) {
         throw err;
       }
+      // A MISSING config table/column (the migration was never applied — a deploy
+      // error, and CLAUDE.md notes prod migrations are MANUAL) is genuine drift,
+      // NOT a transient outage: fail closed in prod. Distinguish by the Prisma /
+      // Postgres schema-error CODE, not by catching everything. Only a real
+      // connectivity error is tolerated (deferred), matching the Signet pattern.
+      if (process.env.NODE_ENV === "production" && isSchemaMissingError(err)) {
+        throw new Error(
+          "[instrumentation] sybil config tables missing (migration not applied): " +
+            (err instanceof Error ? err.message : String(err)),
+        );
+      }
       console.warn(
         "[instrumentation] sybil config check deferred " +
           `(DB unreachable at boot): ${err instanceof Error ? err.message : String(err)}`,
       );
     }
   }
+}
+
+// A Prisma/Postgres "schema object is missing" error (table or column absent),
+// meaning the migration was not applied — distinct from a transient connection
+// failure. Structural (no static Prisma import) so this stays out of the edge
+// bundle. P2021 = table missing, P2022 = column missing (Prisma); 42P01 =
+// undefined_table, 42703 = undefined_column (raw Postgres).
+function isSchemaMissingError(err: unknown): boolean {
+  if (typeof err !== "object" || err === null) return false;
+  const code = (err as { code?: unknown }).code;
+  return code === "P2021" || code === "P2022" || code === "42P01" || code === "42703";
 }

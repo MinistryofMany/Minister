@@ -21,18 +21,49 @@ export default async function AdminRecoveryConfigPage() {
     prisma.recoveryConfig.findUnique({ where: { id: "singleton" } }),
   ]);
 
+  // Phase 1 has NO promotion job: once a scheduled weakening's effectiveAt
+  // passes, the recovery ENGINE reads the pending value (sybil-config.ts
+  // effectiveRecoveryWeight / loadEffectiveThreshold) but the live column is
+  // never promoted. Compute the EFFECTIVE value here (pending, once due; else
+  // live) and hand THAT to the editor as the operative value, so the admin's
+  // review surface can never show a stale-but-safe-looking number while an
+  // already-landed weakening is silently in force. Display-only — the engine is
+  // untouched. `now` is server-stamped so the client's scheduled/in-effect split
+  // matches this computation.
+  const now = Date.now();
+  const effectiveWeight = (r: {
+    recoveryWeight: number;
+    pendingRecoveryWeight: number | null;
+    recoveryEffectiveAt: Date | null;
+  }): number =>
+    r.pendingRecoveryWeight != null &&
+    r.recoveryEffectiveAt != null &&
+    r.recoveryEffectiveAt.getTime() <= now
+      ? r.pendingRecoveryWeight
+      : r.recoveryWeight;
+
   const rows: RecoveryWeightRowView[] = weightRows.map((r) => ({
     badgeType: r.badgeType,
     qualifier: r.qualifier,
     recoveryWeight: r.recoveryWeight,
+    effectiveRecoveryWeight: effectiveWeight(r),
     pendingRecoveryWeight: r.pendingRecoveryWeight,
     recoveryEffectiveAt: r.recoveryEffectiveAt ? r.recoveryEffectiveAt.toISOString() : null,
     allowSoloRecovery: r.allowSoloRecovery,
     eligible: RECOVERY_ELIGIBLE_TYPES.has(r.badgeType),
   }));
 
+  const liveThreshold = cfg?.threshold ?? 100;
+  const effectiveThreshold =
+    cfg?.pendingThreshold != null &&
+    cfg?.thresholdEffectiveAt != null &&
+    cfg.thresholdEffectiveAt.getTime() <= now
+      ? cfg.pendingThreshold
+      : liveThreshold;
+
   const config: RecoveryConfigView = {
-    threshold: cfg?.threshold ?? 100,
+    threshold: liveThreshold,
+    effectiveThreshold,
     pendingThreshold: cfg?.pendingThreshold ?? null,
     thresholdEffectiveAt: cfg?.thresholdEffectiveAt ? cfg.thresholdEffectiveAt.toISOString() : null,
   };
@@ -52,7 +83,7 @@ export default async function AdminRecoveryConfigPage() {
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <AdminRecoveryForm initialRows={rows} initialConfig={config} />
+          <AdminRecoveryForm initialRows={rows} initialConfig={config} now={now} />
         </CardContent>
       </Card>
     </div>

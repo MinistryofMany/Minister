@@ -204,6 +204,29 @@ describe("sybilScore — input hygiene & rule edges (design spec §3.4-§3.5)", 
     expect(score([noProvider])).toEqual({ raw: 4, bucket: 0 });
   });
 
+  it("a null / non-object attributes container never throws (falls back to '*')", () => {
+    // The scorer's "never throws" contract must hold even for a badge whose
+    // `attributes` is JSON null or a non-object — real DB rows are unconstrained
+    // JSON. Both resolve oauth-account's chain to ["*"] (weight 4), contributing
+    // normally: single social category [4] -> 4; raw 4 < b1(5) -> bucket 0.
+    const nullAttrs = {
+      type: "oauth-account",
+      attributes: null,
+      expiresAt: null,
+      issuer: NATIVE_DID,
+    } as unknown as ScorableBadge;
+    const numberAttrs = {
+      type: "oauth-account",
+      attributes: 123,
+      expiresAt: null,
+      issuer: NATIVE_DID,
+    } as unknown as ScorableBadge;
+    expect(() => score([nullAttrs])).not.toThrow();
+    expect(score([nullAttrs])).toEqual({ raw: 4, bucket: 0 });
+    expect(() => score([numberAttrs])).not.toThrow();
+    expect(score([numberAttrs])).toEqual({ raw: 4, bucket: 0 });
+  });
+
   it("the age-over ladder family-collapses to a single contribution (max member)", () => {
     // Holding age-over-16/18/21 (each weight 25) collapses to ONE member of 25, NOT
     // a decayed stack. raw is exactly 25 (25 + 12 + 6 = 43 would be the un-collapsed

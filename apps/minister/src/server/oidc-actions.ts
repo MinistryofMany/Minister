@@ -14,7 +14,11 @@ import { type PolicyNode, type UserBadge } from "@/lib/oidc-policy";
 import { verifyOidcRequest } from "@/lib/oidc-request-token";
 import { prisma } from "@/lib/prisma";
 import { getCurrentSession } from "@/lib/session";
-import { loadSybilScoringConfig, type ScorableBadge } from "@/lib/sybil-config";
+import {
+  loadSybilScoringConfig,
+  type ScorableBadge,
+  type SybilScoringConfig,
+} from "@/lib/sybil-config";
 import { sybilScore } from "@/lib/sybil-score";
 import { minimizeToPolicy, toPolicyUserBadge } from "@/server/oidc-consent-minimize";
 import { normalizeProfileInput } from "@/server/profile-validation";
@@ -210,10 +214,27 @@ export async function approveConsent(
         loadSybilScoringConfig(),
         getIssuer(),
       ]);
-      sybilBucket = sybilScore(scorableBadges, config, {
-        now: Date.now(),
-        nativeIssuerDid: issuer.did,
-      }).bucket;
+      // Defense in depth: a silently-empty/partial config (tables present but
+      // unseeded, so no weights and/or missing cutoffs) does NOT throw in the
+      // loader, but scoring it would emit a WRONG (too-low) bucket as a real
+      // disclosed value. Treat a degenerate config exactly like a thrown compute
+      // error: omit + audit, login unaffected.
+      if (isDegenerateSybilConfig(config)) {
+        sybilBucket = null;
+        try {
+          await audit(session.user.id, "oidc.sybil_score_omitted", {
+            clientId: request.clientId,
+            reason: "degenerate-config",
+          });
+        } catch (auditErr) {
+          console.error("[oidc-actions] failed to write sybil omit audit:", auditErr);
+        }
+      } else {
+        sybilBucket = sybilScore(scorableBadges, config, {
+          now: Date.now(),
+          nativeIssuerDid: issuer.did,
+        }).bucket;
+      }
     } catch (err) {
       sybilBucket = null;
       const reason = err instanceof Error ? err.message : String(err);
@@ -366,6 +387,34 @@ async function loadBadgesForUser(userId: string, badgeIds: string[]): Promise<Us
     select: { id: true, type: true, attributes: true, issuedAt: true },
   });
   return rows.map(toPolicyUserBadge);
+}
+
+// A scoring config is DEGENERATE (unsafe to score) when it carries no actual
+// weight entry, or its bucket cutoffs are not all finite numbers. Either shape
+// would let the pure scorer emit a real-but-wrong (too-low) bucket instead of an
+// omission. loadSybilScoringConfig throws on a missing SybilBucketConfig
+// singleton, but an empty/partially-deleted BadgeWeight table returns a valid
+// object with an empty weights map — this catches that (design spec §4, fail
+// closed).
+function isDegenerateSybilConfig(config: SybilScoringConfig): boolean {
+  let hasWeight = false;
+  for (const byQualifier of config.weights.values()) {
+    if (byQualifier.size > 0) {
+      hasWeight = true;
+      break;
+    }
+  }
+  if (!hasWeight) return true;
+
+  const c = config.cutoffs;
+  return (
+    !Number.isFinite(c.b1) ||
+    !Number.isFinite(c.b2) ||
+    !Number.isFinite(c.b3) ||
+    !Number.isFinite(c.b4) ||
+    !Number.isFinite(c.b3Cats) ||
+    !Number.isFinite(c.b4Cats)
+  );
 }
 
 // Load ALL of a user's badges in the shape the pure sybil scorer consumes

@@ -20,16 +20,23 @@ const CATEGORY_QUALIFY_THRESHOLD = 8;
 // spec §3.2), most-specific first, always ending in "*". Attribute reads are
 // defensive: a missing/ill-typed attribute simply drops that candidate so the
 // chain falls back toward "*" (or, if even "*" is absent, weight 0) — never a
-// throw. `attributes` mirrors `Badge.attributes` (denormalized display JSON).
-function qualifierChain(type: string, attributes: Record<string, unknown>): string[] {
+// throw. `attributes` mirrors `Badge.attributes` (denormalized display JSON),
+// but at runtime it is unconstrained JSON: a null / non-object container is
+// coerced to `{}` here so property access can never throw (the "never throws"
+// contract) — such a badge just resolves to "*".
+function qualifierChain(type: string, attributes: unknown): string[] {
+  const attrs: Record<string, unknown> =
+    attributes !== null && typeof attributes === "object"
+      ? (attributes as Record<string, unknown>)
+      : {};
   switch (type) {
     case "oauth-account": {
-      const provider = attributes.provider;
+      const provider = attrs.provider;
       return typeof provider === "string" ? [provider, "*"] : ["*"];
     }
     case "account-age": {
-      const provider = attributes.provider;
-      const months = attributes.olderThanMonths;
+      const provider = attrs.provider;
+      const months = attrs.olderThanMonths;
       const chain: string[] = [];
       if (typeof provider === "string") {
         if (typeof months === "number" || typeof months === "string") {
@@ -41,14 +48,14 @@ function qualifierChain(type: string, attributes: Record<string, unknown>): stri
       return chain;
     }
     case "wallet-age": {
-      const months = attributes.olderThanMonths;
+      const months = attrs.olderThanMonths;
       return typeof months === "number" || typeof months === "string"
         ? [String(months), "*"]
         : ["*"];
     }
     case "social-following": {
-      const provider = attributes.provider;
-      const followers = attributes.followersAtLeast;
+      const provider = attrs.provider;
+      const followers = attrs.followersAtLeast;
       const chain: string[] = [];
       if (typeof provider === "string") {
         if (typeof followers === "number" || typeof followers === "string") {

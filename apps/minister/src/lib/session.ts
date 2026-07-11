@@ -130,10 +130,22 @@ export function requireAal(session: Session | null, floor: Aal): void {
 // existing step-up re-auth (a passkey re-auth re-stamps auth_time and clears
 // the check). Like requireAal, this reads ONLY the passed session; pair it with
 // requireSession()/getCurrentSession() for gen/ban/merge enforcement.
+//
+// This helper enforces RECENCY ONLY. It does NOT re-check the AAL2 factor its
+// StepUpRequiredError(2) implies (a fresh AAL1 inbox login also stamps a recent
+// auth_time), so a caller MUST pair it with requireAal(session, 2) — the
+// recovery-config gate does exactly that. A non-finite auth_time (NaN/Infinity)
+// or a missing one fails CLOSED, same as a stale one.
 export function requireAuthRecency(session: Session | null, maxAgeSecs: number): void {
   const authTime = session?.auth_time;
   const nowSecs = Math.floor(Date.now() / 1000);
-  if (typeof authTime !== "number" || nowSecs - authTime > maxAgeSecs) {
+  // typeof narrows out `undefined`; !Number.isFinite additionally rejects
+  // NaN/Infinity (fail closed) — neither would satisfy `> maxAgeSecs` on its own.
+  if (
+    typeof authTime !== "number" ||
+    !Number.isFinite(authTime) ||
+    nowSecs - authTime > maxAgeSecs
+  ) {
     throw new StepUpRequiredError(2, session?.aal ?? 0);
   }
 }

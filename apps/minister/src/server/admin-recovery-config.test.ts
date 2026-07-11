@@ -97,25 +97,39 @@ const h = vi.hoisted(() => {
       this.currentAal = currentAal;
     }
   }
+  const db = {
+    badgeWeight: {
+      findUnique: vi.fn((_a?: unknown): Promise<unknown> => Promise.resolve(null)),
+      update: vi.fn((_a?: unknown): Promise<unknown> => Promise.resolve({})),
+      findMany: vi.fn((_a?: unknown): Promise<unknown[]> => Promise.resolve([])),
+    },
+    recoveryConfig: {
+      findUnique: vi.fn((_a?: unknown): Promise<unknown> => Promise.resolve(null)),
+      update: vi.fn((_a?: unknown): Promise<unknown> => Promise.resolve({})),
+    },
+    user: {
+      findMany: vi.fn((_a?: unknown): Promise<unknown[]> => Promise.resolve([])),
+    },
+    auditLog: {
+      create: vi.fn((_a?: unknown): Promise<unknown> => Promise.resolve({})),
+    },
+    // Advisory lock: a tagged-template `$executeRaw` is called with
+    // (templateStringsArray, ...values).
+    $executeRaw: vi.fn((..._a: unknown[]): Promise<number> => Promise.resolve(1)),
+    // Interactive transaction: run the callback with the same mock object as
+    // `tx`, so every read/write/audit inside the tx targets these mocks (and the
+    // actions' tx-scoped audit call passes THIS object as its 4th argument).
+    $transaction: vi.fn((_fn: (tx: unknown) => Promise<unknown>): Promise<unknown> =>
+      Promise.resolve(undefined),
+    ),
+  };
+  db.$transaction.mockImplementation((fn) => fn(db));
   return {
     StepUpRequiredError,
     state: { session: null as Session | null },
     sendMail: vi.fn(async () => {}),
-    audit: vi.fn(async () => {}),
-    db: {
-      badgeWeight: {
-        findUnique: vi.fn((_a?: unknown): Promise<unknown> => Promise.resolve(null)),
-        update: vi.fn((_a?: unknown): Promise<unknown> => Promise.resolve({})),
-        findMany: vi.fn((_a?: unknown): Promise<unknown[]> => Promise.resolve([])),
-      },
-      recoveryConfig: {
-        findUnique: vi.fn((_a?: unknown): Promise<unknown> => Promise.resolve(null)),
-        update: vi.fn((_a?: unknown): Promise<unknown> => Promise.resolve({})),
-      },
-      user: {
-        findMany: vi.fn((_a?: unknown): Promise<unknown[]> => Promise.resolve([])),
-      },
-    },
+    audit: vi.fn(async (..._a: unknown[]) => {}),
+    db,
   };
 });
 
@@ -364,6 +378,7 @@ describe("updateRecoveryWeight — guardrails + asymmetric timing", () => {
         before: 20,
         after: 10,
       }),
+      db, // written through the transaction client (atomic with the mutation)
     );
   });
 
@@ -482,6 +497,55 @@ describe("setAllowSoloRecovery", () => {
         before: false,
         after: true,
       }),
+      db, // written through the transaction client (atomic with the mutation)
     );
+  });
+});
+
+describe("recovery-config mutation atomicity (advisory lock + audit-in-tx)", () => {
+  it("serializes under the advisory lock and writes the audit inside the same transaction", async () => {
+    db.badgeWeight.findUnique.mockResolvedValue({
+      recoveryWeight: 20,
+      pendingRecoveryWeight: null,
+      recoveryEffectiveAt: null,
+      allowSoloRecovery: false,
+    });
+    const res = await updateRecoveryWeight({
+      badgeType: "oauth-account",
+      qualifier: "github",
+      recoveryWeight: 10,
+    });
+    expect(res.ok).toBe(true);
+
+    // The mutation ran inside exactly one interactive transaction...
+    expect(db.$transaction).toHaveBeenCalledTimes(1);
+    // ...whose FIRST statement took the fixed-key advisory lock...
+    expect(db.$executeRaw).toHaveBeenCalledTimes(1);
+    const lockSql = String((db.$executeRaw.mock.calls[0]?.[0] as string[] | undefined)?.[0] ?? "");
+    expect(lockSql).toMatch(/pg_advisory_xact_lock/);
+    // ...before the write (lock invoked before the update)...
+    const lockOrder = db.$executeRaw.mock.invocationCallOrder[0];
+    const updateOrder = db.badgeWeight.update.mock.invocationCallOrder[0];
+    expect(lockOrder).toBeDefined();
+    expect(updateOrder).toBeDefined();
+    expect(lockOrder ?? Infinity).toBeLessThan(updateOrder ?? -Infinity);
+    // ...and the audit row was written through the SAME transaction client (its
+    // 4th arg is the tx), so a config change can never commit unlogged.
+    expect(h.audit).toHaveBeenCalledTimes(1);
+    expect(h.audit.mock.calls[0]?.[3]).toBe(db);
+  });
+
+  it("a throw inside the transaction rolls back — no mutation, no broadcast", async () => {
+    // Row missing -> the action throws INSIDE the tx (after the lock), so the
+    // update never runs and the post-commit broadcast is skipped.
+    db.badgeWeight.findUnique.mockResolvedValue(null);
+    const res = await updateRecoveryWeight({
+      badgeType: "oauth-account",
+      qualifier: "github",
+      recoveryWeight: 10,
+    });
+    expect(res.ok).toBe(false);
+    expect(db.badgeWeight.update).not.toHaveBeenCalled();
+    expect(h.sendMail).not.toHaveBeenCalled();
   });
 });

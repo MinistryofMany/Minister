@@ -48,6 +48,14 @@ describe("requireAuthRecency", () => {
     expect(() => requireAuthRecency(sessionAt(undefined), MAX)).toThrow(StepUpRequiredError);
   });
 
+  it("throws StepUpRequiredError for a non-finite auth_time (NaN / Infinity — fail closed)", () => {
+    // typeof NaN / Infinity === "number", so a bare typeof check would fail OPEN
+    // (nowSecs - NaN is NaN, never > maxAgeSecs). The Number.isFinite guard closes it.
+    expect(() => requireAuthRecency(sessionAt(NaN), MAX)).toThrow(StepUpRequiredError);
+    expect(() => requireAuthRecency(sessionAt(Infinity), MAX)).toThrow(StepUpRequiredError);
+    expect(() => requireAuthRecency(sessionAt(-Infinity), MAX)).toThrow(StepUpRequiredError);
+  });
+
   it("throws StepUpRequiredError for a null session (fail closed)", () => {
     expect(() => requireAuthRecency(null, MAX)).toThrow(StepUpRequiredError);
   });

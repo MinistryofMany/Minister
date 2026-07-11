@@ -16,7 +16,12 @@ import {
 export interface RecoveryWeightRowView {
   badgeType: string;
   qualifier: string;
+  // The live column value (what a defensive edit is classified against).
   recoveryWeight: number;
+  // The value the recovery ENGINE actually uses right now: a scheduled weakening
+  // whose effectiveAt has passed, else the live column. This is the operative
+  // number the editor must present.
+  effectiveRecoveryWeight: number;
   pendingRecoveryWeight: number | null;
   recoveryEffectiveAt: string | null;
   allowSoloRecovery: boolean;
@@ -25,6 +30,8 @@ export interface RecoveryWeightRowView {
 
 export interface RecoveryConfigView {
   threshold: number;
+  // Operative threshold (pending once due, else live) — see the row note above.
+  effectiveThreshold: number;
   pendingThreshold: number | null;
   thresholdEffectiveAt: string | null;
 }
@@ -32,6 +39,9 @@ export interface RecoveryConfigView {
 interface Props {
   initialRows: RecoveryWeightRowView[];
   initialConfig: RecoveryConfigView;
+  // Server-stamped clock (unix ms), so "scheduled" vs "now in effect" is decided
+  // consistently with the effective values the server already computed.
+  now: number;
 }
 
 const rowKey = (badgeType: string, qualifier: string) => `${badgeType} ${qualifier}`;
@@ -57,35 +67,46 @@ async function withStepUp<T>(
   return retried;
 }
 
-export function AdminRecoveryForm({ initialRows, initialConfig }: Props) {
+export function AdminRecoveryForm({ initialRows, initialConfig, now }: Props) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
+  // Seed the editable fields from the EFFECTIVE (operative) values, never the
+  // stale live column — otherwise an already-landed weakening hides behind a
+  // safe-looking number.
   const [weights, setWeights] = useState<Record<string, number>>(() =>
     Object.fromEntries(
-      initialRows.map((r) => [rowKey(r.badgeType, r.qualifier), r.recoveryWeight]),
+      initialRows.map((r) => [rowKey(r.badgeType, r.qualifier), r.effectiveRecoveryWeight]),
     ),
   );
-  const [threshold, setThreshold] = useState(initialConfig.threshold);
+  const [threshold, setThreshold] = useState(initialConfig.effectiveThreshold);
 
-  const pendingChanges = useMemo(() => {
-    const items: string[] = [];
+  // Split pending items into those still SCHEDULED (effectiveAt in the future)
+  // and those already IN EFFECT (effectiveAt has passed — Phase 1 has no
+  // promotion job, so the engine is already using these). The in-effect group is
+  // the takeover-surface alarm: a live weakening that the live column still hides.
+  const { scheduled, inEffect } = useMemo(() => {
+    const scheduled: { label: string; at: string }[] = [];
+    const inEffect: { label: string; at: string }[] = [];
+    const classify = (label: string, effectiveAtIso: string) => {
+      const at = new Date(effectiveAtIso).getTime();
+      (at <= now ? inEffect : scheduled).push({ label, at: effectiveAtIso });
+    };
     for (const r of initialRows) {
       if (r.pendingRecoveryWeight != null && r.recoveryEffectiveAt) {
-        items.push(
-          `${r.badgeType} / ${r.qualifier}: weight → ${r.pendingRecoveryWeight} at ${new Date(r.recoveryEffectiveAt).toLocaleString()}`,
+        classify(
+          `${r.badgeType} / ${r.qualifier}: weight → ${r.pendingRecoveryWeight}`,
+          r.recoveryEffectiveAt,
         );
       }
     }
     if (initialConfig.pendingThreshold != null && initialConfig.thresholdEffectiveAt) {
-      items.push(
-        `threshold → ${initialConfig.pendingThreshold} at ${new Date(initialConfig.thresholdEffectiveAt).toLocaleString()}`,
-      );
+      classify(`threshold → ${initialConfig.pendingThreshold}`, initialConfig.thresholdEffectiveAt);
     }
-    return items;
-  }, [initialRows, initialConfig]);
+    return { scheduled, inEffect };
+  }, [initialRows, initialConfig, now]);
 
   function reset() {
     setError(null);
@@ -116,7 +137,7 @@ export function AdminRecoveryForm({ initialRows, initialConfig }: Props) {
 
   function saveWeight(r: RecoveryWeightRowView) {
     const key = rowKey(r.badgeType, r.qualifier);
-    const value = Math.floor(weights[key] ?? r.recoveryWeight);
+    const value = Math.floor(weights[key] ?? r.effectiveRecoveryWeight);
     dispatch(
       () =>
         updateRecoveryWeight({
@@ -170,13 +191,28 @@ export function AdminRecoveryForm({ initialRows, initialConfig }: Props) {
         </div>
       ) : null}
 
-      {pendingChanges.length > 0 ? (
-        <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-300">
-          <p className="mb-1 font-medium">Pending weakening changes</p>
+      {inEffect.length > 0 ? (
+        <div className="rounded-md border-2 border-red-400 bg-red-50 p-3 text-sm text-red-800 dark:border-red-800 dark:bg-red-950/40 dark:text-red-300">
+          <p className="mb-1 font-semibold">
+            ⚠ Weakening changes NOW IN EFFECT — the recovery engine is already using these values
+          </p>
           <ul className="flex flex-col gap-0.5">
-            {pendingChanges.map((c) => (
-              <li key={c} className="font-mono text-xs">
-                {c}
+            {inEffect.map((c) => (
+              <li key={c.label} className="font-mono text-xs">
+                {c.label} (in effect since {new Date(c.at).toLocaleString()})
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+
+      {scheduled.length > 0 ? (
+        <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-300">
+          <p className="mb-1 font-medium">Scheduled weakening changes (not yet in effect)</p>
+          <ul className="flex flex-col gap-0.5">
+            {scheduled.map((c) => (
+              <li key={c.label} className="font-mono text-xs">
+                {c.label} (takes effect at {new Date(c.at).toLocaleString()})
               </li>
             ))}
           </ul>
@@ -201,8 +237,11 @@ export function AdminRecoveryForm({ initialRows, initialConfig }: Props) {
           </Button>
         </div>
         <p className="text-xs text-neutral-500">
-          Live threshold: {initialConfig.threshold}. Raising it applies immediately; lowering it is
-          scheduled 72h out.
+          Effective threshold: {initialConfig.effectiveThreshold}
+          {initialConfig.effectiveThreshold !== initialConfig.threshold
+            ? ` (live column ${initialConfig.threshold}; a scheduled weakening is already in effect)`
+            : ""}
+          . Raising it applies immediately; lowering it is scheduled 72h out.
         </p>
       </section>
 
@@ -235,7 +274,7 @@ export function AdminRecoveryForm({ initialRows, initialConfig }: Props) {
                       <Input
                         type="number"
                         className="h-8 w-20"
-                        value={weights[key] ?? r.recoveryWeight}
+                        value={weights[key] ?? r.effectiveRecoveryWeight}
                         disabled={!r.eligible || pending}
                         onChange={(e) =>
                           setWeights((w) => ({ ...w, [key]: Number(e.target.value) }))

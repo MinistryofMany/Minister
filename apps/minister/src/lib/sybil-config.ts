@@ -700,17 +700,28 @@ export interface SybilConfigDrift {
   missingStarRows: string[];
   // BadgeWeight rows whose `category` has no matching SybilCategory.
   danglingCategories: string[];
+  // Absent singleton config rows. A partial seed can insert weights + categories
+  // while the SybilBucketConfig / RecoveryConfig singleton upserts never land;
+  // loadSybilScoringConfig / loadEffectiveThreshold then throw deep inside a
+  // request (disclosure omitted, recovery aborted) with no boot signal. Names:
+  // "SybilBucketConfig" and/or "RecoveryConfig".
+  missingSingletons: string[];
 }
 
 /**
- * Assert every `knownBadgeTypes()` has a `*` BadgeWeight row and every
- * referenced category exists. Returns the drift found (empty = clean). DB/query
- * errors are NOT caught here — they propagate to the caller.
+ * Assert every `knownBadgeTypes()` has a `*` BadgeWeight row, every referenced
+ * category exists, and both singleton config rows (SybilBucketConfig,
+ * RecoveryConfig) are present. Returns the drift found (empty = clean). DB/query
+ * errors are NOT caught here — they propagate to the caller (a MISSING config
+ * table surfaces as a Prisma schema error, which instrumentation.ts fails closed
+ * on in prod; a transient connection error it defers).
  */
 export async function checkSybilConfigDrift(): Promise<SybilConfigDrift> {
-  const [weightRows, categoryRows] = await Promise.all([
+  const [weightRows, categoryRows, bucketSingleton, recoverySingleton] = await Promise.all([
     prisma.badgeWeight.findMany({ select: { badgeType: true, qualifier: true, category: true } }),
     prisma.sybilCategory.findMany({ select: { name: true } }),
+    prisma.sybilBucketConfig.findUnique({ where: { id: "singleton" }, select: { id: true } }),
+    prisma.recoveryConfig.findUnique({ where: { id: "singleton" }, select: { id: true } }),
   ]);
 
   const starTypes = new Set<string>();
@@ -726,5 +737,9 @@ export async function checkSybilConfigDrift(): Promise<SybilConfigDrift> {
     .sort();
   const danglingCategories = [...referencedCategories].filter((c) => !categoryNames.has(c)).sort();
 
-  return { missingStarRows, danglingCategories };
+  const missingSingletons: string[] = [];
+  if (!bucketSingleton) missingSingletons.push("SybilBucketConfig");
+  if (!recoverySingleton) missingSingletons.push("RecoveryConfig");
+
+  return { missingStarRows, danglingCategories, missingSingletons };
 }
