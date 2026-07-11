@@ -78,6 +78,17 @@ const serverSchema = z
     // fast instead of stalling every mint — without squeezing the VOPRF path.
     MINISTER_SIGNET_PAIRWISE_TIMEOUT_MS: z.coerce.number().int().min(100).max(2_000).optional(),
 
+    // Badge-statistics recompute interval (anti-sybil phase 2, §7). The
+    // in-process scheduled job (instrumentation.ts) recomputes at most this
+    // often; a second app instance no-ops via a Postgres advisory lock + the
+    // StatsRun freshness check. Default 1h, bounded 1min..24h.
+    MINISTER_STATS_INTERVAL_MS: z.coerce
+      .number()
+      .int()
+      .min(60_000)
+      .max(86_400_000)
+      .default(3_600_000),
+
     NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   })
   .superRefine((val, ctx) => {

@@ -128,6 +128,50 @@ export async function register(): Promise<void> {
       );
     }
   }
+
+  // Badge-statistics recompute interval (anti-sybil phase 2, §4/§7). Materializes
+  // BadgeStat / CohortStat / BucketStat on a schedule so the admin + public pages
+  // read cheap rows. PRODUCTION-ONLY (dev/test use `stats:recompute` or the admin
+  // button); jittered start so multi-instance boots don't all fire at once; a
+  // Postgres advisory lock (STATS_ADVISORY_LOCK_KEY, distinct from the
+  // recovery-config lock) + a StatsRun freshness check make a second instance a
+  // no-op. Every tick is wrapped in try/catch — a recompute failure LOGS and is
+  // never allowed to crash boot or serving.
+  //
+  // The explicit NEXT_RUNTIME guard (redundant with the early return above at
+  // runtime) is FOR WEBPACK, exactly like the Signet check: instrumentation is
+  // compiled for the edge bundle too, and stats-recompute pulls in issuer ->
+  // @minister/vc -> node:path/node:fs, which cannot resolve on edge. The
+  // statically-false branch makes webpack drop this dynamic import from the edge
+  // compile entirely.
+  if (process.env.NEXT_RUNTIME === "nodejs" && process.env.NODE_ENV === "production") {
+    const { env } = await import("@/env");
+    const intervalMs = env.MINISTER_STATS_INTERVAL_MS;
+
+    const runOnce = async (): Promise<void> => {
+      try {
+        const { runScheduledStatsRecompute } = await import("@/lib/stats-recompute");
+        const outcome = await runScheduledStatsRecompute(intervalMs);
+        if (outcome === "recomputed") console.info("[instrumentation] badge stats recomputed.");
+      } catch (err) {
+        console.error(
+          "[instrumentation] badge-stats recompute failed (will retry next interval): " +
+            (err instanceof Error ? err.message : String(err)),
+        );
+      }
+    };
+
+    // Jitter the first run across [0, intervalMs) so N instances (and a rolling
+    // redeploy) spread their attempts rather than thundering the DB in lockstep.
+    const jitter = Math.floor(Math.random() * intervalMs);
+    const startTimer = setTimeout(() => {
+      void runOnce();
+      const interval = setInterval(() => void runOnce(), intervalMs);
+      // Don't let the interval keep the process alive on its own.
+      interval.unref();
+    }, jitter);
+    startTimer.unref();
+  }
 }
 
 // A Prisma/Postgres "schema object is missing" error (table or column absent),

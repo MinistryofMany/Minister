@@ -762,3 +762,60 @@ model RecoveryConfig {
   thresholdEffectiveAt DateTime?
   updatedAt            DateTime  @updatedAt
 }
+
+// ---------------------------------------------------------------------------
+// Badge statistics (anti-sybil phase 2, §1). Materialized by the recompute job
+// (`stats-recompute.ts`); the admin + public transparency pages read these rows
+// rather than running heavy cross-badge COUNT(DISTINCT userId) per request. All
+// counts are DISTINCT NATIVE, UNEXPIRED holders (issuer = Minister's own DID).
+// ---------------------------------------------------------------------------
+
+// Per badge type: the type-level total (attributeKey = attributeValue = "") plus,
+// for each ALLOWLISTED (key, value), the distinct-holder count. The allowlist
+// (stats-allowlist.ts) is closed-enum only — no PII key (email/domain/handle/…)
+// is ever materialized here.
+model BadgeStat {
+  id             String   @id @default(cuid())
+  badgeType      String
+  attributeKey   String // "" for the type-level total; else an ALLOWLISTED key
+  attributeValue String // "" for the type-level total; else the enum value
+  count          Int // distinct-user count
+  computedAt     DateTime
+
+  @@unique([badgeType, attributeKey, attributeValue])
+  @@index([badgeType])
+}
+
+// Operator-defined conditional cohort: numerator/denominator each a CohortFilter
+// (cohort-filter.ts), allowlist-validated. e.g. "aged github accounts as a
+// fraction of github accounts".
+model CohortStatDef {
+  id                String      @id @default(cuid())
+  label             String
+  numeratorFilter   Json // CohortFilter, allowlist-validated
+  denominatorFilter Json
+  createdAt         DateTime    @default(now())
+  stat              CohortStat?
+}
+
+model CohortStat {
+  defId       String        @id
+  def         CohortStatDef @relation(fields: [defId], references: [id], onDelete: Cascade)
+  numerator   Int
+  denominator Int
+  computedAt  DateTime
+}
+
+// One row per bucket 0-4: how many distinct users currently score that bucket.
+model BucketStat {
+  bucket     Int      @id // 0-4
+  count      Int // distinct users currently scoring this bucket
+  computedAt DateTime
+}
+
+// Singleton, tracks the last full recompute for freshness + "as of" display.
+model StatsRun {
+  id         String   @id @default("singleton")
+  computedAt DateTime
+  durationMs Int
+}

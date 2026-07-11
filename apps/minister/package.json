@@ -16,6 +16,7 @@
     "boot:migrate": "tsx scripts/boot-migrate.ts",
     "oidc:seed-client": "tsx scripts/seed-client.ts",
     "sybil:seed": "tsx scripts/seed-sybil-config.ts",
+    "stats:recompute": "tsx scripts/recompute-stats.ts",
     "admin:grant": "tsx scripts/make-admin.ts",
     "users:count": "tsx scripts/count-users.ts",
     "test": "vitest run",

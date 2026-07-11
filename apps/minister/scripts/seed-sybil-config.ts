@@ -11,6 +11,7 @@
 // Set DATABASE_URL the same way the app does.
 
 import { PrismaClient } from "../src/generated/prisma/index.js";
+import { BUILTIN_COHORT_DEFS, parseCohortFilter } from "../src/lib/cohort-filter.js";
 import {
   RECOVERY_CONFIG_SEED,
   SYBIL_BADGE_WEIGHT_SEED,
@@ -90,6 +91,28 @@ async function main(): Promise<void> {
     });
     if (before) existing++;
     else created++;
+  }
+
+  // Built-in cohort definitions (anti-sybil phase 2, §3). CohortStatDef has an
+  // auto cuid id, so identity is keyed on `label`: insert only when a def with
+  // that label is absent, never clobbering an operator-edited one. Filters are
+  // re-validated against the live allowlist before insert (fail-loud on drift).
+  for (const def of BUILTIN_COHORT_DEFS) {
+    const before = await prisma.cohortStatDef.findFirst({ where: { label: def.label } });
+    if (before) {
+      existing++;
+      continue;
+    }
+    parseCohortFilter(def.numeratorFilter);
+    parseCohortFilter(def.denominatorFilter);
+    await prisma.cohortStatDef.create({
+      data: {
+        label: def.label,
+        numeratorFilter: def.numeratorFilter,
+        denominatorFilter: def.denominatorFilter,
+      },
+    });
+    created++;
   }
 
   console.log(
