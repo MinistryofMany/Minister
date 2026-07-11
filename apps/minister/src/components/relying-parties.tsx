@@ -5,17 +5,20 @@ export const relyingParties = [
   {
     name: "FreedInk",
     url: "https://freed.ink",
-    description: "Anonymous collective blogging, gated by zero-knowledge group-membership proofs.",
+    description:
+      "A blog a community writes together. Prove you belong to the group, then write under a pseudonym - ideas stand on their own, and no single author gets singled out.",
   },
   {
     name: "Discreetly",
     url: "https://discreetly.chat",
-    description: "Anonymous federated zero-knowledge group chat.",
+    description:
+      "Chat rooms for communities. Each room asks you to prove something to get in, you show up under a pseudonym, and messages don't stick around forever.",
   },
   {
     name: "Deforum",
     url: "https://deforum.space",
-    description: "Anonymous forums and discussion.",
+    description:
+      "Forums where each space asks for a badge to get in, and you take part under a pseudonym.",
   },
 ] as const;
 
@@ -25,7 +28,7 @@ export function RelyingParties() {
       <div className="space-y-1">
         <h2 className="text-lg font-semibold tracking-tight">Sign in with Minister</h2>
         <p className="text-sm text-neutral-600 dark:text-neutral-400">
-          Apps that let you sign in with your Minister identity.
+          Apps that check your badges at the door and know you only by a pseudonym.
         </p>
       </div>
       <ul className="space-y-3">

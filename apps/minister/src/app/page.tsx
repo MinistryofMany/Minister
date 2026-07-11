@@ -28,7 +28,8 @@ export default async function HomePage({
       <header className="space-y-2">
         <h1 className="text-3xl font-semibold tracking-tight">Minister</h1>
         <p className="text-sm text-neutral-600 dark:text-neutral-400">
-          Your verifiable identity, your terms. Sign in to start collecting badges.
+          Prove things about yourself once, keep them as badges, and show each app only what it
+          needs. Sign in to start collecting.
         </p>
       </header>
 

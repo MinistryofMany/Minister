@@ -6,7 +6,7 @@
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org)
 [![Postgres](https://img.shields.io/badge/Postgres-16-336791?logo=postgresql&logoColor=white)](https://www.postgresql.org)
 
-**Minister** is an identity platform. Each person holds a profile decorated with **badges** — verifiable credentials attesting to facts about them (owns an email at a given domain, controls a GitHub or Google account, is over 21, is a state resident, and more). Third-party apps sign users in via **OpenID Connect**, and the user explicitly chooses which badges to disclose to each relying party. Minister also issues **shareable proof links** — signed, time-limited artifacts you can hand to someone out of band.
+**Minister** is an identity layer for apps that care what's true about you, not who you are. You verify facts about yourself once (you own an email at a given domain, control a GitHub or Google account, are over 21, live in a given state, and more) and keep each one as a **badge**, a verifiable credential, if you want the standard's name for it. Apps sign you in via **OpenID Connect**, and you choose exactly which badges each app sees; what it gets is a pseudonym plus the facts you picked. Minister also makes **share links**, signed, time-limited pages you can hand to a person directly, showing only the badges you chose.
 
 Part of the [Ministry of Many](https://github.com/MinistryofMany) project. Home: [ministry.id](https://ministry.id).
 

@@ -64,8 +64,8 @@ export default async function ProfilePage() {
             <div className="space-y-0.5">
               <p className="text-sm font-semibold">Add a passkey</p>
               <p className="text-sm text-amber-800 dark:text-amber-300/90">
-                Your account has no passkey yet. Add one for faster, phishing-resistant sign-in
-                instead of waiting on a magic-link email.
+                Your account has no passkey yet. Add one and signing in takes a second, with nothing
+                to phish and no email link to wait on.
               </p>
             </div>
           </div>
