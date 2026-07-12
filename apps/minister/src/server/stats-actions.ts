@@ -81,3 +81,29 @@ export const createCohortDef = adminAction(
     return { ok: true, id: row.id };
   },
 );
+
+export type SetCohortDefPublishedResult = { ok: true } | { ok: false; error: string };
+
+// Publish / unpublish a cohort def. A def is created UNPUBLISHED (see
+// `createCohortDef`); only this action flips its visibility on the public
+// /transparency page. Both surfaces are revalidated so the change is reflected
+// immediately on the admin view AND the world-readable page.
+export const setCohortDefPublished = adminAction(
+  z.object({ id: z.string().min(1), published: z.boolean() }),
+  async ({ session, input }): Promise<SetCohortDefPublishedResult> => {
+    await prisma.cohortStatDef.update({
+      where: { id: input.id },
+      data: { published: input.published },
+      select: { id: true },
+    });
+
+    await audit(session.user.id, "admin.stats.cohort_def_published", {
+      cohortStatDefId: input.id,
+      published: input.published,
+    });
+
+    revalidatePath("/admin/stats");
+    revalidatePath("/transparency");
+    return { ok: true };
+  },
+);

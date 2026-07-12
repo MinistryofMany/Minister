@@ -93,6 +93,79 @@ describe("buildPublicTypeRows — layer 1 allowlist re-check + suppression/round
     // The displayed total is rounded, not the raw 200/10 (here both are multiples of 10).
     expect(rows[0]!.totalDisplay).toBe("200");
   });
+
+  // W1: DOM order must be a pure function of the PUBLISHED value, not the raw
+  // count — so two cells that DISPLAY THE SAME are ordered by name, never by their
+  // distinct underlying counts (which a raw-count sort would leak).
+  it("orders same-displaying attribute values by name, not by raw count (rounded collision)", () => {
+    const stats: BadgeStatInput[] = [
+      { badgeType: "oauth-account", attributeKey: "", attributeValue: "", count: 300 },
+      // Distinct raw counts that BOTH round to 120. The larger raw count is on the
+      // lexicographically-LATER name, so a raw-count sort would flip the order.
+      {
+        badgeType: "oauth-account",
+        attributeKey: "provider",
+        attributeValue: "github",
+        count: 118,
+      },
+      {
+        badgeType: "oauth-account",
+        attributeKey: "provider",
+        attributeValue: "google",
+        count: 121,
+      },
+    ];
+    const group = buildPublicTypeRows(stats)[0]!.attributes[0]!;
+    expect(group.values.map((v) => v.display)).toEqual(["120", "120"]);
+    // Name order (github < google), NOT raw-count order (google 121 > github 118).
+    expect(group.values.map((v) => v.value)).toEqual(["github", "google"]);
+  });
+
+  it("orders same-suppressed attribute values by name, not by raw count", () => {
+    const stats: BadgeStatInput[] = [
+      { badgeType: "oauth-account", attributeKey: "", attributeValue: "", count: 300 },
+      // Both suppress to "<5"; larger raw count on the later name to expose a raw sort.
+      { badgeType: "oauth-account", attributeKey: "provider", attributeValue: "discord", count: 2 },
+      { badgeType: "oauth-account", attributeKey: "provider", attributeValue: "reddit", count: 4 },
+    ];
+    const group = buildPublicTypeRows(stats)[0]!.attributes[0]!;
+    expect(group.values.map((v) => v.display)).toEqual(["<5", "<5"]);
+    // Name order (discord < reddit), NOT raw-count order (reddit 4 > discord 2).
+    expect(group.values.map((v) => v.value)).toEqual(["discord", "reddit"]);
+  });
+
+  it("orders same-displaying TYPE totals by name, not by raw count", () => {
+    const stats: BadgeStatInput[] = [
+      // Both totals round to 120; larger raw count on the later name.
+      { badgeType: "email-domain", attributeKey: "", attributeValue: "", count: 118 },
+      { badgeType: "oauth-account", attributeKey: "", attributeValue: "", count: 121 },
+    ];
+    const rows = buildPublicTypeRows(stats);
+    expect(rows.map((r) => r.totalDisplay)).toEqual(["120", "120"]);
+    // Name order (email-domain < oauth-account), NOT raw order (oauth-account 121 first).
+    expect(rows.map((r) => r.type)).toEqual(["email-domain", "oauth-account"]);
+  });
+
+  // S1: the value space is closed too — a value outside its key's known enum is
+  // dropped at render even under an allowlisted key, since Badge.attributes is
+  // stored verbatim (only VC claims are Zod-validated).
+  it("drops an out-of-domain value under an allowlisted key (never renders)", () => {
+    const stats: BadgeStatInput[] = [
+      { badgeType: "oauth-account", attributeKey: "", attributeValue: "", count: 90 },
+      { badgeType: "oauth-account", attributeKey: "provider", attributeValue: "github", count: 88 },
+      // `provider` is allowlisted, but "evil-freetext" is not an OAuth provider.
+      {
+        badgeType: "oauth-account",
+        attributeKey: "provider",
+        attributeValue: "evil-freetext",
+        count: 40,
+      },
+    ];
+    const rows = buildPublicTypeRows(stats);
+    const group = rows[0]!.attributes[0]!;
+    expect(group.values.map((v) => v.value)).toEqual(["github"]);
+    expect(group.values.some((v) => v.value === "evil-freetext")).toBe(false);
+  });
 });
 
 describe("buildPublicCohortRow — percentage never leaks a small count", () => {

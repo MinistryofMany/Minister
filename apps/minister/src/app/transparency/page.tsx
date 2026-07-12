@@ -111,7 +111,13 @@ export default async function TransparencyPage() {
       prisma.sybilBucketConfig.findUnique({ where: { id: "singleton" } }),
       prisma.statsRun.findUnique({ where: { id: "singleton" } }),
       prisma.badgeStat.findMany(),
-      prisma.cohortStatDef.findMany({ orderBy: { createdAt: "asc" }, include: { stat: true } }),
+      // PUBLIC surface: only defs an admin has explicitly published are world-
+      // visible. An unpublished (e.g. draft or internal) def never renders here.
+      prisma.cohortStatDef.findMany({
+        where: { published: true },
+        orderBy: { createdAt: "asc" },
+        include: { stat: true },
+      }),
     ]);
 
   // Category -> its distinct types (for the caps table).

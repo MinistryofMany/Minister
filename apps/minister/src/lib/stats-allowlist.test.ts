@@ -5,6 +5,7 @@ import {
   allowlistedTypeKeyPairs,
   FORBIDDEN_KEYS,
   isAllowlistedKey,
+  isAllowlistedValue,
   PUBLISHABLE_KEYS,
 } from "@/lib/stats-allowlist";
 
@@ -57,6 +58,31 @@ describe("stats attribute-value allowlist", () => {
     expect(isAllowlistedKey("not-a-real-type", "provider")).toBe(false);
     expect(isAllowlistedKey("oauth-account", "olderThanMonths")).toBe(false);
     expect(allowlistedKeysFor("not-a-real-type")).toEqual([]);
+  });
+
+  it("closes the VALUE domain: accepts in-enum values, rejects out-of-domain ones", () => {
+    // In-domain (values arrive as TEXT via attributes ->> key).
+    expect(isAllowlistedValue("oauth-account", "provider", "github")).toBe(true);
+    expect(isAllowlistedValue("account-age", "olderThanMonths", "24")).toBe(true);
+    expect(isAllowlistedValue("social-following", "followersAtLeast", "100")).toBe(true);
+    expect(isAllowlistedValue("wallet-control", "chain", "ethereum")).toBe(true);
+    expect(isAllowlistedValue("onchain-event", "event", "eth2-genesis-depositor")).toBe(true);
+    expect(isAllowlistedValue("age-over-21", "threshold", "21")).toBe(true);
+    expect(isAllowlistedValue("public-key", "kind", "pgp")).toBe(true);
+    expect(isAllowlistedValue("residency-country", "country", "US")).toBe(true);
+
+    // Out-of-domain values under an ALLOWLISTED key — Badge.attributes is stored
+    // verbatim, so a forged/free-text value must be rejected.
+    expect(isAllowlistedValue("oauth-account", "provider", "evil-freetext")).toBe(false);
+    expect(isAllowlistedValue("account-age", "olderThanMonths", "13")).toBe(false);
+    expect(isAllowlistedValue("wallet-control", "chain", "dogecoin")).toBe(false);
+    expect(isAllowlistedValue("age-over-21", "threshold", "20")).toBe(false);
+    expect(isAllowlistedValue("public-key", "kind", "rsa")).toBe(false);
+    expect(isAllowlistedValue("residency-country", "country", "usa")).toBe(false);
+
+    // A non-allowlisted (type,key) is rejected regardless of value.
+    expect(isAllowlistedValue("oauth-account", "handle", "github")).toBe(false);
+    expect(isAllowlistedValue("email-domain", "domain", "example.com")).toBe(false);
   });
 
   it("every materialized (type,key) pair uses only publishable, non-forbidden keys", () => {

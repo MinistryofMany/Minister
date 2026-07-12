@@ -110,6 +110,9 @@ async function main(): Promise<void> {
         label: def.label,
         numeratorFilter: def.numeratorFilter,
         denominatorFilter: def.denominatorFilter,
+        // The built-in github cohort is the vetted example — publish it. Operator-
+        // created defs stay unpublished (default) until explicitly toggled.
+        published: true,
       },
     });
     created++;

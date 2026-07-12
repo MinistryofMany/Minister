@@ -794,6 +794,10 @@ model CohortStatDef {
   label             String
   numeratorFilter   Json // CohortFilter, allowlist-validated
   denominatorFilter Json
+  // A cohort is NOT public until an admin explicitly publishes it. The public
+  // /transparency page renders only published defs; the label + counts are then
+  // world-visible.
+  published         Boolean     @default(false)
   createdAt         DateTime    @default(now())
   stat              CohortStat?
 }

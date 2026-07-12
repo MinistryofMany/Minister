@@ -20,7 +20,7 @@ import { Prisma } from "@/generated/prisma";
 import { getIssuer } from "@/lib/issuer";
 import { prisma } from "@/lib/prisma";
 import { countCohortSide, safeParseCohortFilter } from "@/lib/cohort-filter";
-import { allowlistedTypeKeyPairs } from "@/lib/stats-allowlist";
+import { allowlistedTypeKeyPairs, isAllowlistedValue } from "@/lib/stats-allowlist";
 import type { ScorableBadge } from "@/lib/sybil-config";
 import { loadSybilScoringConfig } from "@/lib/sybil-config";
 import { sybilScore } from "@/lib/sybil-score";
@@ -102,6 +102,10 @@ async function recomputeBadgeStats(tx: Tx, native: string, now: Date): Promise<v
     `);
     for (const row of dist) {
       if (row.value === null) continue;
+      // Close the VALUE space, not just the key: Badge.attributes is stored
+      // verbatim (unvalidated), so an out-of-domain value (e.g. a free-text
+      // provider) is DROPPED here and never materialized.
+      if (!isAllowlistedValue(type, key, row.value)) continue;
       rows.push({
         badgeType: type,
         attributeKey: key,

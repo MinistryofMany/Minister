@@ -1,6 +1,7 @@
 import { getBadgeType } from "@minister/shared";
 
 import { AdminCohortDefForm } from "@/components/admin-cohort-def-form";
+import { AdminCohortPublishToggle } from "@/components/admin-cohort-publish-toggle";
 import { AdminStatsRecomputeButton } from "@/components/admin-stats-recompute-button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import type { CohortStat, CohortStatDef, StatsRun } from "@/generated/prisma";
@@ -186,9 +187,15 @@ function TypeDisclosure({ row }: { row: TypeRow }) {
 function CohortRow({ def }: { def: CohortStatDef & { stat: CohortStat | null } }) {
   const stat = def.stat;
   return (
-    <li className="rounded-md border border-neutral-200 p-3 dark:border-neutral-800">
-      <div className="flex flex-wrap items-baseline justify-between gap-2">
+    <li className="flex flex-col gap-2 rounded-md border border-neutral-200 p-3 dark:border-neutral-800">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <span className="text-sm font-medium">{def.label}</span>
+        <AdminCohortPublishToggle id={def.id} published={def.published} />
+      </div>
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <span className="text-xs text-neutral-500">
+          {def.published ? "Visible on /transparency" : "Not shown publicly"}
+        </span>
         {stat ? (
           <span className="tabular-nums text-sm">
             {stat.numerator.toLocaleString()} of {stat.denominator.toLocaleString()} —{" "}

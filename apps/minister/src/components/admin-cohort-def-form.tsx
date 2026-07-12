@@ -161,6 +161,12 @@ export function AdminCohortDefForm() {
 
   return (
     <div className="flex flex-col gap-3">
+      <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-200">
+        A new cohort is created <strong>unpublished</strong>. Once you publish it, its{" "}
+        <strong>label and counts become world-visible</strong> on the public /transparency page — so
+        keep the label generic and never put anything identifying (a person, an org, a domain) in
+        it.
+      </div>
       {error ? (
         <div className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900/40 dark:bg-red-950/30 dark:text-red-400">
           {error}

@@ -12,11 +12,13 @@ const h = vi.hoisted(() => {
   const db = {
     cohortStatDef: {
       create: vi.fn((_a?: unknown): Promise<unknown> => Promise.resolve({ id: "def1" })),
+      update: vi.fn((_a?: unknown): Promise<unknown> => Promise.resolve({ id: "def1" })),
     },
   };
   return {
     state: { session: null as Session | null },
     audit: vi.fn(async (..._a: unknown[]) => {}),
+    revalidatePath: vi.fn((_p?: unknown) => {}),
     db,
   };
 });
@@ -29,14 +31,14 @@ vi.mock("@/lib/session", () => ({
 }));
 vi.mock("@/lib/audit", () => ({ audit: h.audit }));
 vi.mock("@/lib/prisma", () => ({ prisma: h.db }));
-vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
+vi.mock("next/cache", () => ({ revalidatePath: h.revalidatePath }));
 // recomputeAllStats isn't exercised by these tests; stub it out so importing
 // stats-actions.ts doesn't drag in the issuer/sybil-config machinery.
 vi.mock("@/lib/stats-recompute", () => ({
   recomputeAllStats: vi.fn(async () => ({ durationMs: 0 })),
 }));
 
-import { createCohortDef } from "@/server/stats-actions";
+import { createCohortDef, setCohortDefPublished } from "@/server/stats-actions";
 
 const db = h.db;
 
@@ -51,6 +53,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   h.state.session = adminSession();
   db.cohortStatDef.create.mockResolvedValue({ id: "def1" });
+  db.cohortStatDef.update.mockResolvedValue({ id: "def1" });
 });
 
 describe("createCohortDef", () => {
@@ -158,5 +161,64 @@ describe("createCohortDef", () => {
     if (res.ok) throw new Error("unreachable");
     expect(res.error).toBe("Not authorized");
     expect(db.cohortStatDef.create).not.toHaveBeenCalled();
+  });
+
+  // S2: a new cohort is NOT public until explicitly published.
+  it("creates a cohort UNPUBLISHED (never sets published on insert)", async () => {
+    const res = await createCohortDef({
+      label: "Aged GitHub accounts (share of GitHub accounts)",
+      numeratorFilter: {
+        clauses: [
+          { type: "account-age", where: { provider: "github" }, whereGte: { olderThanMonths: 24 } },
+        ],
+      },
+      denominatorFilter: { clauses: [{ type: "oauth-account", where: { provider: "github" } }] },
+    });
+    expect(res.ok).toBe(true);
+    const call = db.cohortStatDef.create.mock.calls[0]?.[0] as {
+      data: Record<string, unknown>;
+    };
+    // The create must not opt the def into visibility — it stays at the DB
+    // default (false) until an admin toggles it.
+    expect(call.data.published).toBeUndefined();
+  });
+});
+
+describe("setCohortDefPublished", () => {
+  it("publishes a def, audits, and revalidates BOTH the admin and public surfaces", async () => {
+    const res = await setCohortDefPublished({ id: "def1", published: true });
+    expect(res.ok).toBe(true);
+    expect(db.cohortStatDef.update).toHaveBeenCalledTimes(1);
+    const call = db.cohortStatDef.update.mock.calls[0]?.[0] as {
+      where: { id: string };
+      data: { published: boolean };
+    };
+    expect(call.where.id).toBe("def1");
+    expect(call.data.published).toBe(true);
+    expect(h.audit).toHaveBeenCalledWith(
+      "admin1",
+      "admin.stats.cohort_def_published",
+      expect.objectContaining({ cohortStatDefId: "def1", published: true }),
+    );
+    expect(h.revalidatePath).toHaveBeenCalledWith("/admin/stats");
+    expect(h.revalidatePath).toHaveBeenCalledWith("/transparency");
+  });
+
+  it("unpublishes a def (flips the flag back to false)", async () => {
+    const res = await setCohortDefPublished({ id: "def1", published: false });
+    expect(res.ok).toBe(true);
+    const call = db.cohortStatDef.update.mock.calls[0]?.[0] as {
+      data: { published: boolean };
+    };
+    expect(call.data.published).toBe(false);
+  });
+
+  it("rejects a non-admin caller before touching prisma", async () => {
+    h.state.session = null;
+    const res = await setCohortDefPublished({ id: "def1", published: true });
+    expect(res.ok).toBe(false);
+    if (res.ok) throw new Error("unreachable");
+    expect(res.error).toBe("Not authorized");
+    expect(db.cohortStatDef.update).not.toHaveBeenCalled();
   });
 });

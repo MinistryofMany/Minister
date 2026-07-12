@@ -14,7 +14,16 @@
 // re-checked at module load against the closed publishable set (and against the
 // forbidden set) so a typo or a forbidden key cannot slip in.
 
-import { AGE_THRESHOLDS, knownBadgeTypes } from "@minister/shared";
+import {
+  ACCOUNT_AGE_MONTHS,
+  AGE_THRESHOLDS,
+  FOLLOWERS_BUCKETS,
+  knownBadgeTypes,
+  OAUTH_PROVIDERS,
+  ONCHAIN_EVENTS,
+  PUBLIC_KEY_KINDS,
+  WALLET_CHAINS,
+} from "@minister/shared";
 
 // The closed-enum keys whose value space is small and non-identifying. Only
 // these may ever be published (design spec §6). Anything not here is dropped.
@@ -102,6 +111,38 @@ const ALLOWLISTED_KEYS_BY_TYPE: Record<string, readonly PublishableKey[]> = {
  */
 export function isAllowlistedKey(type: string, key: string): boolean {
   return ALLOWLISTED_KEYS_BY_TYPE[type]?.includes(key as PublishableKey) ?? false;
+}
+
+// The closed value domain of each publishable key. `Badge.attributes` is stored
+// VERBATIM (only VC `claims` are Zod-validated), so closing the KEY space is not
+// enough — a forged or free-text value under an allowlisted key (e.g.
+// `provider="evil-freetext"`) must also be rejected. Attribute values reach us as
+// TEXT (`attributes ->> key`), so numeric-enum domains are matched on their string
+// form. ISO country is the one open-but-bounded domain: a two-letter code shape.
+const COUNTRY_RE = /^[A-Z]{2}$/u;
+const VALUE_DOMAIN: Record<PublishableKey, (value: string) => boolean> = {
+  provider: (v) => (OAUTH_PROVIDERS as readonly string[]).includes(v),
+  // account-age and wallet-age share the same month tiers (12/24/36/60).
+  olderThanMonths: (v) => ACCOUNT_AGE_MONTHS.some((m) => String(m) === v),
+  followersAtLeast: (v) => FOLLOWERS_BUCKETS.some((b) => String(b) === v),
+  chain: (v) => (WALLET_CHAINS as readonly string[]).includes(v),
+  event: (v) => (ONCHAIN_EVENTS as readonly string[]).includes(v),
+  threshold: (v) => AGE_THRESHOLDS.some((t) => String(t) === v),
+  kind: (v) => (PUBLIC_KEY_KINDS as readonly string[]).includes(v),
+  country: (v) => COUNTRY_RE.test(v),
+};
+
+/**
+ * Is `value` a member of the CLOSED DOMAIN of the allowlisted key `key` for
+ * `type`? Fail-closed: a non-allowlisted (type,key), or a value outside the key's
+ * known enum/shape, is rejected. Applied at BOTH materialization (drop an
+ * out-of-domain (key,value) pair) and render (defense in depth), so a value that
+ * was never Zod-validated into `Badge.attributes` can never be published.
+ */
+export function isAllowlistedValue(type: string, key: string, value: string): boolean {
+  if (!isAllowlistedKey(type, key)) return false;
+  const inDomain = VALUE_DOMAIN[key as PublishableKey];
+  return inDomain ? inDomain(value) : false;
 }
 
 /** The allowlisted keys for a type (empty for a type-level-total-only type). */

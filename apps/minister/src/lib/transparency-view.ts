@@ -18,7 +18,7 @@
 // and 3 — never from a raw numerator/denominator — so it can never leak an exact
 // small count. See `buildPublicCohortRow`.
 
-import { isAllowlistedKey } from "@/lib/stats-allowlist";
+import { isAllowlistedKey, isAllowlistedValue } from "@/lib/stats-allowlist";
 import { DEFAULT_SUPPRESSION_K, roundPublic, suppress } from "@/lib/stats-public";
 
 // A raw materialized BadgeStat row as this module consumes it (the display fields
@@ -47,6 +47,24 @@ export function publicCountDisplay(count: number): string {
   return roundPublic(suppressed).toLocaleString();
 }
 
+/**
+ * The numeric key a row is ORDERED by on the public surface — derived from the
+ * PUBLISHED value, never the raw count, so DOM order can leak nothing finer than
+ * what is printed. A suppressed cell (the "<k" sentinel) and a true zero both
+ * carry no orderable magnitude, so both collapse to 0; a surviving count sorts by
+ * its `roundPublic` value. Callers sort DESC by this key and tie-break
+ * lexicographically, making order a pure function of the rendered text: two cells
+ * that DISPLAY THE SAME (e.g. both "<5", or both rounded to 120) are ordered only
+ * by name, never by their distinct underlying counts.
+ */
+export function publicSortKey(count: number): number {
+  const suppressed = suppress(count, DEFAULT_SUPPRESSION_K);
+  // A suppressed "<k" cell exposes no magnitude to order by.
+  if (typeof suppressed === "string") return 0;
+  if (suppressed <= 0) return 0;
+  return roundPublic(suppressed);
+}
+
 export interface PublicAttrValue {
   value: string;
   display: string; // suppressed + rounded
@@ -60,7 +78,7 @@ export interface PublicAttrGroup {
 export interface PublicTypeRow {
   type: string;
   totalDisplay: string; // suppressed + rounded type-level total
-  rawTotal: number; // ORDERING ONLY — never rendered; used to sort types by size
+  rawTotal: number; // ORDERING ONLY — never rendered; fed through publicSortKey to sort types
   attributes: PublicAttrGroup[];
 }
 
@@ -76,8 +94,10 @@ export interface PublicTypeRow {
  */
 export function buildPublicTypeRows(stats: readonly BadgeStatInput[]): PublicTypeRow[] {
   const byType = new Map<string, PublicTypeRow>();
-  // Attribute values are accumulated per (type,key) before display-shaping so we
-  // can sort within a key by true count (ordering is coarse, non-leaking info).
+  // Attribute values are accumulated per (type,key) before display-shaping. The
+  // raw count is retained ONLY to derive the published sort key (`publicSortKey`)
+  // and the display text; rows are ordered by that published key, not the raw
+  // count, so DOM order never leaks finer than what is printed.
   const attrAccum = new Map<string, Map<string, { value: string; count: number }[]>>();
 
   function typeRow(type: string): PublicTypeRow {
@@ -98,8 +118,12 @@ export function buildPublicTypeRows(stats: readonly BadgeStatInput[]): PublicTyp
       continue;
     }
     // LAYER 1 (defense in depth): a non-allowlisted attribute key never renders,
-    // even if it reached the table. Fail closed.
+    // even if it reached the table. Fail closed. The value is ALSO re-checked
+    // against its closed-enum domain — `Badge.attributes` is stored verbatim, so
+    // an out-of-domain (e.g. free-text) value must never surface even under an
+    // allowlisted key.
     if (!isAllowlistedKey(stat.badgeType, stat.attributeKey)) continue;
+    if (!isAllowlistedValue(stat.badgeType, stat.attributeKey, stat.attributeValue)) continue;
 
     // Ensure the type row exists even if its total row is absent/out of order.
     typeRow(stat.badgeType);
@@ -119,7 +143,13 @@ export function buildPublicTypeRows(stats: readonly BadgeStatInput[]): PublicTyp
     if (!row) continue;
     const groups: PublicAttrGroup[] = [];
     for (const [key, values] of byKey) {
-      values.sort((a, b) => b.count - a.count);
+      // Order by the PUBLISHED value (DESC), tie-broken by attribute value name.
+      // Two values that display the same (both suppressed, or both rounded to the
+      // same number) therefore sort by name, never by their distinct raw counts.
+      values.sort((a, b) => {
+        const delta = publicSortKey(b.count) - publicSortKey(a.count);
+        return delta !== 0 ? delta : a.value.localeCompare(b.value);
+      });
       groups.push({
         key,
         values: values.map((v) => ({ value: v.value, display: publicCountDisplay(v.count) })),
@@ -129,7 +159,12 @@ export function buildPublicTypeRows(stats: readonly BadgeStatInput[]): PublicTyp
     row.attributes = groups;
   }
 
-  return Array.from(byType.values()).sort((a, b) => b.rawTotal - a.rawTotal);
+  // Order types by their PUBLISHED total (DESC), tie-broken by type name, so two
+  // types whose totals display the same are ordered by name, not by raw count.
+  return Array.from(byType.values()).sort((a, b) => {
+    const delta = publicSortKey(b.rawTotal) - publicSortKey(a.rawTotal);
+    return delta !== 0 ? delta : a.type.localeCompare(b.type);
+  });
 }
 
 export interface PublicCohortRow {
