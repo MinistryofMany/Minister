@@ -74,3 +74,13 @@ export function pkcePair(): { verifier: string; challenge: string } {
   const challenge = createHash("sha256").update(verifier).digest("base64url");
   return { verifier, challenge };
 }
+
+// Presence check for deployment-time OAuth client credential env vars. Shared
+// by every OAuth plugin's `isConfigured()` probe (github/google/reddit — steam
+// and hackernews need no credentials and skip the probe entirely) so the
+// add-a-badge menu can hide a provider, and the wizard entry point can refuse
+// to start it, instead of routing a user into a flow that throws on its first
+// step. Checks presence only — never reads, logs, or returns the values.
+export function hasEnvCreds(names: readonly string[]): boolean {
+  return names.every((name) => Boolean(process.env[name]));
+}

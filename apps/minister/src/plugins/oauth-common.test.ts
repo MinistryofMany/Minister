@@ -1,10 +1,11 @@
 import { createHash } from "node:crypto";
 
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
 import {
   accountAgeBadge,
   dateFromUnixSeconds,
+  hasEnvCreds,
   highestBucket,
   monthsBetween,
   pkcePair,
@@ -93,5 +94,36 @@ describe("randomToken", () => {
     const b = randomToken();
     expect(a).not.toBe(b);
     expect(a).toMatch(/^[A-Za-z0-9_-]+$/u);
+  });
+});
+
+describe("hasEnvCreds", () => {
+  const KEY_A = "MINISTER_TEST_CRED_A";
+  const KEY_B = "MINISTER_TEST_CRED_B";
+
+  afterEach(() => {
+    delete process.env[KEY_A];
+    delete process.env[KEY_B];
+  });
+
+  it("is false when no listed var is set", () => {
+    expect(hasEnvCreds([KEY_A, KEY_B])).toBe(false);
+  });
+
+  it("is false when only some listed vars are set", () => {
+    process.env[KEY_A] = "value";
+    expect(hasEnvCreds([KEY_A, KEY_B])).toBe(false);
+  });
+
+  it("is true when every listed var is set and non-empty", () => {
+    process.env[KEY_A] = "value-a";
+    process.env[KEY_B] = "value-b";
+    expect(hasEnvCreds([KEY_A, KEY_B])).toBe(true);
+  });
+
+  it("treats an empty-string value as unset", () => {
+    process.env[KEY_A] = "";
+    process.env[KEY_B] = "value-b";
+    expect(hasEnvCreds([KEY_A, KEY_B])).toBe(false);
   });
 });

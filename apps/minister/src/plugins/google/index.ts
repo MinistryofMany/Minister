@@ -2,7 +2,7 @@ import { z } from "zod";
 
 import type { IssuedBadge, Plugin } from "@minister/plugin-sdk";
 
-import { pkcePair, randomToken } from "../oauth-common";
+import { hasEnvCreds, pkcePair, randomToken } from "../oauth-common";
 
 const STEP_AUTHORIZE = "google-authorize";
 
@@ -47,7 +47,7 @@ export const googlePlugin: Plugin = {
   },
 
   isConfigured() {
-    return readClientCreds() !== null;
+    return hasEnvCreds(["GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET"]);
   },
 
   async startWizard(ctx) {

@@ -2,7 +2,7 @@ import { z } from "zod";
 
 import type { Plugin } from "@minister/plugin-sdk";
 
-import { pkcePair, randomToken } from "../oauth-common";
+import { hasEnvCreds, pkcePair, randomToken } from "../oauth-common";
 import { buildRedditBadges } from "./derive";
 
 const STEP_AUTHORIZE = "reddit-authorize";
@@ -52,7 +52,7 @@ export const redditPlugin: Plugin = {
   // is dead, so the host hides the entry rather than routing into a throwing
   // wizard.
   isConfigured() {
-    return readClientCreds() !== null;
+    return hasEnvCreds(["REDDIT_CLIENT_ID", "REDDIT_CLIENT_SECRET"]);
   },
 
   async startWizard(ctx) {

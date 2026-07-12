@@ -4,6 +4,7 @@ import { z } from "zod";
 
 import type { Plugin } from "@minister/plugin-sdk";
 
+import { hasEnvCreds } from "../oauth-common";
 import { buildGithubBadges } from "./derive";
 
 const STEP_AUTHORIZE = "github-authorize";
@@ -60,7 +61,7 @@ export const githubPlugin: Plugin = {
   // whole flow is dead, so the host hides the entry instead of surfacing a
   // wizard that would throw on the first step.
   isConfigured() {
-    return readClientCreds() !== null;
+    return hasEnvCreds(["GITHUB_CLIENT_ID", "GITHUB_CLIENT_SECRET"]);
   },
 
   async startWizard(ctx) {
