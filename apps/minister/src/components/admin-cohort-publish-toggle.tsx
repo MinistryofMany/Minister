@@ -15,6 +15,18 @@ export function AdminCohortPublishToggle({ id, published }: { id: string; publis
   const [error, setError] = useState<string | null>(null);
 
   function toggle() {
+    // Publishing (never unpublishing) makes the label + counts world-visible on
+    // /transparency — mirror the amber create-time warning with a confirm step
+    // so an operator can't flip a cohort public by an accidental click.
+    if (
+      !published &&
+      typeof window !== "undefined" &&
+      !window.confirm(
+        "Publish this cohort? Its label and counts become world-visible on the public /transparency page.",
+      )
+    ) {
+      return;
+    }
     setError(null);
     startTransition(async () => {
       const result = await setCohortDefPublished({ id, published: !published });

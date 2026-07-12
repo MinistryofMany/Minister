@@ -1,6 +1,6 @@
-import Link from "next/link";
 import { redirect } from "next/navigation";
 
+import { AdminNav } from "@/components/admin-nav";
 import { getSessionFlags } from "@/lib/session";
 
 // Every /admin page lives under this layout, so the isAdmin gate runs
@@ -19,31 +19,11 @@ export default async function AdminLayout({ children }: { children: React.ReactN
         </p>
       </header>
 
-      <nav className="flex gap-1 border-b border-neutral-200 pb-px text-sm dark:border-neutral-800">
-        <AdminTab href="/admin/users">Users</AdminTab>
-        <AdminTab href="/admin/invite-codes">Invite codes</AdminTab>
-        <AdminTab href="/admin/oidc-clients">OIDC clients</AdminTab>
-        <AdminTab href="/admin/sybil-score">Sybil score</AdminTab>
-        <AdminTab href="/admin/stats">Stats</AdminTab>
-        <AdminTab href="/admin/recovery-config">Recovery config</AdminTab>
-        <AdminTab href="/admin/audit">Audit log</AdminTab>
-      </nav>
+      {/* AdminNav is a small client island (usePathname) so the active tab is
+          marked; the rest of this tree stays a plain RSC page. */}
+      <AdminNav />
 
       {children}
     </div>
-  );
-}
-
-function AdminTab({ href, children }: { href: string; children: React.ReactNode }) {
-  // Server layouts can't read the current pathname without a client
-  // boundary; a plain link row keeps this whole tree RSC-only. The
-  // active page is obvious from its own heading.
-  return (
-    <Link
-      href={href}
-      className="rounded-t-md px-3 py-2 font-medium text-neutral-600 hover:bg-neutral-100 hover:text-neutral-900 dark:text-neutral-400 dark:hover:bg-neutral-900 dark:hover:text-neutral-100"
-    >
-      {children}
-    </Link>
   );
 }

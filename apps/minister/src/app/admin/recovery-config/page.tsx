@@ -6,6 +6,10 @@ import {
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { RECOVERY_ELIGIBLE_TYPES } from "@/lib/assurance";
 import { prisma } from "@/lib/prisma";
+import {
+  effectiveRecoveryThreshold,
+  effectiveRecoveryWeight,
+} from "@/lib/recovery-config-guardrails";
 import { requireAdmin } from "@/lib/session";
 
 // /admin/recovery-config — the account-takeover control surface. Editing here is
@@ -25,28 +29,20 @@ export default async function AdminRecoveryConfigPage() {
   // passes, the recovery ENGINE reads the pending value (sybil-config.ts
   // effectiveRecoveryWeight / loadEffectiveThreshold) but the live column is
   // never promoted. Compute the EFFECTIVE value here (pending, once due; else
-  // live) and hand THAT to the editor as the operative value, so the admin's
+  // live) via the SAME helper /admin/sybil-score uses for its read-only mirror
+  // column, and hand THAT to the editor as the operative value, so the admin's
   // review surface can never show a stale-but-safe-looking number while an
-  // already-landed weakening is silently in force. Display-only — the engine is
-  // untouched. `now` is server-stamped so the client's scheduled/in-effect split
-  // matches this computation.
+  // already-landed weakening is silently in force — and the two admin pages can
+  // never disagree. Display-only — the engine is untouched. `now` is
+  // server-stamped so the client's scheduled/in-effect split matches this
+  // computation.
   const now = Date.now();
-  const effectiveWeight = (r: {
-    recoveryWeight: number;
-    pendingRecoveryWeight: number | null;
-    recoveryEffectiveAt: Date | null;
-  }): number =>
-    r.pendingRecoveryWeight != null &&
-    r.recoveryEffectiveAt != null &&
-    r.recoveryEffectiveAt.getTime() <= now
-      ? r.pendingRecoveryWeight
-      : r.recoveryWeight;
 
   const rows: RecoveryWeightRowView[] = weightRows.map((r) => ({
     badgeType: r.badgeType,
     qualifier: r.qualifier,
     recoveryWeight: r.recoveryWeight,
-    effectiveRecoveryWeight: effectiveWeight(r),
+    effectiveRecoveryWeight: effectiveRecoveryWeight(r, now),
     pendingRecoveryWeight: r.pendingRecoveryWeight,
     recoveryEffectiveAt: r.recoveryEffectiveAt ? r.recoveryEffectiveAt.toISOString() : null,
     allowSoloRecovery: r.allowSoloRecovery,
@@ -54,12 +50,7 @@ export default async function AdminRecoveryConfigPage() {
   }));
 
   const liveThreshold = cfg?.threshold ?? 100;
-  const effectiveThreshold =
-    cfg?.pendingThreshold != null &&
-    cfg?.thresholdEffectiveAt != null &&
-    cfg.thresholdEffectiveAt.getTime() <= now
-      ? cfg.pendingThreshold
-      : liveThreshold;
+  const effectiveThreshold = cfg ? effectiveRecoveryThreshold(cfg, now) : liveThreshold;
 
   const config: RecoveryConfigView = {
     threshold: liveThreshold,

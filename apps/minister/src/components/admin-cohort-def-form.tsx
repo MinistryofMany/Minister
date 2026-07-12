@@ -76,6 +76,7 @@ function ClauseBuilder({
           <Input
             className="w-44 font-mono text-xs"
             placeholder="badge type"
+            aria-label={`${title} clause ${i + 1} badge type`}
             value={c.type}
             onChange={(e) => update(i, { type: e.target.value })}
           />
@@ -83,6 +84,7 @@ function ClauseBuilder({
           <Input
             className="w-24 font-mono text-xs"
             placeholder="key"
+            aria-label={`${title} clause ${i + 1} where key`}
             value={c.whereKey}
             onChange={(e) => update(i, { whereKey: e.target.value })}
           />
@@ -90,6 +92,7 @@ function ClauseBuilder({
           <Input
             className="w-24 font-mono text-xs"
             placeholder="value"
+            aria-label={`${title} clause ${i + 1} where value`}
             value={c.whereValue}
             onChange={(e) => update(i, { whereValue: e.target.value })}
           />
@@ -97,6 +100,7 @@ function ClauseBuilder({
           <Input
             className="w-24 font-mono text-xs"
             placeholder="key"
+            aria-label={`${title} clause ${i + 1} where-gte key`}
             value={c.whereGteKey}
             onChange={(e) => update(i, { whereGteKey: e.target.value })}
           />
@@ -104,6 +108,7 @@ function ClauseBuilder({
           <Input
             className="w-16 font-mono text-xs"
             placeholder="value"
+            aria-label={`${title} clause ${i + 1} where-gte value`}
             value={c.whereGteValue}
             onChange={(e) => update(i, { whereGteValue: e.target.value })}
           />

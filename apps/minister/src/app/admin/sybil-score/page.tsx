@@ -5,6 +5,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { holderCountsByType } from "@/lib/anonymity-sets";
 import { RECOVERY_ELIGIBLE_TYPES } from "@/lib/assurance";
 import { prisma } from "@/lib/prisma";
+import { effectiveRecoveryWeight } from "@/lib/recovery-config-guardrails";
 import { requireAdmin } from "@/lib/session";
 
 // /admin/sybil-score — sybilWeight rows + categories/caps + bucket cutoffs, all
@@ -20,11 +21,21 @@ export default async function AdminSybilScorePage() {
     holderCountsByType(),
   ]);
 
+  // The recovery column here is READ-ONLY, but it must never disagree with
+  // /admin/recovery-config's editor for the same row. Resolve it through the
+  // SAME effectiveRecoveryWeight helper that page uses (pending value once
+  // effectiveAt is due, else the live column) rather than the raw live column,
+  // so this review surface can't show a stale-but-safe-looking number while a
+  // weakening is already in force. `now` matches the request, same as the
+  // recovery-config page.
+  const now = Date.now();
+
   const rows: SybilWeightRowView[] = weightRows.map((r) => ({
     badgeType: r.badgeType,
     qualifier: r.qualifier,
     sybilWeight: r.sybilWeight,
     recoveryWeight: r.recoveryWeight,
+    effectiveRecoveryWeight: effectiveRecoveryWeight(r, now),
     category: r.category,
     holderCount: holderCounts.get(r.badgeType) ?? 0,
     recoveryEligible: RECOVERY_ELIGIBLE_TYPES.has(r.badgeType),

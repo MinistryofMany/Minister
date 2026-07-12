@@ -4,8 +4,10 @@ import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { signIn as signInWebAuthn } from "next-auth/webauthn";
 
+import { AdminSaveToast } from "@/components/admin-save-toast";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { RECOVERY_THRESHOLD_MAX, RECOVERY_THRESHOLD_MIN } from "@/lib/recovery-config-guardrails";
 import type { ActionResult } from "@/server/credential-actions";
 import {
   setAllowSoloRecovery,
@@ -49,13 +51,19 @@ const rowKey = (badgeType: string, qualifier: string) => `${badgeType} ${qualifi
 // Run a wrapped action; on a step-up result, run a passkey ceremony (which
 // re-stamps auth_time), then retry ONCE. Returns the final non-step-up result,
 // or null if the step-up was abandoned/failed. Mirrors the credentials manager.
+// `onStepUp` fires the instant a passkey ceremony is about to start, so the
+// caller can distinguish "saving" from "waiting on your passkey" — otherwise a
+// stale-AAL2 admin staring at a plain disabled button during the WebAuthn
+// prompt has no way to tell the page from hung.
 async function withStepUp<T>(
   call: () => Promise<ActionResult<T>>,
+  onStepUp?: () => void,
 ): Promise<ActionResult<T> | null> {
   const first = await call();
   if (first.ok || !("stepUp" in first) || !first.stepUp) {
     return first;
   }
+  onStepUp?.();
   try {
     const res = await signInWebAuthn("passkey", { redirect: false });
     if (res && "error" in res && res.error) return null;
@@ -72,6 +80,11 @@ export function AdminRecoveryForm({ initialRows, initialConfig, now }: Props) {
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  // Set the instant withStepUp's onStepUp fires (a passkey ceremony is about to
+  // run); cleared once dispatch settles. Drives the button label so "saving" and
+  // "waiting on your passkey" are visibly distinct states.
+  const [awaitingStepUp, setAwaitingStepUp] = useState(false);
+  const savingLabel = awaitingStepUp ? "Confirm with your passkey…" : "Saving…";
 
   // Seed the editable fields from the EFFECTIVE (operative) values, never the
   // stale live column — otherwise an already-landed weakening hides behind a
@@ -116,8 +129,10 @@ export function AdminRecoveryForm({ initialRows, initialConfig, now }: Props) {
   // Dispatch an action through the step-up dance; surface result; refresh on ok.
   function dispatch<T>(call: () => Promise<ActionResult<T>>, onOk?: (data: T) => void) {
     reset();
+    setAwaitingStepUp(false);
     startTransition(async () => {
-      const res = await withStepUp(call);
+      const res = await withStepUp(call, () => setAwaitingStepUp(true));
+      setAwaitingStepUp(false);
       if (res === null) {
         setError("A recent passkey re-authentication is required and was not completed.");
         return;
@@ -180,16 +195,7 @@ export function AdminRecoveryForm({ initialRows, initialConfig, now }: Props) {
 
   return (
     <div className="flex flex-col gap-6">
-      {error ? (
-        <div className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900/40 dark:bg-red-950/30 dark:text-red-400">
-          {error}
-        </div>
-      ) : null}
-      {notice ? (
-        <div className="rounded-md border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700 dark:border-emerald-900/40 dark:bg-emerald-950/30 dark:text-emerald-400">
-          {notice}
-        </div>
-      ) : null}
+      <AdminSaveToast error={error} notice={notice} onDismiss={reset} />
 
       {inEffect.length > 0 ? (
         <div className="rounded-md border-2 border-red-400 bg-red-50 p-3 text-sm text-red-800 dark:border-red-800 dark:bg-red-950/40 dark:text-red-300">
@@ -224,17 +230,29 @@ export function AdminRecoveryForm({ initialRows, initialConfig, now }: Props) {
         <h2 className="text-sm font-semibold">Recovery threshold</h2>
         <div className="flex flex-wrap items-end gap-2">
           <label className="flex flex-col gap-1 text-xs">
-            <span>Threshold (100–1000)</span>
+            <span>
+              Threshold ({RECOVERY_THRESHOLD_MIN}–{RECOVERY_THRESHOLD_MAX})
+            </span>
             <Input
               type="number"
               className="h-8 w-28"
+              aria-label="Recovery threshold"
+              min={RECOVERY_THRESHOLD_MIN}
+              max={RECOVERY_THRESHOLD_MAX}
               value={threshold}
               onChange={(e) => setThreshold(Number(e.target.value))}
             />
           </label>
           <Button type="button" className="h-8" disabled={pending} onClick={saveThreshold}>
-            Save threshold
+            {pending ? savingLabel : "Save threshold"}
           </Button>
+          {threshold !== initialConfig.effectiveThreshold ? (
+            <span
+              className="h-2 w-2 shrink-0 rounded-full bg-amber-500"
+              title="Unsaved changes"
+              aria-label="Unsaved changes"
+            />
+          ) : null}
         </div>
         <p className="text-xs text-neutral-500">
           Effective threshold: {initialConfig.effectiveThreshold}
@@ -252,15 +270,23 @@ export function AdminRecoveryForm({ initialRows, initialConfig, now }: Props) {
           <table className="w-full border-collapse text-sm">
             <thead>
               <tr className="border-b border-neutral-200 text-left text-xs text-neutral-500 dark:border-neutral-800">
-                <th className="py-2 pr-3 font-medium">Type / qualifier</th>
-                <th className="py-2 pr-3 font-medium">Recovery weight</th>
-                <th className="py-2 pr-3 font-medium">Solo recovery</th>
-                <th className="py-2 pr-3 font-medium"></th>
+                <th scope="col" className="py-2 pr-3 font-medium">
+                  Type / qualifier
+                </th>
+                <th scope="col" className="py-2 pr-3 font-medium">
+                  Recovery weight
+                </th>
+                <th scope="col" className="py-2 pr-3 font-medium">
+                  Solo recovery
+                </th>
+                <th scope="col" className="py-2 pr-3 font-medium"></th>
               </tr>
             </thead>
             <tbody>
               {initialRows.map((r) => {
                 const key = rowKey(r.badgeType, r.qualifier);
+                const weightValue = weights[key] ?? r.effectiveRecoveryWeight;
+                const dirty = weightValue !== r.effectiveRecoveryWeight;
                 return (
                   <tr key={key} className="border-b border-neutral-100 dark:border-neutral-900">
                     <td className="py-1 pr-3 font-mono text-xs">
@@ -274,7 +300,8 @@ export function AdminRecoveryForm({ initialRows, initialConfig, now }: Props) {
                       <Input
                         type="number"
                         className="h-8 w-20"
-                        value={weights[key] ?? r.effectiveRecoveryWeight}
+                        aria-label={`Recovery weight for ${r.badgeType} ${r.qualifier}`}
+                        value={weightValue}
                         disabled={!r.eligible || pending}
                         onChange={(e) =>
                           setWeights((w) => ({ ...w, [key]: Number(e.target.value) }))
@@ -285,21 +312,31 @@ export function AdminRecoveryForm({ initialRows, initialConfig, now }: Props) {
                       <input
                         type="checkbox"
                         className="h-4 w-4"
+                        aria-label={`Allow solo recovery for ${r.badgeType} ${r.qualifier}`}
                         checked={r.allowSoloRecovery}
                         disabled={pending}
                         onChange={(e) => toggleSolo(r, e.target.checked)}
                       />
                     </td>
                     <td className="py-1 pr-3">
-                      <Button
-                        type="button"
-                        variant="outline"
-                        className="h-8"
-                        disabled={!r.eligible || pending}
-                        onClick={() => saveWeight(r)}
-                      >
-                        Save
-                      </Button>
+                      <div className="flex items-center gap-2">
+                        {dirty ? (
+                          <span
+                            className="h-2 w-2 shrink-0 rounded-full bg-amber-500"
+                            title="Unsaved changes"
+                            aria-label="Unsaved changes"
+                          />
+                        ) : null}
+                        <Button
+                          type="button"
+                          variant="outline"
+                          className="h-8"
+                          disabled={!r.eligible || pending}
+                          onClick={() => saveWeight(r)}
+                        >
+                          {pending ? savingLabel : "Save"}
+                        </Button>
+                      </div>
                     </td>
                   </tr>
                 );

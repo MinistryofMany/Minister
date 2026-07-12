@@ -165,3 +165,44 @@ export function planThresholdWrite(
     thresholdEffectiveAt: new Date(now + RECOVERY_WEAKEN_DELAY_MS),
   };
 }
+
+// -----------------------------------------------------------------------------
+// Effective-value resolution. Phase 1 has NO promotion job: once a scheduled
+// weakening's effectiveAt passes, the recovery ENGINE reads the pending value
+// (see sybil-config.ts effectiveRecoveryWeight / loadEffectiveThreshold) but the
+// live column is never promoted. Both admin review surfaces — /admin/recovery-
+// config (the editor) and /admin/sybil-score (a read-only mirror of the same
+// column) — must resolve "what does the engine actually use right now" through
+// this SAME helper, so they can never show contradictory recovery weights for
+// the same row.
+// -----------------------------------------------------------------------------
+
+export function effectiveRecoveryWeight(
+  row: {
+    recoveryWeight: number;
+    pendingRecoveryWeight: number | null;
+    recoveryEffectiveAt: Date | null;
+  },
+  now: number,
+): number {
+  return row.pendingRecoveryWeight != null &&
+    row.recoveryEffectiveAt != null &&
+    row.recoveryEffectiveAt.getTime() <= now
+    ? row.pendingRecoveryWeight
+    : row.recoveryWeight;
+}
+
+export function effectiveRecoveryThreshold(
+  cfg: {
+    threshold: number;
+    pendingThreshold: number | null;
+    thresholdEffectiveAt: Date | null;
+  },
+  now: number,
+): number {
+  return cfg.pendingThreshold != null &&
+    cfg.thresholdEffectiveAt != null &&
+    cfg.thresholdEffectiveAt.getTime() <= now
+    ? cfg.pendingThreshold
+    : cfg.threshold;
+}
