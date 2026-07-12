@@ -187,3 +187,68 @@ jobs:
 
       - name: Account-merge live Postgres suite
         run: pnpm --filter @minister/app exec vitest run src/lib/merge.db.test.ts
+
+  # End-to-end (Playwright) browser suite. Unlike `ci`, this needs a real
+  # Postgres: the suite boots its own `next dev` on :3901 (the Playwright
+  # config supplies every app env var it needs) and talks to the database at
+  # the URL apps/minister/e2e/env.ts expects — host port 5433, database
+  # `minister_e2e`. There is no separate migrate step: the repo commits no
+  # Prisma migrations, and the suite's global-setup applies the schema itself
+  # via `prisma db push` (then wipes every table) before the specs run. The
+  # service port is mapped 5433→5432 so the default E2E_DATABASE_URL resolves
+  # without an override.
+  e2e:
+    runs-on: ubuntu-latest
+    env:
+      HUSKY: "0" # git hooks are irrelevant in CI
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: minister
+          POSTGRES_PASSWORD: minister
+          POSTGRES_DB: minister_e2e
+        ports:
+          # Host 5433 → container 5432, matching the default E2E_DATABASE_URL
+          # in apps/minister/e2e/env.ts (localhost:5433/minister_e2e).
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U minister -d minister_e2e"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 9.12.0
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate Prisma client
+        run: pnpm --filter @minister/app exec prisma generate
+
+      - name: Install Playwright browser (chromium)
+        run: pnpm --filter @minister/app exec playwright install --with-deps chromium
+
+      - name: E2E
+        run: pnpm --filter @minister/app test:e2e
+
+      - name: Upload Playwright traces
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-e2e-traces
+          path: apps/minister/test-results/
+          if-no-files-found: ignore
+          retention-days: 7
