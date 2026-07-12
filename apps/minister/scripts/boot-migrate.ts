@@ -61,9 +61,11 @@ async function main(): Promise<void> {
   if (migrate.status !== 0) process.exit(migrate.status ?? 1);
 
   // Seed the anti-sybil / recovery config tables AFTER the schema is migrated.
-  // Idempotent + insert-only (never clobbers operator edits), and fail-closed:
-  // a non-zero seed exit stops the container rather than booting into a
-  // half-seeded config the boot-check would (correctly) reject in prod.
+  // Idempotent + fail-closed: weights/categories/cutoffs upsert to their seed
+  // values, and cohort defs are reconciled to the code-defined BUILTIN_COHORT_DEFS
+  // (cohorts are code-authored now — any def not in code is removed). A non-zero
+  // seed exit stops the container rather than booting into a half-seeded config
+  // the boot-check would (correctly) reject in prod.
   const seed = spawnSync("pnpm", ["exec", "tsx", "scripts/seed-sybil-config.ts"], {
     stdio: "inherit",
     env: process.env,

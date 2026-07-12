@@ -15,16 +15,16 @@
 //      exact count is ever printed, and the sub-5 range is exactly the "<5"
 //      suppression sentinel.
 //
-// The cohort percentage is derived ONLY from rounded values (`roundPublic`),
-// never from a raw numerator/denominator, and is then coarsened to the nearest
-// 5% — so it can never leak an exact small count. See `buildPublicCohortRow`.
+// The cohort percentage is derived ONLY from each side's printed bucket LOWER
+// BOUND (`publicCountLowerBound`, the same value that orders rows), then coarsened
+// to the nearest 5% — so it is a pure function of the two rendered range labels
+// and can never move while both ranges stay fixed. See `buildPublicCohortRow`.
 
 import { isAllowlistedKey, isAllowlistedValue } from "@/lib/stats-allowlist";
 import {
   DEFAULT_SUPPRESSION_K,
   publicCountBucket,
   publicCountLowerBound,
-  roundPublic,
 } from "@/lib/stats-public";
 
 // A raw materialized BadgeStat row as this module consumes it (the display fields
@@ -178,11 +178,12 @@ export interface PublicCohortRow {
  *     side is a small count (1..k-1) the ratio is withheld (null) — a percentage
  *     over a raw small numerator or denominator would reconstruct that exact
  *     count.
- *   - When shown, it is derived from the ROUNDED values (`roundPublic`) — a pure
- *     function of already-coarsened counts — and then coarsened to the NEAREST 5%
- *     (change C). It therefore leaks nothing beyond what the published ranges
- *     already show, and two raw pairs that round to the same values yield the same
- *     percentage.
+ *   - When shown, it is derived from each side's printed bucket LOWER BOUND
+ *     (`publicCountLowerBound`) — the same value that orders rows — then coarsened
+ *     to the NEAREST 5%. It is therefore a pure function of the two rendered range
+ *     labels: any two (num, den) pairs that print the same two buckets yield the
+ *     SAME percentage, so it can never move while both ranges stay fixed (deriving
+ *     from a finer coarsening would leak a within-bucket boundary crossing).
  */
 export function buildPublicCohortRow(
   label: string,
@@ -193,12 +194,19 @@ export function buildPublicCohortRow(
 
   let percentDisplay: string | null = null;
   if (bothSurvive) {
-    const roundedNum = roundPublic(numerator);
-    const roundedDen = roundPublic(denominator);
-    if (roundedDen > 0) {
-      // roundPublic is monotonic and numerator <= denominator, so 0..100. Coarsen
-      // to the nearest 5% so the ratio stays as coarse as the published ranges.
-      const pct = (roundedNum / roundedDen) * 100;
+    // Derive the ratio from the SAME values that are printed — each side's bucket
+    // LOWER BOUND (`publicCountLowerBound`), exactly as `publicSortKey` orders rows.
+    // This makes the percentage a pure function of the two rendered range labels:
+    // any two (num, den) pairs that print the same two buckets yield the same
+    // percentage, so a differencing observer can't watch the ratio move while the
+    // ranges stay fixed. Deriving from a finer coarsening (e.g. `roundPublic`)
+    // would leak that the numerator crossed a boundary inside its printed bucket.
+    const lowerNum = publicCountLowerBound(numerator);
+    const lowerDen = publicCountLowerBound(denominator);
+    if (lowerDen > 0) {
+      // publicCountLowerBound is monotonic and numerator <= denominator, so 0..100.
+      // Coarsen to the nearest 5% for a legible, still-approximate ratio.
+      const pct = (lowerNum / lowerDen) * 100;
       percentDisplay = `${Math.round(pct / 5) * 5}%`;
     }
   }

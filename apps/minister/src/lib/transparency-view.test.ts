@@ -200,12 +200,13 @@ describe("buildPublicCohortRow — ranges + nearest-5% percentage", () => {
     expect(row.percentDisplay).toBeNull();
   });
 
-  it("shows ranges and a nearest-5% percentage when both sides survive", () => {
-    // 47 of 123 -> rounded 50 / 120 = 41.67% -> nearest 5% -> 40%.
+  it("shows ranges and a nearest-5% percentage from the printed bucket bounds", () => {
+    // 47 -> bucket "25–49" (lower 25); 123 -> "100–249" (lower 100). The percentage
+    // is derived from the printed lower bounds: 25 / 100 = 25%.
     const row = buildPublicCohortRow("aged github", 47, 123);
     expect(row.numeratorDisplay).toBe("25–49");
     expect(row.denominatorDisplay).toBe("100–249");
-    expect(row.percentDisplay).toBe("40%");
+    expect(row.percentDisplay).toBe("25%");
   });
 
   it("never produces a percentage above 100 and handles equal sides", () => {
@@ -213,14 +214,19 @@ describe("buildPublicCohortRow — ranges + nearest-5% percentage", () => {
     expect(row.percentDisplay).toBe("100%");
   });
 
-  it("proves the percentage is a pure function of the rounded counts (no raw leak)", () => {
-    // Two different raw pairs that round to the same values (and land in the same
-    // published ranges) must yield the SAME percentage — so the percent reveals
-    // nothing beyond the ranges already on the page.
-    const a = buildPublicCohortRow("a", 52, 118);
-    const b = buildPublicCohortRow("b", 54, 121);
-    expect(a.numeratorDisplay).toBe(b.numeratorDisplay); // both "50–99"
-    expect(a.denominatorDisplay).toBe(b.denominatorDisplay); // both "100–249"
-    expect(a.percentDisplay).toBe(b.percentDisplay); // both "40%"
+  it("percentage is a pure function of the printed ranges (no within-bucket leak)", () => {
+    // The leak this guards against: two numerators in the SAME printed bucket over
+    // the SAME denominator bucket must yield the SAME percentage. 100 and 240 both
+    // print "100–249"; over "2,000+" both must read 5%. Deriving the percentage from
+    // a finer coarsening (e.g. roundPublic) would have shown 5% vs 10%, leaking that
+    // the numerator crossed ~150 inside its printed bucket.
+    const a = buildPublicCohortRow("a", 100, 2000);
+    const b = buildPublicCohortRow("b", 240, 2000);
+    expect(a.numeratorDisplay).toBe("100–249");
+    expect(b.numeratorDisplay).toBe("100–249");
+    expect(a.denominatorDisplay).toBe("2,000+");
+    expect(b.denominatorDisplay).toBe("2,000+");
+    expect(a.percentDisplay).toBe("5%");
+    expect(b.percentDisplay).toBe("5%");
   });
 });
