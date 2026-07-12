@@ -4,7 +4,14 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { expect, type Page } from "@playwright/test";
-import { buildUserDid, issueVc, loadIssuer, type Issuer } from "@minister/vc";
+import {
+  buildUserDid,
+  issueVc,
+  loadIssuer,
+  ministerCredentialType,
+  type Issuer,
+} from "@minister/vc";
+import { knownBadgeTypes } from "@minister/shared";
 
 import { hashClientSecret } from "../src/lib/oidc-clients";
 import { PrismaClient } from "../src/generated/prisma/index.js";
@@ -185,13 +192,35 @@ function e2eIssuer(): Promise<Issuer> {
   return issuerPromise;
 }
 
-// Seed a Badge row with a real, signed JWT-VC. The stored VC carries the
-// global holder DID (as real issuance does); a `kind`/`tag` claim lets a
-// spec assert exactly which credential was disclosed (the re-mint preserves
-// all claims). `tag` makes the embedded value unique per badge so duplicate
-// types stay distinguishable.
+// Build schema-VALID credentialSubject claims for a badge type. The disclosure
+// path (reMintVc) re-parses every claim through the CURRENT badge-type Zod
+// schema and fail-closed OMITS a badge whose claims don't validate, so a bare
+// `{ kind, tag }` shape (which no schema accepts) would silently disclose
+// nothing. `tag` is folded into the type's natural distinguishing field
+// (the domain for email/domain badges) so duplicate types stay distinguishable.
+function claimsForType(type: string, tag: string): Record<string, unknown> {
+  const ageMatch = /^age-over-(\d+)$/u.exec(type);
+  if (ageMatch) return { threshold: Number(ageMatch[1]) };
+  switch (type) {
+    case "email-domain":
+    case "domain-control":
+      // A valid hostname (matches the registry regex) derived from `tag`.
+      return { domain: `${tag.toLowerCase().replace(/[^a-z0-9-]+/gu, "-")}.example` };
+    case "residency-country":
+      return { country: "US" };
+    default:
+      throw new Error(`seedBadge: no schema-valid claim mapping for badge type "${type}"`);
+  }
+}
+
+// Seed a Badge row with a real, signed JWT-VC carrying schema-valid claims so
+// the disclosure re-mint accepts it. The stored VC carries the global holder
+// DID (as real issuance does). `tag` differentiates otherwise-identical badges
+// of the same type (folded into the disclosed claim by claimsForType), so a
+// spec can assert exactly which credential was disclosed.
 export async function seedBadge(userId: string, type: string, tag = type): Promise<string> {
   const issuer = await e2eIssuer();
+  const claims = claimsForType(type, tag);
   const badge = await prisma.badge.create({
     data: {
       userId,
@@ -201,29 +230,39 @@ export async function seedBadge(userId: string, type: string, tag = type): Promi
       issuer: issuer.did,
     },
   });
-  const vcJwt = await issueVc(
-    issuer,
-    type,
-    buildUserDid(issuer.domain, userId),
-    { kind: type, tag },
-    { jti: badge.id, expiresIn: "1y" },
-  );
+  const vcJwt = await issueVc(issuer, type, buildUserDid(issuer.domain, userId), claims, {
+    jti: badge.id,
+    expiresIn: "1y",
+  });
   await prisma.badge.update({ where: { id: badge.id }, data: { vcJwt } });
   return badge.id;
 }
 
-// Resolve which credential kinds a list of emitted VC JWTs carry. Pairs
-// with seedBadge's payload shape.
+// Reverse map from a Minister credential type (vc.type[]) back to the badge
+// slug — `MinisterAgeOver18Credential` → `age-over-18`. Built from the shared
+// registry so it never drifts from `ministerCredentialType`.
+const CREDENTIAL_TYPE_TO_SLUG = new Map(
+  knownBadgeTypes().map((slug) => [ministerCredentialType(slug), slug] as const),
+);
+
+// Resolve which badge-type slugs a list of emitted VC JWTs carry. Reads the
+// signed `vc.type[]` (preserved verbatim through reMintVc), not a claim field,
+// so it works regardless of each type's schema-specific claim shape.
 export function vcKinds(vcJwts: string[]): string[] {
   return vcJwts.map((jwt) => {
     const part = jwt.split(".")[1];
     if (!part) throw new Error("not a JWT");
     const decoded = JSON.parse(Buffer.from(part, "base64url").toString("utf8")) as {
-      vc?: { credentialSubject?: { kind?: string } };
+      vc?: { type?: string[] };
     };
-    const kind = decoded.vc?.credentialSubject?.kind;
-    if (typeof kind !== "string") throw new Error("VC missing credentialSubject.kind");
-    return kind;
+    const credentialType = decoded.vc?.type?.find((t) => t !== "VerifiableCredential");
+    const slug = credentialType ? CREDENTIAL_TYPE_TO_SLUG.get(credentialType) : undefined;
+    if (!slug) {
+      throw new Error(
+        `VC type not resolvable to a badge slug: ${JSON.stringify(decoded.vc?.type)}`,
+      );
+    }
+    return slug;
   });
 }
 

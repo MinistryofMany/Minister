@@ -11,7 +11,7 @@ test("ban locks the user out immediately; unban restores access", async ({ page,
   const victimPage = await victim.newPage();
   await signInViaMagicLink(victimPage, "banme@e2e.test");
   await victimPage.goto("/profile");
-  await expect(victimPage.getByRole("heading", { name: "Profile" })).toBeVisible();
+  await expect(victimPage.getByRole("heading", { name: "Profile", exact: true })).toBeVisible();
 
   acceptDialogs(page);
   await page.goto("/admin/users");

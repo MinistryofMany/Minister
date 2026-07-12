@@ -14,7 +14,7 @@ test("middleware bounces anonymous visitors off protected routes", async ({ page
 test("magic-link sign-in lands on /profile; sign-out reverts the nav", async ({ page }) => {
   await signInViaMagicLink(page, "fresh@e2e.test");
   await page.goto("/profile");
-  await expect(page.getByRole("heading", { name: "Profile" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Profile", exact: true })).toBeVisible();
 
   await signOut(page);
   await page.goto("/profile");
