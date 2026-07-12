@@ -18,6 +18,11 @@ export async function Header() {
           Minister
         </Link>
         <nav className="flex items-center gap-2 text-sm">
+          {/* Public — the transparency page has no auth gate, so this link shows
+              to everyone, signed in or not. */}
+          <Button asChild variant="ghost" size="sm">
+            <Link href="/transparency">Transparency</Link>
+          </Button>
           {signedIn ? (
             <>
               <Button asChild variant="ghost" size="sm">
