@@ -7,7 +7,7 @@ import { AdminSaveToast } from "@/components/admin-save-toast";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import type { ScorableBadge, SybilScoringConfig } from "@/lib/sybil-config";
-import { sybilScore } from "@/lib/sybil-score";
+import { buildSybilScoringConfig, sybilScore } from "@/lib/sybil-score";
 import {
   addSybilCategory,
   renameSybilCategory,
@@ -141,33 +141,20 @@ export function AdminSybilForm({ initialRows, initialCategories, initialCutoffs 
   // categories, caps, and cutoffs — the pure scorer then runs client-side over
   // the example holdings so the preview updates as the admin types.
   const previewConfig = useMemo<SybilScoringConfig>(() => {
-    const weightMap = new Map<string, Map<string, number>>();
-    const categoryByType = new Map<string, string>();
-    for (const r of initialRows) {
+    const weightRows = initialRows.map((r) => {
       const key = rowKey(r.badgeType, r.qualifier);
-      let byQual = weightMap.get(r.badgeType);
-      if (!byQual) {
-        byQual = new Map<string, number>();
-        weightMap.set(r.badgeType, byQual);
-      }
-      byQual.set(r.qualifier, Math.max(0, Math.floor(weights[key] ?? r.sybilWeight)));
-      categoryByType.set(r.badgeType, rowCategories[key] ?? r.category);
-    }
-    const capMap = new Map<string, number>();
-    for (const name of categoryNames) capMap.set(name, Math.max(0, Math.floor(caps[name] ?? 0)));
-    return {
-      weights: weightMap,
-      categoryByType,
-      caps: capMap,
-      cutoffs: {
-        b1: cutoffs.bucket1Raw,
-        b2: cutoffs.bucket2Raw,
-        b3: cutoffs.bucket3Raw,
-        b4: cutoffs.bucket4Raw,
-        b3Cats: cutoffs.bucket3MinCats,
-        b4Cats: cutoffs.bucket4MinCats,
-      },
-    };
+      return {
+        badgeType: r.badgeType,
+        qualifier: r.qualifier,
+        sybilWeight: Math.max(0, Math.floor(weights[key] ?? r.sybilWeight)),
+        category: rowCategories[key] ?? r.category,
+      };
+    });
+    const categories = categoryNames.map((name) => ({
+      name,
+      cap: Math.max(0, Math.floor(caps[name] ?? 0)),
+    }));
+    return buildSybilScoringConfig(weightRows, categories, cutoffs);
   }, [initialRows, weights, rowCategories, caps, categoryNames, cutoffs]);
 
   const previews = useMemo(

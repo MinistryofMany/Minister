@@ -12,6 +12,68 @@
 
 import type { ScorableBadge, SybilScoringConfig, SybilScoreResult } from "./sybil-config";
 
+// The minimal row/cutoff shapes `buildSybilScoringConfig` folds. Every producer
+// (the live BadgeWeight rows, the seed constants, the admin form's edited rows)
+// is a structural superset of these.
+interface WeightRowInput {
+  badgeType: string;
+  qualifier: string;
+  sybilWeight: number;
+  category: string;
+}
+interface CutoffInput {
+  bucket1Raw: number;
+  bucket2Raw: number;
+  bucket3Raw: number;
+  bucket4Raw: number;
+  bucket3MinCats: number;
+  bucket4MinCats: number;
+}
+
+/**
+ * Fold weight rows + category caps + bucket cutoffs into the `SybilScoringConfig`
+ * the pure scorer consumes. The single builder shared by `loadSybilScoringConfig`
+ * (live DB rows), the sybil-score parity test (the seed constants), and the admin form's
+ * live preview (edited rows) — so all three produce byte-identical config shapes.
+ * Lives here (a prisma-free module) so the "use client" admin form can import it
+ * without dragging the DB client into the browser bundle.
+ */
+export function buildSybilScoringConfig(
+  weightRows: readonly WeightRowInput[],
+  categories: readonly { name: string; cap: number }[],
+  cutoffs: CutoffInput,
+): SybilScoringConfig {
+  const weights = new Map<string, Map<string, number>>();
+  const categoryByType = new Map<string, string>();
+  for (const row of weightRows) {
+    let byQual = weights.get(row.badgeType);
+    if (!byQual) {
+      byQual = new Map<string, number>();
+      weights.set(row.badgeType, byQual);
+    }
+    byQual.set(row.qualifier, row.sybilWeight);
+    // Every row of a type shares its category; last write wins (all equal).
+    categoryByType.set(row.badgeType, row.category);
+  }
+
+  const caps = new Map<string, number>();
+  for (const cat of categories) caps.set(cat.name, cat.cap);
+
+  return {
+    weights,
+    categoryByType,
+    caps,
+    cutoffs: {
+      b1: cutoffs.bucket1Raw,
+      b2: cutoffs.bucket2Raw,
+      b3: cutoffs.bucket3Raw,
+      b4: cutoffs.bucket4Raw,
+      b3Cats: cutoffs.bucket3MinCats,
+      b4Cats: cutoffs.bucket4MinCats,
+    },
+  };
+}
+
 // A category qualifies (counts toward the breadth floor for buckets 3/4) once its
 // decayed contribution reaches this floor. Design spec §3.4.
 const CATEGORY_QUALIFY_THRESHOLD = 8;

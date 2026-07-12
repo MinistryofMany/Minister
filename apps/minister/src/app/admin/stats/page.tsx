@@ -11,8 +11,7 @@ import { requireAdmin } from "@/lib/session";
 // /admin/stats (phase-2 impl brief §5). Reads ONLY the materialized tables
 // (BadgeStat/CohortStat/StatsRun) — never a live COUNT(DISTINCT ...) — so this
 // page is cheap regardless of instance size. Exact counts throughout: this is
-// operator-only, unlike the (not-yet-built) k-suppressed public transparency
-// page.
+// operator-only, unlike the k-suppressed public transparency page.
 
 interface AttrRow {
   value: string;
@@ -111,12 +110,20 @@ function FreshnessLine({ statsRun }: { statsRun: StatsRun | null }) {
   );
 }
 
-function TypeDisclosure({ row }: { row: TypeRow }) {
-  const meta = getBadgeType(row.type);
-  const hasAttrs = row.attributesByKey.size > 0;
-
-  const body = (
-    <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2 text-sm marker:content-none">
+// The type/label + count/percent line shared by both renderings. `hasAttrs`
+// only toggles the caret glyph (a disclosure triangle vs a blank spacer); the
+// rest of the markup is identical, so it lives in one place.
+function TypeRowLine({
+  row,
+  meta,
+  hasAttrs,
+}: {
+  row: TypeRow;
+  meta: ReturnType<typeof getBadgeType>;
+  hasAttrs: boolean;
+}) {
+  return (
+    <>
       <span className="flex min-w-0 items-center gap-2">
         <span
           className={
@@ -134,22 +141,19 @@ function TypeDisclosure({ row }: { row: TypeRow }) {
         <span className="font-medium">{row.count.toLocaleString()}</span>
         <span className="w-16 text-right text-xs text-neutral-500">{row.pct.toFixed(1)}%</span>
       </span>
-    </summary>
+    </>
   );
+}
+
+function TypeDisclosure({ row }: { row: TypeRow }) {
+  const meta = getBadgeType(row.type);
+  const hasAttrs = row.attributesByKey.size > 0;
 
   if (!hasAttrs) {
     return (
       <div className="rounded-md border border-neutral-200 dark:border-neutral-800">
         <div className="flex items-center justify-between gap-3 px-3 py-2 text-sm">
-          <span className="flex min-w-0 items-center gap-2">
-            <span className="inline-block w-[1ch] shrink-0" />
-            <code className="truncate font-mono text-xs">{row.type}</code>
-            {meta ? <span className="truncate text-xs text-neutral-500">{meta.label}</span> : null}
-          </span>
-          <span className="flex shrink-0 items-baseline gap-3 tabular-nums">
-            <span className="font-medium">{row.count.toLocaleString()}</span>
-            <span className="w-16 text-right text-xs text-neutral-500">{row.pct.toFixed(1)}%</span>
-          </span>
+          <TypeRowLine row={row} meta={meta} hasAttrs={false} />
         </div>
       </div>
     );
@@ -157,7 +161,9 @@ function TypeDisclosure({ row }: { row: TypeRow }) {
 
   return (
     <details className="group rounded-md border border-neutral-200 dark:border-neutral-800">
-      {body}
+      <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2 text-sm marker:content-none">
+        <TypeRowLine row={row} meta={meta} hasAttrs={true} />
+      </summary>
       <div className="flex flex-col gap-3 border-t border-neutral-200 px-3 py-3 dark:border-neutral-800">
         {Array.from(row.attributesByKey.entries()).map(([key, values]) => (
           <div key={key}>
@@ -233,9 +239,8 @@ export default async function AdminStatsPage() {
           <CardTitle>Badge statistics</CardTitle>
           <CardDescription>
             Exact, operator-only counts read from the materialized stats tables — for tuning the
-            anti-sybil weights against the real badge distribution. The (not-yet-built) public
-            transparency page applies k-suppression and rounding on top of this same data; this view
-            doesn&apos;t.
+            anti-sybil weights against the real badge distribution. The public transparency page
+            applies k-suppression and rounding on top of this same data; this view doesn&apos;t.
           </CardDescription>
         </CardHeader>
         <CardContent>

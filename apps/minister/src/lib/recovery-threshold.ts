@@ -194,7 +194,7 @@ export async function recordReProof(
 
   // Live effective recovery weight (honors the row's delayed-apply window).
   // FAIL CLOSED: if the read throws — a missing config row
-  // (MissingRecoveryWeightError) or a DB read failure — abort the re-proof
+  // (no `*` BadgeWeight row) or a DB read failure — abort the re-proof
   // BEFORE the transaction, so accumulatedScore is never incremented. We must
   // NEVER fall back to 0, the seed, or the pure oracle: under-weighting
   // recovery is the account-takeover surface (impl brief §5). The weight read

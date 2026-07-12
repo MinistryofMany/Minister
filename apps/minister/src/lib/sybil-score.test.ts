@@ -1,53 +1,29 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  buildSybilScoringConfig,
   SYBIL_BADGE_WEIGHT_SEED,
   SYBIL_BUCKET_CONFIG_SEED,
   SYBIL_CATEGORY_SEED,
   type ScorableBadge,
-  type SybilScoringConfig,
 } from "./sybil-config";
 import { sybilScore } from "./sybil-score";
 
-// The scorer is tested against a config built from the REAL seed constants (the
-// same shape `loadSybilScoringConfig` produces), so a seed edit that would move a
-// worked example off its documented bucket fails here rather than in prod. Every
-// worked example in design spec §3.7 / impl brief §3.7 is asserted on the exact
-// bucket (and, where it distinguishes a rule, the exact raw score).
+// The scorer is tested against a config built from the REAL seed constants via
+// the SAME `buildSybilScoringConfig` fold `loadSybilScoringConfig` uses, so a
+// seed edit that would move a worked example off its documented bucket fails here
+// rather than in prod. Every worked example in design spec §3.7 / impl brief §3.7
+// is asserted on the exact bucket (and, where it distinguishes a rule, the exact
+// raw score).
 
 const NATIVE_DID = "did:web:ministry.id";
 const NOW = 1_800_000_000_000; // fixed clock (unix ms); no Date.now() in the scorer
 
-function buildSeedConfig(): SybilScoringConfig {
-  const weights = new Map<string, Map<string, number>>();
-  const categoryByType = new Map<string, string>();
-  for (const row of SYBIL_BADGE_WEIGHT_SEED) {
-    let byQualifier = weights.get(row.badgeType);
-    if (!byQualifier) {
-      byQualifier = new Map<string, number>();
-      weights.set(row.badgeType, byQualifier);
-    }
-    byQualifier.set(row.qualifier, row.sybilWeight);
-    categoryByType.set(row.badgeType, row.category);
-  }
-  const caps = new Map<string, number>();
-  for (const cat of SYBIL_CATEGORY_SEED) caps.set(cat.name, cat.cap);
-  return {
-    weights,
-    categoryByType,
-    caps,
-    cutoffs: {
-      b1: SYBIL_BUCKET_CONFIG_SEED.bucket1Raw,
-      b2: SYBIL_BUCKET_CONFIG_SEED.bucket2Raw,
-      b3: SYBIL_BUCKET_CONFIG_SEED.bucket3Raw,
-      b4: SYBIL_BUCKET_CONFIG_SEED.bucket4Raw,
-      b3Cats: SYBIL_BUCKET_CONFIG_SEED.bucket3MinCats,
-      b4Cats: SYBIL_BUCKET_CONFIG_SEED.bucket4MinCats,
-    },
-  };
-}
-
-const config = buildSeedConfig();
+const config = buildSybilScoringConfig(
+  SYBIL_BADGE_WEIGHT_SEED,
+  SYBIL_CATEGORY_SEED,
+  SYBIL_BUCKET_CONFIG_SEED,
+);
 const ctx = { now: NOW, nativeIssuerDid: NATIVE_DID };
 
 // Badge factory: native issuer + non-expiring by default, so tests opt IN to the
