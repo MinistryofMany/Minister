@@ -122,6 +122,12 @@ const EXPECTED: Record<string, Expected> = {
     sample: { event: "eth2-genesis-depositor" },
     strict: true,
   },
+  "public-key": {
+    credentialType: "MinisterPublicKeyCredential",
+    sybilResistance: "weak",
+    sample: { kind: "pgp", fingerprint: "AABBCCDD", algorithm: "ed25519" },
+    strict: true,
+  },
   ...Object.fromEntries(
     AGE_THRESHOLDS.map((t) => [
       `age-over-${t}`,
