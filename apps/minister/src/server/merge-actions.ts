@@ -5,6 +5,8 @@ import { randomBytes } from "node:crypto";
 import { headers } from "next/headers";
 
 import { audit } from "@/lib/audit";
+import { gatePrivilegedAction } from "@/lib/credential-gate";
+import type { QuarantineRefusal } from "@/lib/credential-lifecycle";
 import {
   emailButton,
   emailFinePrint,
@@ -19,7 +21,7 @@ import { mergeAccounts } from "@/lib/merge";
 import { issueDonorProof, verifyDonorProof } from "@/lib/merge-proof";
 import { prisma } from "@/lib/prisma";
 import { clientIpFrom, createRateLimiter } from "@/lib/rate-limit";
-import { getCurrentSession, requireAal } from "@/lib/session";
+import { getCurrentSession } from "@/lib/session";
 
 // Server actions driving the account-merge ceremony (slice 5). The dual-control
 // shape (DESIGNDECISIONS #12):
@@ -88,28 +90,34 @@ async function resolveVerifiedUserIdByEmail(email: string): Promise<string | nul
 
 export interface StartMergeResult {
   ok: boolean;
+  // True when the session is below the AAL2 floor: the UI routes into a
+  // passkey step-up and retries. Returned (not thrown) because a thrown
+  // server-action error reaches the client as an opaque digest in production.
+  stepUp?: boolean;
+  // Present when the H-1 quarantine gate refused; `error` carries its copy.
+  quarantine?: QuarantineRefusal;
   error?: string;
 }
 
-// Begin a merge from the signed-in SURVIVOR account. Requires AAL2 and a
+// Begin a merge from the signed-in SURVIVOR account. Requires AAL2, a
 // non-recovered session (a reduced-assurance recovered session must never start
-// a merge — DESIGNDECISIONS #9). `donorEmail` is an address the survivor claims
-// to ALSO control; we mail it a single-use prove-it link. We do NOT disclose
-// whether that email maps to an account (anti-enumeration): a hit and a miss
-// both return ok:true.
-//
-// KNOWN GAP H-1: the AAL2 + non-recovered gate below does NOT also check that
-// the acting credential is past its quarantine cooldown, so a just-grafted
-// quarantined passkey can start a merge. Accepted for alpha; see
-// credential-actions.ts header + TODO.md.
+// a merge — DESIGNDECISIONS #9), and the H-1 quarantine gate (a session held up
+// only by a freshly-grafted, still-quarantined passkey must not open the merge
+// ceremony). `donorEmail` is an address the survivor claims to ALSO control; we
+// mail it a single-use prove-it link. We do NOT disclose whether that email
+// maps to an account (anti-enumeration): a hit and a miss both return ok:true.
 export async function startMerge(donorEmail: string): Promise<StartMergeResult> {
   const session = await getCurrentSession();
   if (!session?.user?.id) {
     return { ok: false, error: "Not signed in" };
   }
-  // AAL2 floor. Throws StepUpRequiredError below the floor; the UI catches it to
-  // route into step-up.
-  requireAal(session, 2);
+  if ((session.aal ?? 0) < 2) {
+    return {
+      ok: false,
+      stepUp: true,
+      error: "Merging accounts requires signing in with a passkey first.",
+    };
+  }
   if (session.recovered) {
     return {
       ok: false,
@@ -122,6 +130,12 @@ export async function startMerge(donorEmail: string): Promise<StartMergeResult> 
   }
 
   const survivorUserId = session.user.id;
+
+  // H-1 quarantine gate — refuse before any donor link is even minted.
+  const refusal = await gatePrivilegedAction(survivorUserId, session.cred, "merge.start");
+  if (refusal) {
+    return { ok: false, quarantine: refusal, error: refusal.message };
+  }
   const email = donorEmail.trim().toLowerCase();
   if (!email.includes("@")) {
     return { ok: false, error: "Enter the email on the account you want to merge in." };
@@ -262,6 +276,9 @@ export async function completeDonorLink(
 
 export interface ConfirmMergeResult {
   ok: boolean;
+  // Same typed refusal channel as StartMergeResult (see there).
+  stepUp?: boolean;
+  quarantine?: QuarantineRefusal;
   error?: string;
   // Present on success: counts moved, overrides created, and the stranded-RP
   // client list for the UI's "what got left behind" notice.
@@ -288,7 +305,13 @@ export async function confirmMerge(
   if (!session?.user?.id) {
     return { ok: false, error: "Not signed in" };
   }
-  requireAal(session, 2);
+  if ((session.aal ?? 0) < 2) {
+    return {
+      ok: false,
+      stepUp: true,
+      error: "Completing a merge requires signing in with a passkey first.",
+    };
+  }
   if (session.recovered) {
     return {
       ok: false,
@@ -297,6 +320,16 @@ export async function confirmMerge(
   }
 
   const survivorUserId = session.user.id;
+
+  // H-1 quarantine gate — re-checked at CONFIRM time so a merge started before
+  // a credential change can't be laundered through a stale start. Deliberately
+  // runs BEFORE the donor proof is consumed: a refused attempt must not burn
+  // the single-use ticket (the user can clear the gate and retry with the same
+  // proof rather than restarting the whole ceremony).
+  const refusal = await gatePrivilegedAction(survivorUserId, session.cred, "merge.confirm");
+  if (refusal) {
+    return { ok: false, quarantine: refusal, error: refusal.message };
+  }
 
   // Verify + consume the donor-proof. Null on any failure (bad sig, expired,
   // wrong typ, already used).

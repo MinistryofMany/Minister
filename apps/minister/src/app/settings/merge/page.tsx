@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { loadPrivilegedGate } from "@/lib/credential-gate";
 import { getCurrentSession } from "@/lib/session";
 
 import { MergeClient } from "./merge-client";
@@ -29,10 +30,15 @@ export default async function MergePage({ searchParams }: PageProps) {
   const { donor } = await searchParams;
   const prefillDonor = typeof donor === "string" ? donor.trim().slice(0, 320) : "";
 
-  // The client shows a clear warning when the session is below AAL2 or is a
-  // recovered session, before the user even tries — the action is the real gate.
+  // The client shows a clear warning when the session is below AAL2, is a
+  // recovered session, or is held by the H-1 quarantine gate, before the user
+  // even tries — the actions are the real gate. A hold a passkey re-auth can
+  // clear (gate.canStepUp) does NOT block the UI: the client runs the
+  // ceremony and retries when the action asks for it.
   const belowAal2 = (session.aal ?? 0) < 2;
   const recovered = session.recovered === true;
+  const gate = await loadPrivilegedGate(session.user.id, session.cred);
+  const hardHold = gate !== null && !gate.canStepUp;
 
   return (
     <div className="mx-auto flex max-w-2xl flex-col gap-6 px-4 py-12">
@@ -95,11 +101,15 @@ export default async function MergePage({ searchParams }: PageProps) {
             <p className="rounded-md border border-amber-300 bg-amber-50 p-3 text-amber-800 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
               Merging requires a passkey. Sign in with your passkey first, then come back here.
             </p>
+          ) : gate ? (
+            <p className="rounded-md border border-amber-300 bg-amber-50 p-3 text-amber-800 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
+              {gate.message}
+            </p>
           ) : null}
         </CardContent>
       </Card>
 
-      <MergeClient blocked={recovered || belowAal2} initialDonorEmail={prefillDonor} />
+      <MergeClient blocked={recovered || belowAal2 || hardHold} initialDonorEmail={prefillDonor} />
     </div>
   );
 }

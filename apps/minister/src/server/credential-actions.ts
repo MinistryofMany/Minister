@@ -6,6 +6,13 @@ import { SignJWT, jwtVerify } from "jose";
 
 import { CREDENTIAL_QUARANTINE_MS } from "@/lib/assurance";
 import { audit } from "@/lib/audit";
+import { requirePrivilegedAction } from "@/lib/credential-gate";
+import {
+  effectiveCredentialStatus as asStatus,
+  PrivilegedActionQuarantineError,
+  type CredentialStatus,
+  type QuarantineRefusal,
+} from "@/lib/credential-lifecycle";
 import { notifyCredentialChange } from "@/lib/credential-notify";
 import {
   emailButton,
@@ -36,39 +43,29 @@ import type { Session } from "next-auth";
 //   * notifies every verified address on success (notifyCredentialChange),
 //     so a compromised session can't silently rewrite the credential set.
 //
-// Quarantine: a freshly added email/passkey lands status="quarantined",
-// quarantinedUntil = now + CREDENTIAL_QUARANTINE_MS (DESIGNDECISIONS #5). The
+// Quarantine: a freshly added email lands status="quarantined" here;
+// passkeys are stamped at WRITE time by the adapter's createAuthenticator
+// override in src/auth.ts (so a raw WebAuthn ceremony can't skip it). The
 // bootstrap first passkey on a passkey-less account is the one exception
 // (DESIGNDECISIONS #4) — it is active immediately so the user can reach AAL2.
 //
-// KNOWN GAP H-1 (security audit, 2026-06-27) - accepted for the alpha.
-// The quarantine fields above are WRITTEN on credential-add and DISPLAYED in
-// the UI, but no production code READS them to gate a sensitive operation, so
-// the cooldown is currently DECORATIVE: the blast-radius bound DESIGNDECISIONS
-// #5 advertises is not actually enforced. A session that has just reached AAL2
-// via a freshly-grafted (still-quarantined) passkey can immediately start an
-// account merge (merge-actions.ts startMerge/confirmMerge), generate recovery
-// codes (recovery-code-actions.ts generateMyRecoveryCodes), and change the
-// primary email (setPrimaryEmail below) - none of those check quarantine. It
-// is NOT a new unauthenticated takeover path (it requires already reaching
-// AAL2 on the account), which is why it was accepted as a known limitation for
-// the alpha rather than blocking. Fix tracked in TODO.md ("Account assurance /
-// recovery - security follow-ups"): thread the acting credential id onto the
-// session JWT and reject when that row is quarantined; minimum viable gate is
-// to require one NON-quarantined AAL2 credential before startMerge /
-// generateMyRecoveryCodes / setPrimaryEmail. Fix before the alpha exposes
-// merge or recovery-code generation to real users.
-//
-// Acting-credential note (root cause of H-1): the session JWT carries the AAL
-// the session was obtained at but NOT which specific credential row
-// authenticated it, so we cannot, from the session alone, reject "the CURRENT
-// session's credential is itself quarantined". Today we enforce only what the
-// JWT proves: the AAL floor, plus a hard `recovered`-session refusal on every
-// destructive action below.
+// H-1 ENFORCEMENT (closed 2026-07-12; was the accepted alpha gap): the
+// privileged pivots a grafted credential wants — startMerge / confirmMerge
+// (merge-actions.ts), generateMyRecoveryCodes (recovery-code-actions.ts), and
+// setPrimaryEmail (below) — now run the quarantine gate
+// (src/lib/credential-gate.ts) in addition to the AAL2 floor and the
+// recovered-session refusal. The gate requires (1) at least one
+// non-quarantined passkey on the account and (2) when the session's `cred`
+// JWT claim names the acting passkey, that passkey to be non-quarantined
+// itself. Refusals surface as typed, user-facing results (never a bare
+// throw across the RSC boundary) with copy saying when/how they clear.
 // ---------------------------------------------------------------------------
 
 export type CredentialKind = "email" | "passkey" | "oauth";
-export type CredentialStatus = "active" | "quarantined";
+// Canonical definition lives in credential-lifecycle.ts (shared with the
+// gate and the client-side "clears in …" hints); re-exported for existing
+// importers of this module.
+export type { CredentialStatus };
 
 export interface CredentialEmail {
   kind: "email";
@@ -109,24 +106,6 @@ export interface CredentialListing {
   recovered: boolean;
   /** Whether the user currently holds zero passkeys (drives bootstrap copy). */
   canBootstrapPasskey: boolean;
-}
-
-// Narrow a stored status string to the union, defaulting unknowns to active
-// (the column default). Quarantine is only meaningful while it's the literal
-// "quarantined" AND its window is still open: a quarantine whose
-// `quarantinedUntil` has already lapsed reads as active (lazy expiry). Nothing
-// else re-stamps the status column when a window elapses, so this read-time
-// check is the single point where an expired quarantine stops displaying — and,
-// once H-1 is enforced, stops gating. A quarantined row with a null
-// `quarantinedUntil` has no window to lapse, so it stays quarantined.
-function asStatus(
-  value: string,
-  quarantinedUntil: Date | null,
-  now: number = Date.now(),
-): CredentialStatus {
-  if (value !== "quarantined") return "active";
-  if (quarantinedUntil !== null && quarantinedUntil.getTime() <= now) return "active";
-  return "quarantined";
 }
 
 // Load the acting principal, throwing a plain "Not signed in" (distinct from
@@ -494,10 +473,12 @@ export async function setPrimaryEmail(emailId: string): Promise<void> {
   const session = await requirePrincipal();
   rejectRecovered(session);
   requireAal(session, 2);
-  // KNOWN GAP H-1: this AAL2 gate does not also verify the acting credential is
-  // past its quarantine cooldown (see this file's header + TODO.md). Accepted
-  // for alpha.
   const userId = session.user.id;
+  // H-1 quarantine gate: the primary email is where security notifications
+  // land, so promoting one is a pivot a grafted credential must not reach.
+  // Throws PrivilegedActionQuarantineError; the action wrapper below turns it
+  // into a typed result with user-facing copy.
+  await requirePrivilegedAction(userId, session.cred, "email.set-primary");
 
   const target = await prisma.userEmail.findUnique({
     where: { id: emailId },
@@ -583,69 +564,27 @@ export async function canAddPasskey(): Promise<CanAddPasskeyResult> {
 }
 
 // Called by the client AFTER a successful WebAuthn registration ceremony.
-// Applies the credential lifecycle and notifies. Auth.js's adapter has already
-// inserted the Authenticator row (status defaults to "active"); we re-stamp it
-// per the bootstrap rule:
-//   * bootstrap first passkey  -> stays active (the user's path to AAL2);
-//   * any subsequent passkey   -> quarantined + quarantinedUntil.
-//
-// We identify the just-enrolled row as the user's newest Authenticator by
-// addedAt. This action is invoked immediately post-ceremony, so the newest row
-// is the one just created. We additionally require AAL2 for the non-bootstrap
-// case (the ceremony for a 2nd passkey itself authenticates at AAL2, so the
-// session is AAL2 by the time this runs).
+// READ-ONLY: the credential lifecycle (bootstrap-active vs quarantined) and
+// the out-of-band notification are both applied at WRITE time by the
+// adapter's createAuthenticator override (src/auth.ts) — the only code path
+// that can insert an Authenticator row — so a raw ceremony that never calls
+// this changes nothing, and this action being client-callable gives an
+// attacker no lever (it stamps nothing, promotes nothing). It only reports
+// whether the just-enrolled (newest) passkey landed quarantined so the UI
+// can explain the security hold.
 export async function markPasskeyEnrolled(): Promise<{ quarantined: boolean }> {
   const session = await requirePrincipal();
   const userId = session.user.id;
 
-  const all = await prisma.authenticator.findMany({
+  const newest = await prisma.authenticator.findFirst({
     where: { userId },
     orderBy: { addedAt: "desc" },
-    select: { credentialID: true, addedAt: true, status: true, quarantinedUntil: true },
+    select: { status: true, quarantinedUntil: true },
   });
-  const newest = all[0];
   if (!newest) {
     throw new Error("No passkey found to finalize. The enrollment may not have completed.");
   }
-  const isBootstrap = all.length === 1;
-
-  if (!isBootstrap) {
-    // A second/replacement passkey requires the session to be AAL2. The
-    // ceremony that just ran authenticated with a passkey (AAL2), so this
-    // should hold; enforce it so a stale/forged call can't quarantine-graft
-    // from a weaker session.
-    requireAal(session, 2);
-    await prisma.authenticator.update({
-      where: { userId_credentialID: { userId, credentialID: newest.credentialID } },
-      data: {
-        status: "quarantined",
-        quarantinedUntil: new Date(Date.now() + CREDENTIAL_QUARANTINE_MS),
-      },
-    });
-    await notifyCredentialChange(userId, "a passkey was added (quarantined)");
-    return { quarantined: true };
-  }
-
-  // Bootstrap branch (sole remaining passkey). This branch is client-callable
-  // with no WebAuthn-ceremony binding, so it must NOT become a lever to promote
-  // an in-window quarantined survivor to active. A genuine first bootstrap
-  // passkey is never quarantined (the adapter default is active — auth.ts), so a
-  // sole row that reads as quarantined is by construction a removal survivor: a
-  // hijacked AAL2 session could add a quarantined passkey, remove the victim's
-  // original, then call this to instantly hand the new passkey full power,
-  // defeating the cooldown (DESIGNDECISIONS #5). Judge the row against the clock
-  // via asStatus (lazy expiry): an in-window quarantined sole survivor is left
-  // untouched (stays quarantined until its window lapses), while a lapsed-window
-  // or already-active sole survivor is cleanly stamped active/null.
-  if (asStatus(newest.status, newest.quarantinedUntil) === "quarantined") {
-    return { quarantined: true };
-  }
-  await prisma.authenticator.update({
-    where: { userId_credentialID: { userId, credentialID: newest.credentialID } },
-    data: { status: "active", quarantinedUntil: null },
-  });
-  await notifyCredentialChange(userId, "your first passkey was added");
-  return { quarantined: false };
+  return { quarantined: asStatus(newest.status, newest.quarantinedUntil) === "quarantined" };
 }
 
 // ---------------------------------------------------------------------------
@@ -712,7 +651,10 @@ export async function removePasskey(credentialID: string): Promise<void> {
 export type ActionResult<T> =
   | { ok: true; data: T }
   | { ok: false; stepUp: true; requiredAal: number }
-  | { ok: false; stepUp?: false; error: string };
+  // `quarantine` is present when the H-1 gate refused: `error` already carries
+  // the finished user-facing copy, and the structured refusal lets the UI
+  // offer a passkey re-auth (canStepUp) or a "clears in …" hint (retryAt).
+  | { ok: false; stepUp?: false; quarantine?: QuarantineRefusal; error: string };
 
 async function run<T>(fn: () => Promise<T>): Promise<ActionResult<T>> {
   try {
@@ -720,6 +662,9 @@ async function run<T>(fn: () => Promise<T>): Promise<ActionResult<T>> {
   } catch (err) {
     if (err instanceof StepUpRequiredError) {
       return { ok: false, stepUp: true, requiredAal: err.requiredAal };
+    }
+    if (err instanceof PrivilegedActionQuarantineError) {
+      return { ok: false, quarantine: err.refusal, error: err.refusal.message };
     }
     const error = err instanceof Error ? err.message : "Something went wrong.";
     return { ok: false, error };

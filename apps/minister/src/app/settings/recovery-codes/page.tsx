@@ -1,20 +1,25 @@
 import { redirect } from "next/navigation";
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { loadPrivilegedGate } from "@/lib/credential-gate";
 import { countUnusedCodes } from "@/lib/recovery-codes";
 import { getCurrentSession } from "@/lib/session";
 
 import { RecoveryCodesClient } from "./recovery-codes-client";
 
 // Authenticated page to generate / regenerate recovery codes and view them
-// once. The action itself (generateMyRecoveryCodes) enforces the AAL2 floor; we
-// only require a signed-in session to render, then surface the step-up prompt
-// from the action if the session is below AAL2.
+// once. The action itself (generateMyRecoveryCodes) enforces the AAL2 floor
+// and the H-1 quarantine gate; we only require a signed-in session to render.
+// The gate verdict is precomputed here so the page can explain a hold BEFORE
+// the user tries (kind copy up front, the action stays the real gate).
 export default async function RecoveryCodesPage() {
   const session = await getCurrentSession();
   if (!session?.user?.id) redirect("/");
 
-  const unused = await countUnusedCodes(session.user.id);
+  const [unused, gate] = await Promise.all([
+    countUnusedCodes(session.user.id),
+    loadPrivilegedGate(session.user.id, session.cred),
+  ]);
 
   return (
     <div className="mx-auto flex max-w-2xl flex-col gap-6 px-4 py-12">
@@ -35,7 +40,7 @@ export default async function RecoveryCodesPage() {
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <RecoveryCodesClient initialUnused={unused} />
+          <RecoveryCodesClient initialUnused={unused} gate={gate} />
         </CardContent>
       </Card>
     </div>

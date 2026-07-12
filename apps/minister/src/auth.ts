@@ -4,10 +4,12 @@ import NextAuth from "next-auth";
 import Credentials from "next-auth/providers/credentials";
 import Passkey from "next-auth/providers/passkey";
 import type { EmailConfig } from "next-auth/providers";
-import type { Adapter, AdapterUser } from "next-auth/adapters";
+import type { Adapter, AdapterAuthenticator, AdapterUser } from "next-auth/adapters";
 
 import { authConfig } from "@/auth.config";
 import { audit } from "@/lib/audit";
+import { lifecycleForNewPasskey } from "@/lib/credential-lifecycle";
+import { notifyCredentialChange } from "@/lib/credential-notify";
 import { createEmailUser, getUserByEmailIdentity, USER_SELECT } from "@/lib/email-signin-user";
 import {
   emailButton,
@@ -97,9 +99,9 @@ const EmailProvider = (): EmailConfig => ({
 //     (no existing UserEmail matched). Creates the User + a verified primary
 //     UserEmail row in one transaction.
 //
-// We do NOT quarantine here: the first credential on a fresh account is the
-// bootstrap. Quarantine on subsequently-added credentials is applied by the
-// credential-management actions, not the adapter.
+// Email bootstrap is NOT quarantined here: the first credential on a fresh
+// account is the bootstrap. Passkey quarantine, by contrast, IS applied here —
+// see createAuthenticator below.
 function ministerAdapter(): Adapter {
   const base = PrismaAdapter(prisma);
   return {
@@ -114,6 +116,45 @@ function ministerAdapter(): Adapter {
         throw new Error("createUser requires an email (verified magic-link sign-in)");
       }
       return createEmailUser(data.email);
+    },
+    // Passkey lifecycle at WRITE time (H-1, DESIGNDECISIONS #5). The stock
+    // adapter inserts with the column default ("active"), and the polite
+    // client flow then re-stamped quarantine via markPasskeyEnrolled — but a
+    // raw WebAuthn registration against the Auth.js endpoints skips that
+    // finalize call entirely, landing an ACTIVE graft and no notification.
+    // Stamping (and notifying) here, inside the only code path that can
+    // create an Authenticator row, makes the cooldown non-bypassable:
+    //   * first passkey on the account — bootstrap, active immediately
+    //     (DESIGNDECISIONS #4);
+    //   * every subsequent passkey — quarantined for the full window.
+    async createAuthenticator(data: AdapterAuthenticator): Promise<AdapterAuthenticator> {
+      const existing = await prisma.authenticator.count({ where: { userId: data.userId } });
+      const lifecycle = lifecycleForNewPasskey(existing);
+      const { transports, ...rest } = data;
+      const created = await prisma.authenticator.create({
+        data: {
+          ...rest,
+          ...(transports === undefined ? {} : { transports }),
+          ...lifecycle,
+        },
+      });
+      // Out-of-band alert at write time, so even a raw-ceremony graft mails
+      // every verified address. Best-effort: with the quarantine stamp above
+      // bounding the new credential's power, a mail-transport hiccup must not
+      // fail the enrollment ceremony — but it must never be silent either.
+      try {
+        await notifyCredentialChange(
+          data.userId,
+          existing === 0
+            ? "your first passkey was added"
+            : "a passkey was added (held in a security cooldown before it can approve sensitive changes)",
+        );
+      } catch {
+        await audit(data.userId, "credential.notify_failed", {
+          summary: "passkey added; notification email failed to send",
+        });
+      }
+      return created;
     },
   };
 }

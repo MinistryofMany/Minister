@@ -1,10 +1,16 @@
 "use client";
 
 import { useState } from "react";
+import { signIn as signInWebAuthn } from "next-auth/webauthn";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { confirmMerge, startMerge } from "@/server/merge-actions";
+import {
+  confirmMerge,
+  startMerge,
+  type ConfirmMergeResult,
+  type StartMergeResult,
+} from "@/server/merge-actions";
 
 // Client island driving the survivor side of the merge ceremony. Three phases:
 //   1. "start"   — the survivor enters the donor email; startMerge mails a
@@ -17,7 +23,10 @@ import { confirmMerge, startMerge } from "@/server/merge-actions";
 //
 // The donor-proof code and the donor id both come from the confirm-donor page
 // the magic link lands on. Pasting them here keeps confirmMerge running in the
-// SURVIVOR session, which is where the AAL2 + not-recovered gate lives.
+// SURVIVOR session, which is where the AAL2 + not-recovered + quarantine gates
+// live. Refusals arrive as TYPED results (stepUp / quarantine), never as
+// thrown errors (a thrown server-action error is an opaque digest in prod):
+// when a passkey ceremony can clear the refusal we run it and retry once.
 
 type Phase = "start" | "await-proof" | "done";
 
@@ -27,10 +36,21 @@ interface DoneState {
   strandedClients: string[];
 }
 
-function stepUpMessage(message: string, fallback: string): string {
-  return message.startsWith("Step-up required")
-    ? "You need to sign in with a passkey before you can merge accounts."
-    : message || fallback;
+// True when a passkey ceremony (step-up or re-auth with an established
+// passkey) can clear this refusal right now.
+function ceremonyCanClear(result: StartMergeResult | ConfirmMergeResult): boolean {
+  if (result.ok) return false;
+  return result.stepUp === true || result.quarantine?.canStepUp === true;
+}
+
+// Run the passkey ceremony in place; true on success.
+async function passkeyCeremony(): Promise<boolean> {
+  try {
+    const res = await signInWebAuthn("passkey", { redirect: false });
+    return !(res && "error" in res && res.error);
+  } catch {
+    return false;
+  }
 }
 
 export function MergeClient({
@@ -48,19 +68,34 @@ export function MergeClient({
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<DoneState | null>(null);
 
+  // Run a merge action; when a passkey ceremony can clear its refusal, run
+  // the ceremony and retry exactly once. Returns the final result, or null if
+  // the ceremony was abandoned/failed.
+  async function withPasskeyRetry<T extends StartMergeResult | ConfirmMergeResult>(
+    call: () => Promise<T>,
+  ): Promise<T | null> {
+    const first = await call();
+    if (!ceremonyCanClear(first)) return first;
+    if (!(await passkeyCeremony())) return null;
+    return call();
+  }
+
   async function handleStart() {
     setPending(true);
     setError(null);
     try {
-      const result = await startMerge(donorEmail);
+      const result = await withPasskeyRetry(() => startMerge(donorEmail));
+      if (result === null) {
+        setError("Confirming with a passkey is required and was not completed.");
+        return;
+      }
       if (!result.ok) {
         setError(result.error ?? "Could not start the merge.");
         return;
       }
       setPhase("await-proof");
-    } catch (e) {
-      const message = e instanceof Error ? e.message : "Could not start the merge.";
-      setError(stepUpMessage(message, "Could not start the merge."));
+    } catch {
+      setError("Could not start the merge. Please try again.");
     } finally {
       setPending(false);
     }
@@ -70,7 +105,13 @@ export function MergeClient({
     setPending(true);
     setError(null);
     try {
-      const result = await confirmMerge(donorProof.trim(), donorUserId.trim());
+      const result = await withPasskeyRetry(() =>
+        confirmMerge(donorProof.trim(), donorUserId.trim()),
+      );
+      if (result === null) {
+        setError("Confirming with a passkey is required and was not completed.");
+        return;
+      }
       if (!result.ok) {
         setError(result.error ?? "Could not complete the merge.");
         return;
@@ -81,9 +122,8 @@ export function MergeClient({
         strandedClients: result.strandedClients ?? [],
       });
       setPhase("done");
-    } catch (e) {
-      const message = e instanceof Error ? e.message : "Could not complete the merge.";
-      setError(stepUpMessage(message, "Could not complete the merge."));
+    } catch {
+      setError("Could not complete the merge. Please try again.");
     } finally {
       setPending(false);
     }

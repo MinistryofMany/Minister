@@ -135,35 +135,43 @@ From the 2026-06-27 security audit of the account-assurance + recovery + merge
 work (landed together with OIDC Phase 3 grant disclosure). None are blocking for
 the alpha; all are accepted, known gaps.
 
-### H-1 (High) - credential quarantine cooldown is not enforced
+### H-1 (High) - credential quarantine cooldown is not enforced — RESOLVED 2026-07-12
 
-**Where:** `apps/minister/src/server/credential-actions.ts` (quarantine fields
-written at credential-add but never read), and the privileged actions that
-should honor the cooldown: `merge-actions.ts` `startMerge` / `confirmMerge`,
-`recovery-code-actions.ts` `generateMyRecoveryCodes`, and
-`credential-actions.ts` `setPrimaryEmail`.
+**Was:** quarantine fields were written at credential-add and displayed, but no
+production code read them to gate an operation, so a session that had just
+reached AAL2 via a freshly-grafted (still-quarantined) passkey could
+immediately start a merge, generate recovery codes, or change the primary
+email.
 
-**What:** A freshly added email/passkey lands `status="quarantined"` with a
-`quarantinedUntil` cooldown (DESIGNDECISIONS #5), and the UI shows it, but no
-production code reads those fields to gate an operation. The cooldown is
-therefore decorative: the blast-radius bound it advertises does not exist. A
-session that has just reached AAL2 via a freshly-grafted (still-quarantined)
-passkey can immediately start an account merge, generate recovery codes, or
-change the primary email.
+**Shipped:** a two-layer gate (`src/lib/credential-lifecycle.ts` pure policy +
+`src/lib/credential-gate.ts` DB wrappers) enforced by `startMerge`,
+`confirmMerge` (before the donor proof is consumed), `generateMyRecoveryCodes`,
+and `setPrimaryEmail`:
 
-**Why it matters:** The intended containment for a briefly-compromised account
-(an attacker who reaches AAL2 grafts a persistent credential and pivots to merge
-/ recovery-code generation before the owner reacts to the "a credential was
-added" notification) is inert. It is NOT a new unauthenticated takeover path -
-it requires already reaching AAL2 - which is why it was accepted for the alpha
-rather than blocking the merge.
+1. the user must hold >=1 non-quarantined passkey (lazy window expiry via
+   `effectiveCredentialStatus`), and
+2. when the session's `cred` JWT claim (new; stamped in `auth.config.ts` on
+   every passkey auth event) names the acting passkey, that passkey must be
+   non-quarantined and still on the account — cleared instantly by re-authing
+   with an established passkey (the UIs run the ceremony and retry once).
 
-**Fix:** Thread the acting credential id onto the session JWT at sign-in, then in
-each privileged action reject when that credential row is
-`status==="quarantined" && quarantinedUntil > now`. Minimum viable gate: require
-the user to hold at least one non-quarantined AAL2 credential before
-`startMerge` / `generateMyRecoveryCodes` / `setPrimaryEmail`. Fix this before the
-alpha exposes merge or recovery-code generation to real users.
+Passkey quarantine + the "a passkey was added" notification also moved to
+WRITE time (`createAuthenticator` override in `src/auth.ts`), closing the
+bypass where a raw WebAuthn ceremony skipped the client-side
+`markPasskeyEnrolled` finalize (now a read-only reporter). Refusals are typed
+results with finished user copy + `retryAt`, audited as
+`credential.quarantine_refused`.
+
+**Residual (known, accepted):**
+
+- A pre-deploy JWT without the `cred` claim passes layer 2 while it lives
+  (layer 1 still applies); a daily-active session can slide indefinitely.
+- The bootstrap first passkey is active immediately (DESIGNDECISIONS #4), so
+  the leaked-magic-link -> bootstrap-passkey -> pivot path on a PASSKEY-LESS
+  account remains (#4-revised "fix owed": email-confirmation step-up).
+- A user whose only passkey is in-window (e.g. enrolled a new key then removed
+  the old) waits out the <=72h hold for these four actions; copy says exactly
+  when it clears. The #4-revised email-confirmation step-up would soften this.
 
 ### OidcGrant rows are not migrated on account merge
 
