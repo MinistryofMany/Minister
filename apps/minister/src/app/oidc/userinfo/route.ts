@@ -49,7 +49,11 @@ export async function GET(request: Request) {
 
   let payload;
   try {
-    const verified = await jwtVerify(token, issuer.publicKey, {
+    // Access tokens are signed with the in-process TOKEN key (#key-3) in
+    // `mintAccessToken`, NOT the badge key (#key-2, `issuer.publicKey`, which is
+    // KMS-backed in prod). Verify against the same token key or every userinfo
+    // call fails signature verification and 401s.
+    const verified = await jwtVerify(token, issuer.token.publicKey, {
       issuer: oidcIssuerUrl(),
       audience: oidcIssuerUrl(),
       algorithms: ["EdDSA"],

@@ -393,9 +393,11 @@ test("another user's badge id in approvedBadgeIds is never disclosed", async ({ 
   // Exactly the grantee's own badge; the victim's is filtered by ownership.
   expect(vcKinds(badges)).toEqual(["email-domain"]);
   const decoded = decodeJwtPayload(badges[0]!) as {
-    vc?: { credentialSubject?: { tag?: string } };
+    vc?: { credentialSubject?: { domain?: string } };
   };
-  expect(decoded.vc?.credentialSubject?.tag).toBe("email-domain");
+  // seedBadge folds the default tag ("email-domain") into the schema-valid
+  // domain claim; asserting it proves the grantee's own VC was the one disclosed.
+  expect(decoded.vc?.credentialSubject?.domain).toBe("email-domain.example");
   expect(badges.length).toBe(1);
   // Sanity: distinct ids, so "1 VC" really means the victim's was dropped.
   expect(victimBadgeId).not.toBe(grantBadgeId);
