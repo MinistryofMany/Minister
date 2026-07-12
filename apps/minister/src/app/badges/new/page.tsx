@@ -19,7 +19,8 @@ export default async function BadgePluginsList() {
       <header className="space-y-1">
         <h1 className="text-2xl font-semibold tracking-tight">Add a badge</h1>
         <p className="text-sm text-neutral-600 dark:text-neutral-400">
-          Pick a plugin. Each one walks you through proving a different fact about yourself.
+          Pick one below. Each walks you through verifying a different fact about yourself, and the
+          badge is yours to keep.
         </p>
       </header>
 

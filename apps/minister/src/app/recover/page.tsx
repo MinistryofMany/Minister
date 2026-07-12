@@ -28,8 +28,8 @@ export default function RecoverPage() {
       <header className="space-y-1">
         <h1 className="text-2xl font-semibold tracking-tight">Recover your account</h1>
         <p className="text-sm text-neutral-600 dark:text-neutral-400">
-          Lost your passkey or your email? Choose how to prove this account is yours. Either way you
-          will land in a limited session and be prompted to enroll a new passkey.
+          Lost your passkey or your email? Pick a way to show this account is yours. Either way
+          you&apos;ll come back with limited access and be asked to set up a new passkey.
         </p>
       </header>
 
