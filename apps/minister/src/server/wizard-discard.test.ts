@@ -151,7 +151,7 @@ vi.mock("@/plugins/registry", () => ({ getPlugin: vi.fn() }));
 import { getIssuer } from "@/lib/issuer";
 import { nullifierService } from "@/lib/nullifier";
 import { getPlugin } from "@/plugins/registry";
-import { submitStep } from "@/server/wizard";
+import { loadWizard, submitStep } from "@/server/wizard";
 
 const ANCHOR = "998877665544"; // a distinctive github numeric id to scan for
 const USER = "user_wiz";
@@ -289,6 +289,59 @@ describe("wizard runtime — Sybil-anchor discard + scrub", () => {
     expect(h.tables.badge).toHaveLength(0);
     expect(h.tables.nullifierEntry).toHaveLength(1);
     expect(h.tables.nullifierEntry[0]!.ownerHandle).toBe("someone_else");
+  });
+
+  // Regression: a compensated (taken) abort scrubs the session state to
+  // `{ scrubbed: true }`, which has no `currentStep`. Before the fix the abort
+  // left the row `completedAt: null` with a live pendingToken, so a later
+  // loadWizard/resume hydrated an undefined step and 500'd in
+  // toClientState/handleStep (the CI "Cannot read properties of undefined
+  // (reading 'kind')"). The abort must leave the session TERMINAL and
+  // non-resurrectable.
+  it("a taken abort leaves the session terminal and non-resurrectable (no 500 on reload)", async () => {
+    const { interimBackend } = await import("@/lib/nullifier/interim");
+    await interimBackend.registerDedup({
+      anchor: ANCHOR,
+      badgeType: "oauth-account",
+      ownerHandle: "someone_else",
+    });
+
+    vi.mocked(getPlugin).mockReturnValue(fakePlugin([githubBadge()]));
+    seedSession("ws-term");
+    // A live pendingToken so we can prove the abort drops it.
+    h.tables.wizardSession.find((r) => r.id === "ws-term")!.pendingToken = "tok-term";
+
+    const res = await submitStep("ws-term", USER, "http://localhost:3000", { code: "x" });
+    expect(res.kind).toBe("error");
+
+    const session = h.tables.wizardSession.find((r) => r.id === "ws-term")!;
+    expect(session.completedAt).not.toBeNull();
+    expect(session.pendingToken).toBeNull();
+    expect(session.state).toEqual({ scrubbed: true });
+
+    // Reloading the aborted session must resolve to null (page restarts the
+    // wizard), NOT throw on an undefined currentStep.
+    await expect(loadWizard("ws-term", USER)).resolves.toBeNull();
+  });
+
+  // Defensive boundary guard: even a legacy row that was scrubbed WITHOUT being
+  // marked completed (the pre-fix on-disk shape) must degrade gracefully rather
+  // than 500 — loadWizard returns null, submitStep a restart-able error.
+  it("a scrubbed-but-not-completed session degrades gracefully on load and resume", async () => {
+    vi.mocked(getPlugin).mockReturnValue(fakePlugin([githubBadge()]));
+    h.tables.wizardSession.push({
+      id: "ws-legacy",
+      userId: USER,
+      pluginId: "github",
+      state: { scrubbed: true },
+      completedAt: null,
+      pendingToken: "legacy-tok",
+      expiresAt: new Date(Date.now() + 60_000),
+    });
+
+    await expect(loadWizard("ws-legacy", USER)).resolves.toBeNull();
+    const res = await submitStep("ws-legacy", USER, "http://localhost:3000", { code: "x" });
+    expect(res.kind).toBe("error");
   });
 
   it("re-issuing the same credential from the same account is idempotent (already_yours)", async () => {

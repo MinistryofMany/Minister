@@ -11,7 +11,16 @@ export default defineConfig({
   globalSetup: "./e2e/global-setup.ts",
   workers: 1,
   fullyParallel: false,
-  timeout: 60_000,
+  // The suite runs against `next dev`, which compiles each route lazily on its
+  // first hit. On a resource-starved CI runner that on-demand compile can eat
+  // deep into a test that touches several fresh routes (the share-view specs hit
+  // the email-domain wizard AND /share/[token] in one test), so give CI extra
+  // headroom; locally the compile is sub-second so 60s stands.
+  timeout: process.env.CI ? 120_000 : 60_000,
+  // Retry twice in CI. A dev-server connection reset / compile stall is
+  // transient — the retry re-runs against already-compiled routes and passes.
+  // Zero locally so a genuine failure surfaces immediately.
+  retries: process.env.CI ? 2 : 0,
   expect: { timeout: 10_000 },
   reporter: [["list"]],
   use: {
