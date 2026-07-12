@@ -1,7 +1,5 @@
 import { getBadgeType } from "@minister/shared";
 
-import { AdminCohortDefForm } from "@/components/admin-cohort-def-form";
-import { AdminCohortPublishToggle } from "@/components/admin-cohort-publish-toggle";
 import { AdminStatsRecomputeButton } from "@/components/admin-stats-recompute-button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import type { CohortStat, CohortStatDef, StatsRun } from "@/generated/prisma";
@@ -190,18 +188,15 @@ function TypeDisclosure({ row }: { row: TypeRow }) {
   );
 }
 
+// Read-only cohort row: cohorts are CODE-DEFINED (BUILTIN_COHORT_DEFS, seeded
+// PUBLISHED) — there is no admin authoring or publish toggle. Exact counts, as
+// everywhere on this operator-only page.
 function CohortRow({ def }: { def: CohortStatDef & { stat: CohortStat | null } }) {
   const stat = def.stat;
   return (
     <li className="flex flex-col gap-2 rounded-md border border-neutral-200 p-3 dark:border-neutral-800">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <span className="text-sm font-medium">{def.label}</span>
-        <AdminCohortPublishToggle id={def.id} published={def.published} />
-      </div>
       <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <span className="text-xs text-neutral-500">
-          {def.published ? "Visible on /transparency" : "Not shown publicly"}
-        </span>
+        <span className="text-sm font-medium">{def.label}</span>
         {stat ? (
           <span className="tabular-nums text-sm">
             {stat.numerator.toLocaleString()} of {stat.denominator.toLocaleString()} —{" "}
@@ -277,8 +272,9 @@ export default async function AdminStatsPage() {
         <CardHeader>
           <CardTitle>Cohorts</CardTitle>
           <CardDescription>
-            Operator-defined numerator/denominator badge filters, e.g. &ldquo;aged GitHub accounts
-            as a share of GitHub accounts&rdquo;. A new definition counts as of the next recompute.
+            Code-defined numerator/denominator badge filters, e.g. &ldquo;aged GitHub accounts as a
+            share of GitHub accounts&rdquo;. These are fixed in code (BUILTIN_COHORT_DEFS) and
+            seeded published — counts refresh as of the next recompute.
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-4">
@@ -293,10 +289,6 @@ export default async function AdminStatsPage() {
               ))}
             </ul>
           )}
-          <div className="border-t border-neutral-200 pt-4 dark:border-neutral-800">
-            <h3 className="mb-2 text-sm font-semibold">Add a cohort</h3>
-            <AdminCohortDefForm />
-          </div>
         </CardContent>
       </Card>
     </div>

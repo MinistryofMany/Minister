@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import type { AnonymityBucket, AnonymityHint } from "@/lib/anonymity-hint";
+import { initialConsentDefaults } from "@/lib/consent-defaults";
 import type { PolicyConsentView } from "@/lib/oidc-policy-view";
 import { approveConsent, denyConsent } from "@/server/oidc-actions";
 
@@ -125,18 +126,15 @@ export function ConsentScreen({
     [alreadyGranted],
   );
 
-  // H-1: only ever pre-check from the durable grant when the RP actually
-  // requested `profile` this round. A badge-only re-login never renders the
-  // profile card, so a stale previouslyShared flag must not seed these true
-  // (the server masks too, but keep the UI truthful).
-  const [nameAllowed, setNameAllowed] = useState(wantsProfile && previouslyShared.name);
-  const [avatarAllowed, setAvatarAllowed] = useState(wantsProfile && previouslyShared.avatar);
-  // Account-strength disclosure. Default OFF for a client the user never shared
-  // it with; pre-checked only on a re-login where they previously did (mirrors
-  // the name/avatar re-login default).
-  const [sybilScoreAllowed, setSybilScoreAllowed] = useState(
-    wantsSybilScore && previouslySybilScore,
-  );
+  // Initial checked-state defaults (pure, in @/lib/consent-defaults): identifying
+  // name/avatar default OFF on a first disclosure (pre-checked only on a re-login
+  // where they were previously shared with this client), while the coarse,
+  // non-identifying account-strength bucket defaults CHECKED whenever requested —
+  // on first consent too.
+  const defaults = initialConsentDefaults({ wantsProfile, previouslyShared, wantsSybilScore });
+  const [nameAllowed, setNameAllowed] = useState(defaults.name);
+  const [avatarAllowed, setAvatarAllowed] = useState(defaults.avatar);
+  const [sybilScoreAllowed, setSybilScoreAllowed] = useState(defaults.sybilScore);
   // Editable per-RP persona (snapshot per app), seeded from the effective
   // value (override ?? global). Only sent for a field whose toggle is on.
   const [nameValue, setNameValue] = useState(profilePreview.displayName ?? "");

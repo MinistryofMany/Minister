@@ -9,8 +9,6 @@ import { Input } from "@/components/ui/input";
 import type { ScorableBadge, SybilScoringConfig } from "@/lib/sybil-config";
 import { buildSybilScoringConfig, sybilScore } from "@/lib/sybil-score";
 import {
-  addSybilCategory,
-  renameSybilCategory,
   saveBucketCutoffs,
   updateSybilCategoryCap,
   updateSybilWeight,
@@ -125,11 +123,6 @@ export function AdminSybilForm({ initialRows, initialCategories, initialCutoffs 
   const [caps, setCaps] = useState<Record<string, number>>(() =>
     Object.fromEntries(initialCategories.map((c) => [c.name, c.cap])),
   );
-
-  const [newCategoryName, setNewCategoryName] = useState("");
-  const [newCategoryCap, setNewCategoryCap] = useState(0);
-  const [renameFrom, setRenameFrom] = useState("");
-  const [renameTo, setRenameTo] = useState("");
 
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
@@ -304,80 +297,8 @@ export function AdminSybilForm({ initialRows, initialCategories, initialCutoffs 
             </div>
           ))}
         </div>
-
-        <div className="mt-2 flex flex-wrap items-end gap-2 border-t border-neutral-200 pt-3 dark:border-neutral-800">
-          <label className="flex flex-col gap-1 text-xs">
-            <span>New category</span>
-            <Input
-              className="h-8 w-40"
-              value={newCategoryName}
-              onChange={(e) => setNewCategoryName(e.target.value)}
-              placeholder="name"
-            />
-          </label>
-          <label className="flex flex-col gap-1 text-xs">
-            <span>Cap</span>
-            <Input
-              type="number"
-              className="h-8 w-20"
-              value={newCategoryCap}
-              onChange={(e) => setNewCategoryCap(Number(e.target.value))}
-            />
-          </label>
-          <Button
-            type="button"
-            variant="outline"
-            className="h-8"
-            disabled={pending || newCategoryName.trim().length === 0}
-            onClick={() =>
-              run(() => addSybilCategory({ name: newCategoryName.trim(), cap: newCategoryCap }))
-            }
-          >
-            Add category
-          </Button>
-        </div>
-
-        <div className="flex flex-wrap items-end gap-2">
-          <label className="flex flex-col gap-1 text-xs">
-            <span>Rename category</span>
-            <select
-              className="h-8 w-40 rounded-md border border-neutral-300 bg-transparent px-2 text-xs dark:border-neutral-700"
-              aria-label="Category to rename"
-              value={renameFrom}
-              onChange={(e) => setRenameFrom(e.target.value)}
-            >
-              <option value="">select…</option>
-              {categoryNames.map((n) => (
-                <option key={n} value={n}>
-                  {n}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="flex flex-col gap-1 text-xs">
-            <span>to</span>
-            <Input
-              className="h-8 w-40"
-              aria-label="New category name"
-              value={renameTo}
-              onChange={(e) => setRenameTo(e.target.value)}
-              placeholder="new name"
-            />
-          </label>
-          <Button
-            type="button"
-            variant="outline"
-            className="h-8"
-            disabled={pending || renameFrom.length === 0 || renameTo.trim().length === 0}
-            onClick={() =>
-              run(() => renameSybilCategory({ from: renameFrom, to: renameTo.trim() }))
-            }
-          >
-            Rename
-          </Button>
-        </div>
         <p className="text-xs text-neutral-500">
-          Category names must be unique — renaming onto an existing category name is rejected.
+          Categories are defined in code; only their caps are editable here.
         </p>
       </section>
 

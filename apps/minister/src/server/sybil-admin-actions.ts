@@ -76,30 +76,11 @@ export const updateSybilWeight = adminAction(
 
 // -----------------------------------------------------------------------------
 // Categories + caps
+//
+// Categories are CODE-OWNED (seeded from sybil-config.ts). Only their cap is
+// editable here; adding/renaming a category from the UI was removed as dead
+// weight — a category's identity lives in code.
 // -----------------------------------------------------------------------------
-
-const AddCategoryInput = z.object({
-  name: z.string().min(1).max(64),
-  cap: z.number(),
-});
-
-export const addSybilCategory = adminAction(
-  AddCategoryInput,
-  async ({ session, input }): Promise<AdminActionResult> => {
-    const name = input.name.trim();
-    if (name.length === 0) return { ok: false, error: "Category name is required" };
-    const cap = Math.max(0, Math.floor(input.cap));
-
-    const existing = await prisma.sybilCategory.findUnique({ where: { name } });
-    if (existing) return { ok: false, error: `Category "${name}" already exists` };
-
-    await prisma.sybilCategory.create({ data: { name, cap } });
-
-    await audit(session.user.id, "admin.sybil_category.created", { name, cap });
-    revalidatePath("/admin/sybil-score");
-    return { ok: true };
-  },
-);
 
 const UpdateCategoryCapInput = z.object({
   name: z.string().min(1),
@@ -120,47 +101,6 @@ export const updateSybilCategoryCap = adminAction(
       name: input.name,
       before: existing.cap,
       after: cap,
-    });
-    revalidatePath("/admin/sybil-score");
-    return { ok: true };
-  },
-);
-
-const RenameCategoryInput = z.object({
-  from: z.string().min(1),
-  to: z.string().min(1).max(64),
-});
-
-export const renameSybilCategory = adminAction(
-  RenameCategoryInput,
-  async ({ session, input }): Promise<AdminActionResult> => {
-    const to = input.to.trim();
-    if (to.length === 0) return { ok: false, error: "New category name is required" };
-    if (to === input.from) return { ok: true };
-
-    const [fromCat, toCat] = await Promise.all([
-      prisma.sybilCategory.findUnique({ where: { name: input.from } }),
-      prisma.sybilCategory.findUnique({ where: { name: to } }),
-    ]);
-    if (!fromCat) return { ok: false, error: `No category "${input.from}"` };
-    if (toCat) return { ok: false, error: `Category "${to}" already exists` };
-
-    // The category name is an app-level FK carried on each BadgeWeight.category
-    // string (no DB FK), so a rename must rewrite the category row AND every
-    // referencing weight row in one transaction — otherwise the boot-check's
-    // dangling-category guard would trip.
-    await prisma.$transaction([
-      prisma.sybilCategory.create({ data: { name: to, cap: fromCat.cap } }),
-      prisma.badgeWeight.updateMany({
-        where: { category: input.from },
-        data: { category: to },
-      }),
-      prisma.sybilCategory.delete({ where: { name: input.from } }),
-    ]);
-
-    await audit(session.user.id, "admin.sybil_category.renamed", {
-      from: input.from,
-      to,
     });
     revalidatePath("/admin/sybil-score");
     return { ok: true };

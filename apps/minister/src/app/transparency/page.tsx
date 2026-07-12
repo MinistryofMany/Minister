@@ -94,8 +94,8 @@ function AsOfLine({ computedAt }: { computedAt: Date | null }) {
   }
   return (
     <p className="text-xs text-neutral-500">
-      As of {computedAt.toLocaleString()}. Counts are rounded and small groups are hidden; no
-      history is published.
+      As of {computedAt.toLocaleString()}. Counts are shown as ranges and small groups are hidden;
+      no history is published.
     </p>
   );
 }
@@ -296,9 +296,9 @@ export default async function TransparencyPage() {
             <CardTitle>Per-type holder counts</CardTitle>
             <CardDescription>
               How many accounts hold each badge type, and the distribution across a small set of
-              closed-enum attributes. Counts are rounded and any group smaller than five is shown as{" "}
-              <code className="font-mono text-xs">&lt;5</code>. Rare or identifying attribute values
-              are never published.
+              closed-enum attributes. Counts are shown as ranges and any group smaller than five is
+              shown as <code className="font-mono text-xs">&lt;5</code>. Rare or identifying
+              attribute values are never published.
             </CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col gap-3">
@@ -383,8 +383,8 @@ export default async function TransparencyPage() {
             <CardTitle>Cohorts</CardTitle>
             <CardDescription>
               Reviewed proportions, e.g. &ldquo;aged GitHub accounts as a share of GitHub
-              accounts&rdquo;. Percentages are derived from the rounded counts, and a cohort too
-              small to report is left blank rather than shown precisely.
+              accounts&rdquo;. Counts are shown as ranges, percentages are coarsened to the nearest
+              5%, and a cohort too small to report is left blank rather than shown precisely.
             </CardDescription>
           </CardHeader>
           <CardContent>

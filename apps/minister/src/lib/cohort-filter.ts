@@ -89,10 +89,12 @@ export function safeParseCohortFilter(input: unknown): CohortFilter | null {
 }
 
 // ---------------------------------------------------------------------------
-// Built-in seeded cohort (design spec §5.5, brief §3): "aged github accounts as
-// a fraction of github accounts". denominator = oauth-account{provider=github};
-// numerator = account-age{provider=github, olderThanMonths>=24}. Seeded
-// idempotently by seed-sybil-config.ts.
+// Built-in, CODE-DEFINED cohorts (design spec §5.5, brief §3). These are the
+// ONLY source of CohortStatDef rows: the admin authoring path was removed, so the
+// injection-safe SQL builder now only ever sees these operator-authored-in-code,
+// allowlist-clean defs. seed-sybil-config.ts seeds them PUBLISHED and reconciles
+// away any leftover def not in this array. Every attribute key used here must be
+// allowlisted for its type in stats-allowlist.ts, or the def fails validation.
 // ---------------------------------------------------------------------------
 
 export interface CohortDefSeed {
@@ -103,6 +105,8 @@ export interface CohortDefSeed {
 
 export const BUILTIN_COHORT_DEFS: readonly CohortDefSeed[] = [
   {
+    // denominator = oauth-account{provider=github};
+    // numerator = account-age{provider=github, olderThanMonths>=24}.
     label: "Aged GitHub accounts (share of GitHub accounts)",
     denominatorFilter: {
       clauses: [{ type: "oauth-account", where: { provider: "github" } }],
@@ -110,6 +114,36 @@ export const BUILTIN_COHORT_DEFS: readonly CohortDefSeed[] = [
     numeratorFilter: {
       clauses: [
         { type: "account-age", where: { provider: "github" }, whereGte: { olderThanMonths: 24 } },
+      ],
+    },
+  },
+  {
+    // denominator = oauth-account{provider=reddit};
+    // numerator = account-age{provider=reddit, olderThanMonths>=24}.
+    label: "Aged Reddit accounts (share of Reddit accounts)",
+    denominatorFilter: {
+      clauses: [{ type: "oauth-account", where: { provider: "reddit" } }],
+    },
+    numeratorFilter: {
+      clauses: [
+        { type: "account-age", where: { provider: "reddit" }, whereGte: { olderThanMonths: 24 } },
+      ],
+    },
+  },
+  {
+    // denominator = oauth-account{provider=github};
+    // numerator = social-following{provider=github, followersAtLeast>=100}.
+    label: "GitHub accounts with 100+ followers (share of GitHub accounts)",
+    denominatorFilter: {
+      clauses: [{ type: "oauth-account", where: { provider: "github" } }],
+    },
+    numeratorFilter: {
+      clauses: [
+        {
+          type: "social-following",
+          where: { provider: "github" },
+          whereGte: { followersAtLeast: 100 },
+        },
       ],
     },
   },

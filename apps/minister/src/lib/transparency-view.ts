@@ -8,18 +8,24 @@
 //      `isAllowlistedKey(type, key)` is DROPPED even if it somehow reached the
 //      table. Type-level totals (attributeKey === "") are not attribute rows and
 //      pass through.
-//   2. k-suppression: every published count goes through `suppress(count, k)`, so
-//      a count in 1..k-1 renders as "<k" (a 0 renders as 0 — an absence is not
-//      identifying). k comes from `DEFAULT_SUPPRESSION_K` (never hardcoded).
-//   3. count rounding: a count that SURVIVES suppression (>= k) is coarsened with
-//      `roundPublic` before it is shown.
+//   2. range bucketing: every published count is shown as an honest RANGE via
+//      `publicCountBucket` (change C) — a count in 1..4 renders as "<5", a 0 as
+//      "0", and larger counts as a widening range ("5–9", "10–24", …, "N,000+").
+//      The range subsumes the old k-suppression + single-number rounding: no
+//      exact count is ever printed, and the sub-5 range is exactly the "<5"
+//      suppression sentinel.
 //
-// The cohort percentage is derived ONLY from values that already passed layers 2
-// and 3 — never from a raw numerator/denominator — so it can never leak an exact
-// small count. See `buildPublicCohortRow`.
+// The cohort percentage is derived ONLY from rounded values (`roundPublic`),
+// never from a raw numerator/denominator, and is then coarsened to the nearest
+// 5% — so it can never leak an exact small count. See `buildPublicCohortRow`.
 
 import { isAllowlistedKey, isAllowlistedValue } from "@/lib/stats-allowlist";
-import { DEFAULT_SUPPRESSION_K, roundPublic, suppress } from "@/lib/stats-public";
+import {
+  DEFAULT_SUPPRESSION_K,
+  publicCountBucket,
+  publicCountLowerBound,
+  roundPublic,
+} from "@/lib/stats-public";
 
 // A raw materialized BadgeStat row as this module consumes it (the display fields
 // only — id/computedAt are irrelevant to shaping).
@@ -31,38 +37,24 @@ export interface BadgeStatInput {
 }
 
 /**
- * Render one count for the public surface: k-suppression THEN rounding (layers 2
- * and 3, in that order). A suppressed small count (1..k-1) returns the "<k"
- * sentinel; a 0 returns "0"; a surviving count (>= k) is rounded and formatted.
- * This is the ONLY function that turns a raw count into published text — every
- * public count flows through it.
+ * Render one count for the public surface as an honest RANGE (change C) via
+ * `publicCountBucket`: 1..4 -> "<5", 0 -> "0", larger counts -> a widening range
+ * up to "N,000+". No exact count is ever printed. This is the ONLY function that
+ * turns a raw count into published text — every public count flows through it.
  */
 export function publicCountDisplay(count: number): string {
-  const suppressed = suppress(count, DEFAULT_SUPPRESSION_K);
-  // A suppressed cell is the "<k" sentinel string — publish it verbatim.
-  if (typeof suppressed === "string") return suppressed;
-  // suppress() returns 0 only for count <= 0; nothing to round or hide.
-  if (suppressed <= 0) return "0";
-  // Survived suppression (>= k): coarsen before publishing.
-  return roundPublic(suppressed).toLocaleString();
+  return publicCountBucket(count);
 }
 
 /**
- * The numeric key a row is ORDERED by on the public surface — derived from the
- * PUBLISHED value, never the raw count, so DOM order can leak nothing finer than
- * what is printed. A suppressed cell (the "<k" sentinel) and a true zero both
- * carry no orderable magnitude, so both collapse to 0; a surviving count sorts by
- * its `roundPublic` value. Callers sort DESC by this key and tie-break
- * lexicographically, making order a pure function of the rendered text: two cells
- * that DISPLAY THE SAME (e.g. both "<5", or both rounded to 120) are ordered only
- * by name, never by their distinct underlying counts.
+ * The numeric key a row is ORDERED by on the public surface — the LOWER BOUND of
+ * the range that is printed, never the raw count, so DOM order can leak nothing
+ * finer than the bucket shown. Two cells in the SAME printed range therefore sort
+ * identically; callers sort DESC by this key and tie-break lexicographically,
+ * making order a pure function of the rendered text.
  */
 export function publicSortKey(count: number): number {
-  const suppressed = suppress(count, DEFAULT_SUPPRESSION_K);
-  // A suppressed "<k" cell exposes no magnitude to order by.
-  if (typeof suppressed === "string") return 0;
-  if (suppressed <= 0) return 0;
-  return roundPublic(suppressed);
+  return publicCountLowerBound(count);
 }
 
 export interface PublicAttrValue {
@@ -186,9 +178,11 @@ export interface PublicCohortRow {
  *     side is a small count (1..k-1) the ratio is withheld (null) — a percentage
  *     over a raw small numerator or denominator would reconstruct that exact
  *     count.
- *   - When shown, it is derived from the ROUNDED values (`roundPublic`), i.e. a
- *     pure function of the counts already published on the page. It therefore
- *     leaks nothing beyond what the rounded counts already show.
+ *   - When shown, it is derived from the ROUNDED values (`roundPublic`) — a pure
+ *     function of already-coarsened counts — and then coarsened to the NEAREST 5%
+ *     (change C). It therefore leaks nothing beyond what the published ranges
+ *     already show, and two raw pairs that round to the same values yield the same
+ *     percentage.
  */
 export function buildPublicCohortRow(
   label: string,
@@ -202,8 +196,10 @@ export function buildPublicCohortRow(
     const roundedNum = roundPublic(numerator);
     const roundedDen = roundPublic(denominator);
     if (roundedDen > 0) {
-      // roundPublic is monotonic and numerator <= denominator, so 0..100.
-      percentDisplay = `${Math.round((roundedNum / roundedDen) * 100)}%`;
+      // roundPublic is monotonic and numerator <= denominator, so 0..100. Coarsen
+      // to the nearest 5% so the ratio stays as coarse as the published ranges.
+      const pct = (roundedNum / roundedDen) * 100;
+      percentDisplay = `${Math.round(pct / 5) * 5}%`;
     }
   }
 
