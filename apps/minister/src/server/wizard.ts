@@ -11,7 +11,7 @@ import {
   serializeMintWindow,
 } from "@/lib/nullifier";
 import { prisma } from "@/lib/prisma";
-import { getPlugin } from "@/plugins/registry";
+import { getPlugin, isPluginConfigured } from "@/plugins/registry";
 import { issueBadge } from "@/server/issue-badge";
 import { pendingTokenFor, toClientState } from "@/server/wizard-helpers";
 
@@ -22,6 +22,20 @@ export class SybilTakenError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "SybilTakenError";
+  }
+}
+
+// Thrown when startWizard is asked for a plugin that's registered but not
+// deployment-configured (e.g. GitHub OAuth creds unset in prod). The
+// add-a-badge menu already hides the entry (listAvailablePlugins) and the
+// wizard page route already 404s before reaching here — this is the
+// defense-in-depth backstop so ANY caller of startWizard, present or future,
+// fails on a clean, named error instead of the plugin's own startWizard()
+// throwing mid-flow.
+export class PluginNotConfiguredError extends Error {
+  constructor(pluginId: string) {
+    super(`Plugin "${pluginId}" is not configured on this deployment.`);
+    this.name = "PluginNotConfiguredError";
   }
 }
 
@@ -199,6 +213,7 @@ export async function startWizard(
 ): Promise<{ sessionId: string; state: WizardState }> {
   const plugin = getPlugin(pluginId);
   if (!plugin) throw new Error(`Unknown plugin: ${pluginId}`);
+  if (!isPluginConfigured(plugin)) throw new PluginNotConfiguredError(pluginId);
 
   const ctx = buildPluginContext(userId, origin);
   const state = await plugin.startWizard(ctx);
