@@ -6,6 +6,7 @@ import { issuanceMonthStartSeconds } from "@minister/vc";
 
 import { ConsentScreen } from "@/components/consent-screen";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import type { AnonymityHint } from "@/lib/anonymity-hint";
 import { holderCountsByType } from "@/lib/anonymity-sets";
 import { loadUserBadges, summarizeAttributes, type DisplayBadge } from "@/lib/badges";
 import { getIssuer } from "@/lib/issuer";
@@ -23,6 +24,7 @@ import { signOidcRequest } from "@/lib/oidc-request-token";
 import { prisma } from "@/lib/prisma";
 import { clientIpFrom, oidcAuthorizeLimiter } from "@/lib/rate-limit";
 import { getCurrentSession } from "@/lib/session";
+import { loadBucketAnonymityHint } from "@/lib/sybil-bucket-hint";
 import { loadSybilScoringConfig } from "@/lib/sybil-config";
 import { sybilScore } from "@/lib/sybil-score";
 
@@ -173,6 +175,18 @@ export default async function OidcAuthorizePage({ searchParams }: PageProps) {
     }
   }
 
+  // P2-U3: the LIVE bucket-class size, from the materialized BucketStat
+  // (P2-U0). Reuses the same coarse anonymity-hint bucketing the OR/threshold
+  // picker uses for per-type holder counts, applied to "how many users
+  // currently score this bucket" — so a user about to disclose a rare bucket
+  // sees "you'd be in a very small group" before consenting. Fails soft to
+  // null inside loadBucketAnonymityHint (stats not yet computed, or a read
+  // error) — the card still renders, just without the hint.
+  const sybilBucketAnonymityHint: AnonymityHint | null =
+    wantsSybilScore && sybilBucketPreview !== null
+      ? await loadBucketAnonymityHint(sybilBucketPreview)
+      : null;
+
   return (
     <div className="mx-auto flex max-w-lg flex-col gap-6 px-4 py-12">
       <header className="space-y-1">
@@ -190,6 +204,7 @@ export default async function OidcAuthorizePage({ searchParams }: PageProps) {
         previouslyShared={{ name: grant.profileName, avatar: grant.profileAvatar }}
         wantsSybilScore={wantsSybilScore}
         sybilBucketPreview={sybilBucketPreview}
+        sybilBucketAnonymityHint={sybilBucketAnonymityHint}
         previouslySybilScore={grant.sybilScore}
         badgeChoices={badgeChoices}
         alreadyGranted={alreadyGranted}

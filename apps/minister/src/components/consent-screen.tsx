@@ -5,8 +5,19 @@ import { useMemo, useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import type { AnonymityBucket, AnonymityHint } from "@/lib/anonymity-hint";
 import type { PolicyConsentView } from "@/lib/oidc-policy-view";
 import { approveConsent, denyConsent } from "@/server/oidc-actions";
+
+// P2-U3: honest, bucket-derived phrasing for "how many other accounts share
+// this account-strength level" — the anonymity set for THIS disclosure, not
+// the anonymity set of any one badge type.
+const GROUP_SIZE_PHRASE: Record<AnonymityBucket, string> = {
+  "very-small": "a very small group",
+  small: "a small group",
+  medium: "a medium-sized group",
+  large: "a large group",
+};
 
 interface BadgeChoice {
   id: string;
@@ -61,6 +72,12 @@ interface Props {
   // when it could not be computed (the numeral is then dropped). Advisory only;
   // consent-approve recomputes the authoritative snapshot server-side.
   sybilBucketPreview: number | null;
+  // P2-U3: a live anonymity hint for the previewed bucket, sourced from the
+  // materialized BucketStat (how many users currently score this same
+  // bucket — the anonymity set for THIS disclosure). Null when stats aren't
+  // computed yet, the preview bucket is unknown, or the lookup failed — the
+  // card renders with no extra line in that case (fail soft).
+  sybilBucketAnonymityHint: AnonymityHint | null;
   // Whether the user has EVER disclosed their account-strength bucket to this
   // client (durable grant). Re-login pre-checks it, mirroring name/avatar.
   previouslySybilScore: boolean;
@@ -84,6 +101,7 @@ export function ConsentScreen({
   previouslyShared,
   wantsSybilScore,
   sybilBucketPreview,
+  sybilBucketAnonymityHint,
   previouslySybilScore,
   badgeChoices,
   alreadyGranted,
@@ -327,6 +345,16 @@ export function ConsentScreen({
                 This shows how hard your account is to fake. It does not reveal which badges you
                 have.
               </p>
+              {sybilBucketAnonymityHint ? (
+                <p
+                  className="text-xs text-neutral-500 dark:text-neutral-400"
+                  data-anonymity-bucket={sybilBucketAnonymityHint.bucket}
+                >
+                  Roughly: {sybilBucketAnonymityHint.label} — you&apos;d be in{" "}
+                  {GROUP_SIZE_PHRASE[sybilBucketAnonymityHint.bucket]} of accounts sharing this
+                  strength level.
+                </p>
+              ) : null}
             </div>
 
             <div className="rounded-md border border-neutral-200 p-2 dark:border-neutral-800">
