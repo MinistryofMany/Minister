@@ -226,6 +226,17 @@ export async function loadShareLinkByToken(token: string): Promise<{
   };
 }
 
+// Badge types whose disclosure reveals the holder's WHOLE email address (not
+// just its domain). `email-exact` carries `{ email }`; `email-domain` carries
+// only `{ domain }` and is deliberately NOT here. Surfaced on /shares so the
+// owner can see which of their links hand out their full address. Kept as a set
+// so a future full-email-bearing type is a one-line addition.
+export const FULL_EMAIL_DISCLOSING_TYPES: ReadonlySet<string> = new Set(["email-exact"]);
+
+export function disclosesFullEmail(badgeType: string): boolean {
+  return FULL_EMAIL_DISCLOSING_TYPES.has(badgeType);
+}
+
 // User-facing listing on /shares — every link this user has ever
 // created, with derived "active" / "expired" / "revoked" status.
 export interface ShareLinkSummary {
@@ -238,6 +249,9 @@ export interface ShareLinkSummary {
   revokedAt: Date | null;
   viewCount: number;
   status: "active" | "expired" | "revoked";
+  // True when at least one badge on this link discloses the holder's whole
+  // email address (an `email-exact` badge). Drives the /shares warning pill.
+  exposesFullEmail: boolean;
 }
 
 export async function loadUserShareLinks(userId: string): Promise<ShareLinkSummary[]> {
@@ -255,6 +269,28 @@ export async function loadUserShareLinks(userId: string): Promise<ShareLinkSumma
       _count: { select: { views: true } },
     },
   });
+
+  // Which of this user's badges — across all their links — disclose a whole
+  // email address. One query scoped to the owner AND the full-email types, so a
+  // link is flagged only when it actually carries a still-existing email-exact
+  // badge (a since-deleted badge discloses nothing and must not raise the flag).
+  const allBadgeIds = [...new Set(rows.flatMap((r) => r.badgeIds))];
+  const fullEmailBadgeIds =
+    allBadgeIds.length === 0
+      ? new Set<string>()
+      : new Set(
+          (
+            await prisma.badge.findMany({
+              where: {
+                userId,
+                id: { in: allBadgeIds },
+                type: { in: [...FULL_EMAIL_DISCLOSING_TYPES] },
+              },
+              select: { id: true },
+            })
+          ).map((b) => b.id),
+        );
+
   const now = new Date();
   return rows.map((r) => ({
     id: r.id,
@@ -266,6 +302,7 @@ export async function loadUserShareLinks(userId: string): Promise<ShareLinkSumma
     revokedAt: r.revokedAt,
     viewCount: r._count.views,
     status: r.revokedAt ? "revoked" : r.expiresAt < now ? "expired" : "active",
+    exposesFullEmail: r.badgeIds.some((id) => fullEmailBadgeIds.has(id)),
   }));
 }
 

@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
+import { Mail } from "lucide-react";
 
 import { ShareLinkCreateForm } from "@/components/share-link-create-form";
 import { ShareLinkRevokeButton } from "@/components/share-link-revoke";
@@ -76,6 +77,7 @@ export default async function SharesPage() {
                       {link.expiresAt.toLocaleDateString()}
                       {link.requiresAccount ? " · account-gated" : ""}
                     </div>
+                    {link.exposesFullEmail ? <FullEmailWarning /> : null}
                   </div>
                   {link.status === "active" ? (
                     <ShareLinkRevokeButton shareLinkId={link.id} />
@@ -129,6 +131,21 @@ export default async function SharesPage() {
         )}
       </section>
     </div>
+  );
+}
+
+// Whole-email exposure warning: shown on a link that carries an email-exact
+// badge, so the owner sees at a glance which links disclose their full address
+// (not just its domain).
+function FullEmailWarning() {
+  return (
+    <span
+      className="mt-1 inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-medium text-amber-700 dark:bg-amber-900/30 dark:text-amber-400"
+      title="This link discloses your full email address, not just its domain."
+    >
+      <Mail className="h-3 w-3" aria-hidden />
+      Exposes full email
+    </span>
   );
 }
 
