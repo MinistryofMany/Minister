@@ -13,6 +13,7 @@
 import { PrismaClient } from "../src/generated/prisma/index.js";
 import { BUILTIN_COHORT_DEFS, parseCohortFilter } from "../src/lib/cohort-filter.js";
 import {
+  GROUP_CONFIG_SEED,
   RECOVERY_CONFIG_SEED,
   SYBIL_BADGE_WEIGHT_SEED,
   SYBIL_BUCKET_CONFIG_SEED,
@@ -87,6 +88,24 @@ async function main(): Promise<void> {
     await prisma.recoveryConfig.upsert({
       where: { id: RECOVERY_CONFIG_SEED.id },
       create: { id: RECOVERY_CONFIG_SEED.id, threshold: RECOVERY_CONFIG_SEED.threshold },
+      update: {},
+    });
+    if (before) existing++;
+    else created++;
+  }
+
+  {
+    const before = await prisma.groupConfig.findUnique({
+      where: { id: GROUP_CONFIG_SEED.id },
+    });
+    await prisma.groupConfig.upsert({
+      where: { id: GROUP_CONFIG_SEED.id },
+      create: {
+        id: GROUP_CONFIG_SEED.id,
+        foundingMinBucket: GROUP_CONFIG_SEED.foundingMinBucket,
+        maxOwnedGroups: GROUP_CONFIG_SEED.maxOwnedGroups,
+      },
+      // Insert-only: never reset an operator-tuned founding gate.
       update: {},
     });
     if (before) existing++;

@@ -280,6 +280,47 @@ export const OnchainEventClaims = z
 export type OnchainEventClaims = z.infer<typeof OnchainEventClaims>;
 
 // ---------------------------------------------------------------------------
+// Group membership badge type
+//
+// Attests that the holder belongs to a Ministry group with a given role. The
+// `group` slug is the gating key (RPs gate on `where: { group: "<slug>" }`) and
+// `groupId` pins the claim to a specific group row, so a renamed or
+// deleted-and-recreated slug can't let a stale VC satisfy a gate for a different
+// group under the same name.
+//
+// Membership is SELF-ASSERTED by a group's admins — Ministry verifies nothing
+// about it — so this type MUST NOT contribute anti-sybil score (see
+// docs/groups-design.md "Security considerations"). `sybilResistance: "none"` is
+// the honest resistance claim; the HARD zero-contribution guarantee is enforced
+// by the BadgeWeight seed row carrying `sybilWeight: 0` (src/lib/sybil-config.ts).
+//
+// MIRROR: like OAUTH_PROVIDERS above, this type is hand-transcribed into the
+// SEPARATE @minister/client repo (minister-client/src/badges). Adding it here is
+// only half the contract — the SDK mirror AND the cross-repo drift-check must
+// carry `group-membership` before any relying party gates on it, or the RP will
+// silently reject the badge. Do NOT edit that repo from here; track it as a
+// follow-on.
+export const GROUP_ROLES = ["owner", "admin", "member"] as const;
+export type GroupRole = (typeof GROUP_ROLES)[number];
+
+// Strict: the disclosure path re-signs whatever this schema returns into the
+// credentialSubject, so unknown keys must be rejected, never smuggled in.
+export const GroupMembershipClaims = z
+  .object({
+    // The group's canonical slug — the `group` claim RPs gate on. Same charset
+    // as the server-side founding validator ([a-z0-9] with internal hyphens).
+    group: z
+      .string()
+      .min(1)
+      .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/u, "Not a valid group slug"),
+    role: z.enum(GROUP_ROLES),
+    // Opaque Group.id, pinning the claim to a specific group row.
+    groupId: z.string().min(1),
+  })
+  .strict();
+export type GroupMembershipClaims = z.infer<typeof GroupMembershipClaims>;
+
+// ---------------------------------------------------------------------------
 // Registry
 // ---------------------------------------------------------------------------
 
@@ -433,6 +474,18 @@ export const BADGE_TYPES: Record<string, BadgeTypeMeta> = {
     // (one key -> one badge) but resists nothing broader.
     schema: PublicKeyClaims,
     sybilResistance: "weak",
+  },
+  "group-membership": {
+    type: "group-membership",
+    label: "Group membership",
+    description: "Holder belongs to the named Ministry group with the stated role.",
+    iconKey: "users",
+    schema: GroupMembershipClaims,
+    // HARD requirement: self-asserted membership must NEVER buy anti-sybil score
+    // (a founder farming sock-puppet members must gain nothing). "none" here is
+    // the honest claim; the zero contribution is enforced by the sybilWeight-0
+    // BadgeWeight seed row. See docs/groups-design.md.
+    sybilResistance: "none",
   },
 
   ...Object.fromEntries(AGE_THRESHOLDS.map((t) => [`age-over-${t}`, ageOverEntry(t)] as const)),

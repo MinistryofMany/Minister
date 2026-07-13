@@ -78,6 +78,10 @@ const CAT_HUMAN_ATTRIBUTE = "human-attribute";
 const CAT_DOMAIN = "domain";
 const CAT_ATTESTATION = "attestation";
 const CAT_INVITE = "invite";
+// Group membership is self-asserted and MUST NOT buy anti-sybil score; its own
+// category exists (so the boot drift-check's category reference resolves) but
+// caps at 0 and every row weighs 0 — a farmed roster earns nothing.
+const CAT_GROUP = "group";
 
 // The ten `age-over-N` types are fully uniform (sybil 25, recovery 60 = IAL2,
 // human-attribute, no solo). Generate from the shared registry's threshold list
@@ -167,6 +171,11 @@ const WEIGHT_TABLE: readonly WeightTuple[] = [
 
   // invite (recovery 0 = IAL0; proves nothing about a person)
   ["invite-code", "*", 12, 0, CAT_INVITE],
+
+  // group membership: HARD sybilWeight 0 (self-asserted; a founder must not farm
+  // score by adding sock-puppet members). recovery 0 too — proves nothing about
+  // a person, and it is not recovery-eligible. Mirrors invite-code's IAL0 stance.
+  ["group-membership", "*", 0, 0, CAT_GROUP],
 ];
 
 // `allowSoloRecovery` is true ONLY for tlsn-attestation (its recovery weight
@@ -204,6 +213,9 @@ export const SYBIL_CATEGORY_SEED: readonly SybilCategorySeedRow[] = [
   { name: CAT_DOMAIN, cap: 20 },
   { name: CAT_ATTESTATION, cap: 50 },
   { name: CAT_INVITE, cap: 15 },
+  // Caps at 0: the group category can never contribute to the sybil score,
+  // whatever weight rows land in it.
+  { name: CAT_GROUP, cap: 0 },
 ];
 
 // Bucket cutoffs singleton (impl brief §2.4).
@@ -223,6 +235,32 @@ export const RECOVERY_CONFIG_SEED = {
   id: "singleton",
   threshold: 100,
 } as const;
+
+// Group founding knobs singleton (docs/groups-design.md). Seeded like the other
+// singletons; the founding action reads them via `loadGroupConfig` rather than
+// hardcoding, so an operator can retune the gate without a deploy.
+export const GROUP_CONFIG_SEED = {
+  id: "singleton",
+  foundingMinBucket: 2,
+  maxOwnedGroups: 3,
+} as const;
+
+export interface GroupConfigValues {
+  foundingMinBucket: number;
+  maxOwnedGroups: number;
+}
+
+// Live group config, read fresh (the gate is coarse and infrequent — no cache
+// needed). Fails CLOSED: an absent singleton throws so the founding action can
+// block rather than silently fall back to a default bucket floor.
+export async function loadGroupConfig(): Promise<GroupConfigValues> {
+  const cfg = await prisma.groupConfig.findUnique({ where: { id: "singleton" } });
+  if (!cfg)
+    throw new Error(
+      "GroupConfig singleton row is absent: group config is not seeded. Failing closed.",
+    );
+  return { foundingMinBucket: cfg.foundingMinBucket, maxOwnedGroups: cfg.maxOwnedGroups };
+}
 
 // A missing config row mid-recovery must fail closed (throw), not silently
 // return 0 — see impl brief §3, §5. The caller in U3 catches the throw

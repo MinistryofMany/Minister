@@ -128,6 +128,12 @@ const EXPECTED: Record<string, Expected> = {
     sample: { kind: "pgp", fingerprint: "AABBCCDD", algorithm: "ed25519" },
     strict: true,
   },
+  "group-membership": {
+    credentialType: "MinisterGroupMembershipCredential",
+    sybilResistance: "none",
+    sample: { group: "acme", role: "member", groupId: "grp_abc123" },
+    strict: true,
+  },
   ...Object.fromEntries(
     AGE_THRESHOLDS.map((t) => [
       `age-over-${t}`,

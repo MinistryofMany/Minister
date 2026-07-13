@@ -3,6 +3,7 @@ import { buildPairwiseUserDid, reMintVc } from "@minister/vc";
 import { Prisma } from "@/generated/prisma";
 import { audit } from "@/lib/audit";
 import { sanitizeDisclosedClaims } from "@/lib/disclosure-claims";
+import { GROUP_MEMBERSHIP_BADGE_TYPE } from "@/lib/group-roles";
 import { getIssuer } from "@/lib/issuer";
 import { assertNullifierDriftConsistent, NullifierDriftError } from "@/lib/nullifier/drift-cache";
 import { nullifierService } from "@/lib/nullifier";
@@ -244,7 +245,16 @@ export async function loadApprovedBadgeJwts(
     // `nullifierRef` (crypto-core M5): opaque ledger handle for badges anchored
     // to a scarce credential. Non-null → this badge discloses a per-RP Sybil
     // nullifier bound under the signature; null → discloses exactly as before.
-    select: { id: true, vcJwt: true, expiresAt: true, nullifierRef: true },
+    // `type`/`attributes`: needed to spot a `group-membership` badge and read its
+    // `groupId` for the live revocation re-check below.
+    select: {
+      id: true,
+      vcJwt: true,
+      expiresAt: true,
+      nullifierRef: true,
+      type: true,
+      attributes: true,
+    },
   });
   if (rows.length === 0) return [];
 
@@ -299,6 +309,46 @@ export async function loadApprovedBadgeJwts(
           nullifier = nrp;
         }
 
+        // Group membership is REVOCABLE via the live GroupMembership row (the
+        // source of truth). Re-check it here at every disclosure: NO row
+        // (member removed / group deleted) → OMIT this badge; a CHANGED role →
+        // disclose the current role, overriding the value baked into the stored
+        // VC at issuance. This governs what Minister MINTS. Invalidating a VC a
+        // relying party ALREADY holds mid-lifetime is a separate credential-
+        // status upgrade (the StatusList2021 seam noted on GroupMembership),
+        // deliberately NOT a short-TTL forced re-disclosure. §2.6: this read is
+        // outside any transaction.
+        let claimSanitizer = sanitizeDisclosedClaims;
+        if (row.type === GROUP_MEMBERSHIP_BADGE_TYPE) {
+          const attrs =
+            row.attributes !== null && typeof row.attributes === "object"
+              ? (row.attributes as Record<string, unknown>)
+              : {};
+          const groupId = typeof attrs.groupId === "string" ? attrs.groupId : null;
+          if (groupId === null) {
+            // Malformed group badge (no groupId) — fail closed via the per-badge
+            // catch below (omit + audit), never disclose an unpinnable claim.
+            throw new Error("group-membership badge is missing its groupId attribute");
+          }
+          const membership = await prisma.groupMembership.findUnique({
+            where: { groupId_userId: { groupId, userId } },
+            select: { role: true },
+          });
+          if (!membership) {
+            await safeAudit(userId, "group.membership_disclosure_omitted", {
+              badgeId: row.id,
+              clientId,
+              groupId,
+            });
+            return null;
+          }
+          const liveRole = membership.role;
+          claimSanitizer = (claims, vcType) => ({
+            ...sanitizeDisclosedClaims(claims, vcType),
+            role: liveRole,
+          });
+        }
+
         return await reMintVc(issuer, row.vcJwt, {
           subjectId,
           // Route through the Phase 7 seam (async) so the per-RP jti can be
@@ -308,8 +358,9 @@ export async function loadApprovedBadgeJwts(
           maxExpiresAt: row.expiresAt,
           disclosureTtlSeconds: BADGE_DISCLOSURE_TTL_SECONDS,
           // Strip any legacy claim the current schema has since removed (e.g. the
-          // pre-Phase-1 oauth-account Sybil anchor) before re-signing.
-          sanitizeClaims: sanitizeDisclosedClaims,
+          // pre-Phase-1 oauth-account Sybil anchor) before re-signing. For a
+          // group badge this ALSO overrides `role` with the live value.
+          sanitizeClaims: claimSanitizer,
           ...(nullifier !== undefined ? { nullifier } : {}),
         });
       } catch (err) {

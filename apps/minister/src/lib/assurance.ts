@@ -98,6 +98,9 @@ const RECOVERY_WEIGHT_BY_TYPE: Record<string, number> = {
   "email-domain": 15,
   "email-exact": 15,
   "invite-code": 0,
+  // Self-asserted group membership proves nothing about a person and is not
+  // recovery-eligible; weight 0 keeps it out of the recovery math entirely.
+  "group-membership": 0,
 };
 
 // Recovery weight a live re-proof of this badge contributes toward the

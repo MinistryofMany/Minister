@@ -36,8 +36,15 @@ export async function issueBadge(args: {
   // runtime AFTER it has registered the anchor and DISCARDED it. null for
   // badges with no nullifier. Persisted on Badge.nullifierRef.
   nullifierRef?: string | null;
+  // Optional caller-provided transaction client. When set, the insert/sign/
+  // write-back run INSIDE the caller's transaction instead of opening a new one,
+  // so a badge can be minted atomically alongside other writes (e.g. group
+  // creation: Group + owner GroupMembership + owner badge in one transaction).
+  // Prisma has no nested interactive transactions, so we must reuse it rather
+  // than open our own. Omitted = self-contained (the historical behavior).
+  tx?: Prisma.TransactionClient;
 }): Promise<string> {
-  const { userId, pluginId, badge, dedupeKey, nullifierRef } = args;
+  const { userId, pluginId, badge, dedupeKey, nullifierRef, tx: externalTx } = args;
 
   const meta = BADGE_TYPES[badge.type];
   if (!meta) {
@@ -48,7 +55,7 @@ export async function issueBadge(args: {
   const issuer = await getIssuer();
   const subjectDid = buildUserDid(issuer.domain, userId);
 
-  return prisma.$transaction(async (tx) => {
+  const run = async (tx: Prisma.TransactionClient): Promise<string> => {
     const created = await tx.badge.create({
       data: {
         userId,
@@ -100,5 +107,7 @@ export async function issueBadge(args: {
     });
 
     return created.id;
-  });
+  };
+
+  return externalTx ? run(externalTx) : prisma.$transaction(run);
 }

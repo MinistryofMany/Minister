@@ -79,9 +79,9 @@ model User {
   sessions       Session[]
   authenticators Authenticator[]
 
-  badges            Badge[]
-  eligibilities     Eligibility[]
-  shareLinks        ShareLink[]
+  badges               Badge[]
+  eligibilities        Eligibility[]
+  shareLinks           ShareLink[]
   oidcClients          OidcClient[]
   oidcAccessTokens     OidcAccessToken[]
   oidcGrants           OidcGrant[]
@@ -98,6 +98,11 @@ model User {
   // An uploaded avatar image, stored as a Postgres blob in its OWN table so a
   // large photo never bloats the hot User-row reads (session, profile, /u).
   userAvatar UserAvatar?
+
+  // Groups feature (v1). A user can OWN groups (each also gives them an
+  // owner-role membership row) and hold memberships in others' groups.
+  ownedGroups      Group[]           @relation("GroupOwner")
+  groupMemberships GroupMembership[]
 }
 
 // A user-uploaded avatar photo, held as a bytea blob. Deliberately a SEPARATE
@@ -110,7 +115,7 @@ model User {
 // generated/gravatar/link avatar the row is deleted, so its presence means "this
 // user currently uses an uploaded photo".
 model UserAvatar {
-  userId String @id
+  userId      String   @id
   // OPAQUE, unguessable public handle the serve route (and the disclosed
   // `picture` claim) key on — NEVER the userId. Serving under the raw userId
   // would leak Minister's global account id to any RP granted the avatar claim
@@ -750,6 +755,74 @@ model SybilBucketConfig {
   bucket3MinCats Int
   bucket4MinCats Int
   updatedAt      DateTime @updatedAt
+}
+
+// ---------------------------------------------------------------------------
+// Groups feature (v1) — see docs/groups-design.md.
+//
+// Belonging to a group is expressed as a revocable `group-membership` badge, so
+// it rides the existing badge + disclosure + policy-gating machinery. The
+// GroupMembership row is the SOURCE OF TRUTH: the OIDC disclosure path re-checks
+// the live row before re-minting a group badge (no row -> omitted; role changed
+// -> re-minted with the new role), which is how removal/role-change take effect.
+// ---------------------------------------------------------------------------
+
+model Group {
+  id          String  @id @default(cuid())
+  // Canonical [a-z0-9] (internal hyphens) slug — the `group` badge claim RPs
+  // gate on. Immutable in v1 (renaming it would strand every issued badge's
+  // claim and gate); the human-facing name is `displayName`.
+  slug        String  @unique
+  displayName String
+  description String?
+  ownerUserId String
+  owner       User    @relation("GroupOwner", fields: [ownerUserId], references: [id])
+  // false => rendered as an UNVERIFIED group (free founding). true is set only
+  // out-of-band (admin grant now; a paid/org-proof flow later).
+  verified    Boolean @default(false)
+
+  createdAt   DateTime          @default(now())
+  memberships GroupMembership[]
+
+  @@index([ownerUserId])
+}
+
+model GroupMembership {
+  id       String  @id @default(cuid())
+  groupId  String
+  group    Group   @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  userId   String
+  user     User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role     String // "owner" | "admin" | "member"
+  // Opt-in to the (v2, deferred) public directory; default private.
+  isPublic Boolean @default(false)
+  // Acting admin/owner userId that added this member, for audit.
+  addedBy  String?
+
+  createdAt DateTime @default(now())
+
+  // revocation: status-list seam. Removal is authoritative at MINT time — the
+  // disclosure path (oidc-claims.loadApprovedBadgeJwts) re-checks this row and
+  // omits/updates the badge before re-minting. Invalidating a VC a relying party
+  // ALREADY holds mid-lifetime is a separate credential-status upgrade (a W3C
+  // Bitstring StatusList2021 that would benefit every revocable badge), planned
+  // as a cross-badge follow-up; a per-membership status index would attach here.
+
+  @@unique([groupId, userId])
+  @@index([userId])
+}
+
+// Singleton (id = "singleton"). Tunable knobs for the group founding gate, kept
+// out of the action so an operator can adjust them without a deploy (mirrors the
+// sybil/recovery config singletons; seeded by scripts/seed-sybil-config.ts).
+model GroupConfig {
+  id                String   @id @default("singleton")
+  // Minimum anti-sybil bucket (0-4) required to FOUND a group. Seed 2.
+  foundingMinBucket Int
+  // Max groups a single user may own before founding is blocked. Seed 3; later
+  // tiers raise this.
+  maxOwnedGroups    Int
+  updatedAt         DateTime @updatedAt
 }
 
 // Singleton (id = "singleton"). Recovery threshold with delayed-apply. The live
