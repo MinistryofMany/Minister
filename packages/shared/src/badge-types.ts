@@ -45,6 +45,15 @@ export interface BadgeTypeMeta<TClaims = unknown> {
   schema: z.ZodType<TClaims>;
   // REQUIRED for every registered type — a builder hits no holes.
   sybilResistance: SybilResistance;
+  // Whether a badge of this type can be revoked AFTER disclosure via a Bitstring
+  // Status List (docs/groups-revocation-design.md). true => issuance stamps a
+  // Badge.statusAnchor and disclosure stamps a per-RP `credentialStatus`; the RP
+  // SDK checks the published list and drops derived entitlements when the bit
+  // flips. false (default) => the disclosed fact is prove-once (no anchor, no
+  // status). Optional so existing entries read `false` without a per-row edit.
+  // MIRROR: the `revocable` flag is transcribed into @minister/client's badge
+  // registry; the drift-check carries it.
+  revocable?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -486,6 +495,9 @@ export const BADGE_TYPES: Record<string, BadgeTypeMeta> = {
     // the honest claim; the zero contribution is enforced by the sybilWeight-0
     // BadgeWeight seed row. See docs/groups-design.md.
     sybilResistance: "none",
+    // The one revocable type today: kicking a member must reach entitlements RPs
+    // already derived from a disclosure (docs/groups-revocation-design.md).
+    revocable: true,
   },
 
   ...Object.fromEntries(AGE_THRESHOLDS.map((t) => [`age-over-${t}`, ageOverEntry(t)] as const)),

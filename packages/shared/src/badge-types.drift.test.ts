@@ -28,6 +28,9 @@ interface Expected {
   sample: Record<string, unknown>;
   // z.object(...).strict() rejects unknown keys; plain z.object strips them.
   strict: boolean;
+  // Revocable-after-disclosure via a Bitstring Status List. Omitted => false.
+  // Only group-membership is revocable today (docs/groups-revocation-design.md).
+  revocable?: boolean;
 }
 
 const AGE_THRESHOLDS = [16, 18, 21, 25, 30, 35, 40, 45, 55, 65] as const;
@@ -133,6 +136,7 @@ const EXPECTED: Record<string, Expected> = {
     sybilResistance: "none",
     sample: { group: "acme", role: "member", groupId: "grp_abc123" },
     strict: true,
+    revocable: true,
   },
   ...Object.fromEntries(
     AGE_THRESHOLDS.map((t) => [
@@ -167,6 +171,11 @@ describe("badge registry drift (frozen contract, provider side)", () => {
         const def = BADGE_TYPES[slug];
         expect(def, `registry is missing badge type ${slug}`).toBeDefined();
         expect(def!.sybilResistance).toBe(exp.sybilResistance);
+      });
+
+      it("matches revocable", () => {
+        const def = BADGE_TYPES[slug];
+        expect(def!.revocable ?? false).toBe(exp.revocable ?? false);
       });
 
       it("accepts the canonical sample claims", () => {

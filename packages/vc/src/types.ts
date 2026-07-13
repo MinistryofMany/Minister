@@ -54,10 +54,30 @@ export interface CredentialSubject {
   [claim: string]: unknown;
 }
 
+// W3C Bitstring Status List v1.0 `credentialStatus` entry
+// (docs/groups-revocation-design.md §5.4). Lives at the `vc` level (sibling of
+// credentialSubject), NOT inside credentialSubject, so the strict per-type claim
+// schemas are untouched and old SDKs (which read only vc.type /
+// vc.credentialSubject) ignore it cleanly. Per-(fact, RP): allocated randomly per
+// RP, unjoinable across RPs.
+export interface CredentialStatusEntry {
+  // "<statusListCredential>#<statusListIndex>"
+  id: string;
+  type: "BitstringStatusListEntry";
+  statusPurpose: "revocation";
+  // Base-10 string per spec.
+  statusListIndex: string;
+  // The list URL (also the list credential's `sub`).
+  statusListCredential: string;
+}
+
 export interface VerifiableCredentialClaim {
   "@context": string[];
   type: string[];
   credentialSubject: CredentialSubject;
+  // Present only on a re-minted disclosure of a revocable badge; stored VCs never
+  // carry it (reMintVc rebuilds `vc` from scratch, so any stored value is dropped).
+  credentialStatus?: CredentialStatusEntry;
 }
 
 export interface VerifiedCredential {

@@ -1,7 +1,13 @@
 import { compactVerify } from "jose";
 
 import { signCompactJwt } from "./signer";
-import type { CredentialSubject, IssueOptions, Issuer, VerifiableCredentialClaim } from "./types";
+import type {
+  CredentialStatusEntry,
+  CredentialSubject,
+  IssueOptions,
+  Issuer,
+  VerifiableCredentialClaim,
+} from "./types";
 
 const VC_CONTEXT = "https://www.w3.org/ns/credentials/v2";
 const VC_BASE_TYPE = "VerifiableCredential";
@@ -184,6 +190,13 @@ export interface ReMintOptions {
   // same-named stored claim is stripped regardless of this option, so a stored
   // VC can never smuggle a nullifier in.
   nullifier?: string;
+  // Per-RP W3C BitstringStatusListEntry (revocation, §5.4), stamped at the `vc`
+  // level (sibling of credentialSubject). Omitted for non-revocable badges. Any
+  // `credentialStatus` on the STORED VC is always dropped (reMintVc rebuilds `vc`
+  // from scratch), so only this caller-supplied per-RP entry can ever reach a
+  // disclosure — a stored row can never smuggle a cross-RP status pointer in,
+  // matching the reserved subject/jti discipline.
+  credentialStatus?: CredentialStatusEntry;
 }
 
 // Re-mint a stored Minister VC as a fresh, per-relying-party credential at
@@ -304,10 +317,17 @@ export async function reMintVc(
     [ISSUANCE_MONTH_CLAIM]: issuanceMonthOf(decoded.iat),
     ...(options.nullifier !== undefined ? { [NULLIFIER_CLAIM]: options.nullifier } : {}),
   };
+  // `vc` is rebuilt from scratch — the stored VC's own `credentialStatus` (if
+  // any) is never copied, so a DB-write attacker or a future import path cannot
+  // smuggle a status pointer into a disclosure. Only the caller-supplied per-RP
+  // entry is stamped, mirroring the reserved-claim strip-then-stamp discipline.
   const vc: VerifiableCredentialClaim = {
     "@context": original["@context"] ?? [VC_CONTEXT],
     type: original.type,
     credentialSubject,
+    ...(options.credentialStatus !== undefined
+      ? { credentialStatus: options.credentialStatus }
+      : {}),
   };
 
   // Presentation-shaped exp, never extending lifetime:

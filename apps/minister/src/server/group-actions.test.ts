@@ -109,6 +109,11 @@ const h = vi.hoisted(() => {
           return m;
         },
       ),
+      findMany: vi.fn(async (args: { where: { groupId: string } }) => {
+        return store.memberships
+          .filter((m) => m.groupId === args.where.groupId)
+          .map((m) => ({ id: m.id }));
+      }),
     },
     user: {
       findUnique: vi.fn(async (args: { where: { id: string } }) => {
@@ -137,6 +142,10 @@ vi.mock("@/server/issue-badge", () => ({
       return "badge_id";
     },
   ),
+}));
+vi.mock("@/lib/status-list", () => ({
+  groupMembershipAnchor: (membershipId: string) => `gm:${membershipId}`,
+  revokeStatusAnchor: vi.fn(async () => 0),
 }));
 vi.mock("@/lib/user-sybil-bucket", () => ({
   computeUserSybilBucket: vi.fn(async () => h.cfg.bucket),

@@ -4,6 +4,7 @@ import { buildUserDid, issueVc } from "@minister/vc";
 import type { Prisma } from "@/generated/prisma";
 import { getIssuer } from "@/lib/issuer";
 import { prisma } from "@/lib/prisma";
+import { genericBadgeAnchor } from "@/lib/status-list";
 
 export interface BadgeToIssue {
   type: string;
@@ -43,6 +44,13 @@ export async function issueBadge(args: {
   // Prisma has no nested interactive transactions, so we must reuse it rather
   // than open our own. Omitted = self-contained (the historical behavior).
   tx?: Prisma.TransactionClient;
+  // Revocation status anchor (docs/groups-revocation-design.md §5.1). Set for a
+  // revocable badge whose anchor is a FACT known to the caller before the badge
+  // row exists — e.g. a group-membership badge, anchored on its GroupMembership
+  // row ("gm:<membershipId>"). Omitted for a revocable type whose anchor is the
+  // badge itself: this path then derives "badge:<badgeId>" after insert. null/
+  // omitted on a non-revocable type => no anchor (the common case).
+  statusAnchor?: string | null;
 }): Promise<string> {
   const { userId, pluginId, badge, dedupeKey, nullifierRef, tx: externalTx } = args;
 
@@ -51,9 +59,16 @@ export async function issueBadge(args: {
     throw new Error(`Unknown badge type: ${badge.type}`);
   }
   const claims = meta.schema.parse(badge.claims);
+  const revocable = meta.revocable ?? false;
 
   const issuer = await getIssuer();
   const subjectDid = buildUserDid(issuer.domain, userId);
+
+  // For a revocable type, resolve the anchor: an explicit caller anchor (the
+  // group-membership "gm:<membershipId>" case) wins; otherwise the badge id is
+  // the fact ("badge:<badgeId>"), stamped after insert once the id exists. A
+  // non-revocable type never gets an anchor.
+  const explicitAnchor = revocable ? (args.statusAnchor ?? null) : null;
 
   const run = async (tx: Prisma.TransactionClient): Promise<string> => {
     const created = await tx.badge.create({
@@ -68,15 +83,25 @@ export async function issueBadge(args: {
         pluginId,
         dedupeKey: dedupeKey ?? null,
         nullifierRef: nullifierRef ?? null,
+        statusAnchor: explicitAnchor,
       },
     });
+
+    const statusAnchor = revocable ? (explicitAnchor ?? genericBadgeAnchor(created.id)) : null;
 
     const vcJwt = await issueVc(issuer, badge.type, subjectDid, claims as Record<string, unknown>, {
       jti: created.id,
       expiresIn: "1y",
     });
 
-    await tx.badge.update({ where: { id: created.id }, data: { vcJwt } });
+    await tx.badge.update({
+      where: { id: created.id },
+      data: {
+        vcJwt,
+        // Backfill the derived generic anchor when no explicit one was supplied.
+        ...(statusAnchor !== explicitAnchor ? { statusAnchor } : {}),
+      },
+    });
 
     if (badge.eligibilities && badge.eligibilities.length > 0) {
       for (const e of badge.eligibilities) {

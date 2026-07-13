@@ -18,6 +18,7 @@ const h = vi.hoisted(() => ({
   membershipFindUnique: vi.fn(),
   reMintVc: vi.fn(),
   audit: vi.fn(),
+  allocateStatusEntry: vi.fn(),
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -58,6 +59,16 @@ vi.mock("@/lib/nullifier/drift-cache", () => ({
   NullifierDriftError: class NullifierDriftError extends Error {},
 }));
 vi.mock("@/lib/audit", () => ({ audit: h.audit }));
+vi.mock("@/lib/status-list", () => ({
+  allocateStatusEntry: h.allocateStatusEntry,
+  credentialStatusFor: (listId: string, bitIndex: number) => ({
+    id: `https://ministry.id/status/${listId}#${bitIndex}`,
+    type: "BitstringStatusListEntry",
+    statusPurpose: "revocation",
+    statusListIndex: String(bitIndex),
+    statusListCredential: `https://ministry.id/status/${listId}`,
+  }),
+}));
 
 import { loadApprovedBadgeJwts } from "./oidc-claims";
 
@@ -133,6 +144,39 @@ describe("group-membership disclosure re-check", () => {
       role: "admin",
       groupId: "grp-1",
     });
+  });
+
+  it("allocates a per-RP status handle and stamps credentialStatus for a revocable badge", async () => {
+    h.findMany.mockResolvedValue([{ ...groupBadgeRow("member"), statusAnchor: "gm:mem-1" }]);
+    h.membershipFindUnique.mockResolvedValue({ role: "member" });
+    h.allocateStatusEntry.mockResolvedValue({ listId: "list_x", bitIndex: 77 });
+
+    const out = await loadApprovedBadgeJwts(USER, CLIENT, SUB, ["badge-1"]);
+
+    expect(out).toEqual(["reminted-vc"]);
+    // Per-RP allocation keyed on the FACT anchor + the requesting client.
+    expect(h.allocateStatusEntry).toHaveBeenCalledWith({
+      statusAnchor: "gm:mem-1",
+      clientId: CLIENT,
+    });
+    // The disclosed VC carries the per-RP credentialStatus.
+    expect(h.reMintVc.mock.calls[0]![2].credentialStatus).toEqual({
+      id: "https://ministry.id/status/list_x#77",
+      type: "BitstringStatusListEntry",
+      statusPurpose: "revocation",
+      statusListIndex: "77",
+      statusListCredential: "https://ministry.id/status/list_x",
+    });
+  });
+
+  it("does NOT allocate or stamp status for a non-revocable badge (no statusAnchor)", async () => {
+    h.findMany.mockResolvedValue([groupBadgeRow("member")]); // no statusAnchor field
+    h.membershipFindUnique.mockResolvedValue({ role: "member" });
+
+    await loadApprovedBadgeJwts(USER, CLIENT, SUB, ["badge-1"]);
+
+    expect(h.allocateStatusEntry).not.toHaveBeenCalled();
+    expect(h.reMintVc.mock.calls[0]![2].credentialStatus).toBeUndefined();
   });
 
   it("fails closed (omit) on a malformed group badge with no groupId", async () => {

@@ -9,6 +9,7 @@ import { GROUP_MEMBERSHIP_BADGE_TYPE, type GroupRole } from "@/lib/group-roles";
 import { prisma } from "@/lib/prisma";
 import { isReservedGroupSlug } from "@/lib/reserved-slugs";
 import { requireSession } from "@/lib/session";
+import { groupMembershipAnchor, revokeStatusAnchor } from "@/lib/status-list";
 import { loadGroupConfig } from "@/lib/sybil-config";
 import { computeUserSybilBucket } from "@/lib/user-sybil-bucket";
 import { type BadgeToIssue, issueBadge } from "@/server/issue-badge";
@@ -151,13 +152,16 @@ export async function createGroup(input: unknown): Promise<CreateGroupResult> {
           verified: false,
         },
       });
-      await tx.groupMembership.create({
+      const membership = await tx.groupMembership.create({
         data: { groupId: group.id, userId, role: "owner", addedBy: userId },
       });
       await issueBadge({
         userId,
         pluginId: null,
         badge: groupMembershipBadge(group.slug, "owner", group.id),
+        // Anchor the revocable badge on the membership FACT (§5.1), so a later
+        // removal flips the one bit every RP watches.
+        statusAnchor: groupMembershipAnchor(membership.id),
         tx,
       });
       await audit(userId, "group.created", { groupId: group.id, slug: group.slug }, tx);
@@ -191,6 +195,24 @@ export async function deleteGroup(input: unknown): Promise<GroupActionResult> {
   try {
     await requireGroupRole(groupId, session.user.id, "owner");
     await prisma.$transaction(async (tx) => {
+      // Revoke every member's badge BEFORE the cascade deletes the membership
+      // rows (§7.1): the anchor is "gm:<membershipId>", so we must read the ids
+      // while they still exist. This reaches entitlements RPs already derived; the
+      // cascade only stops NEW disclosures. BadgeStatusEntry is keyed on the
+      // anchor STRING (no FK to GroupMembership), so the queued bits survive the
+      // cascade and stay set forever (monotonic).
+      const memberships = await tx.groupMembership.findMany({
+        where: { groupId },
+        select: { id: true },
+      });
+      for (const m of memberships) {
+        await revokeStatusAnchor({
+          anchor: groupMembershipAnchor(m.id),
+          reason: "group.deleted",
+          actorUserId: session.user.id,
+          client: tx,
+        });
+      }
       await tx.group.delete({ where: { id: groupId } });
       await audit(session.user.id, "group.deleted", { groupId }, tx);
     });
@@ -279,13 +301,14 @@ export async function addMember(input: unknown): Promise<GroupActionResult> {
     if (already) return { ok: false, error: "That user is already a member of this group." };
 
     await prisma.$transaction(async (tx) => {
-      await tx.groupMembership.create({
+      const membership = await tx.groupMembership.create({
         data: { groupId, userId: targetUserId, role, addedBy: actorId },
       });
       await issueBadge({
         userId: targetUserId,
         pluginId: null,
         badge: groupMembershipBadge(ctx.group.slug, role, groupId),
+        statusAnchor: groupMembershipAnchor(membership.id),
         tx,
       });
       await audit(actorId, "group.member_added", { groupId, targetUserId, role }, tx);
@@ -315,7 +338,7 @@ export async function removeMember(input: unknown): Promise<GroupActionResult> {
     const ctx = await requireGroupRole(groupId, actorId, "admin");
     const target = await prisma.groupMembership.findUnique({
       where: { groupId_userId: { groupId, userId: targetUserId } },
-      select: { role: true },
+      select: { id: true, role: true },
     });
     if (!target) return { ok: false, error: "That user is not a member of this group." };
     const targetRole = target.role as GroupRole;
@@ -333,6 +356,16 @@ export async function removeMember(input: unknown): Promise<GroupActionResult> {
     await prisma.$transaction(async (tx) => {
       await tx.groupMembership.delete({
         where: { groupId_userId: { groupId, userId: targetUserId } },
+      });
+      // Layer 2: reach the entitlement RPs already derived from a pre-kick
+      // disclosure. Layer 1 (the disclosure-time live-row re-check) already stops
+      // NEW disclosures once the row is gone. Same tx so the row delete and the
+      // bit-queue commit together.
+      await revokeStatusAnchor({
+        anchor: groupMembershipAnchor(target.id),
+        reason: "group.member_removed",
+        actorUserId: actorId,
+        client: tx,
       });
       await audit(actorId, "group.member_removed", { groupId, targetUserId, targetRole }, tx);
     });

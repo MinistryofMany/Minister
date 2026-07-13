@@ -723,4 +723,86 @@ describe("reMintVc", () => {
     const { id: _idb, ...claimsB } = b.vc.credentialSubject;
     expect(claimsA).toEqual(claimsB);
   });
+
+  // Revocation credentialStatus (§5.4): stamped at the vc level, sibling of
+  // credentialSubject; a stored VC can never smuggle one in (strip-then-stamp).
+  describe("credentialStatus", () => {
+    const ENTRY = {
+      id: "https://ministry.id/status/list_1#42",
+      type: "BitstringStatusListEntry" as const,
+      statusPurpose: "revocation" as const,
+      statusListIndex: "42",
+      statusListCredential: "https://ministry.id/status/list_1",
+    };
+
+    it("stamps a supplied credentialStatus at the vc level, not inside credentialSubject", async () => {
+      const original = await signOriginal(issuer);
+      const jwt = await reMintVc(issuer, original, {
+        subjectId: buildPairwiseUserDid(issuer.domain, "sub_1"),
+        jti: "jti_1",
+        credentialStatus: ENTRY,
+      });
+      const remint = await verifyVc(issuer, jwt);
+      expect(remint.vc.credentialStatus).toEqual(ENTRY);
+      // Never leaks into the strict per-type claim set.
+      expect(remint.vc.credentialSubject).not.toHaveProperty("credentialStatus");
+    });
+
+    it("omits credentialStatus entirely for a non-revocable disclosure", async () => {
+      const original = await signOriginal(issuer);
+      const jwt = await reMintVc(issuer, original, {
+        subjectId: buildPairwiseUserDid(issuer.domain, "sub_1"),
+        jti: "jti_1",
+      });
+      const remint = await verifyVc(issuer, jwt);
+      expect(remint.vc.credentialStatus).toBeUndefined();
+    });
+
+    it("STRIPS a credentialStatus smuggled onto the stored VC (rebuilds vc from scratch)", async () => {
+      // A stored VC that hostilely carries a foreign credentialStatus.
+      const nowSec = Math.floor(Date.now() / 1000);
+      const subjectDid = buildUserDid(issuer.domain, "user_1");
+      const original = await signJws(issuer, {
+        vc: {
+          "@context": ["https://www.w3.org/ns/credentials/v2"],
+          type: ["VerifiableCredential", "MinisterEmailDomainCredential"],
+          credentialSubject: { id: subjectDid, domain: "example.com" },
+          credentialStatus: {
+            id: "https://evil.example/status/x#1",
+            type: "BitstringStatusListEntry",
+            statusPurpose: "revocation",
+            statusListIndex: "1",
+            statusListCredential: "https://evil.example/status/x",
+          },
+        },
+        iss: issuer.did,
+        sub: subjectDid,
+        iat: nowSec,
+        jti: "badge_1",
+        exp: nowSec + ONE_YEAR_SECONDS,
+      });
+
+      // Re-mint WITHOUT supplying a credentialStatus: the smuggled one must vanish.
+      const stripped = await verifyVc(
+        issuer,
+        await reMintVc(issuer, original, {
+          subjectId: buildPairwiseUserDid(issuer.domain, "sub_1"),
+          jti: "jti_1",
+        }),
+      );
+      expect(stripped.vc.credentialStatus).toBeUndefined();
+
+      // Re-mint WITH a caller entry: only the caller's entry survives, never the
+      // stored (foreign) one.
+      const stamped = await verifyVc(
+        issuer,
+        await reMintVc(issuer, original, {
+          subjectId: buildPairwiseUserDid(issuer.domain, "sub_1"),
+          jti: "jti_1",
+          credentialStatus: ENTRY,
+        }),
+      );
+      expect(stamped.vc.credentialStatus).toEqual(ENTRY);
+    });
+  });
 });

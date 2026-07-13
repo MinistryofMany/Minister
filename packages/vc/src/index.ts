@@ -2,6 +2,7 @@ export type {
   Issuer,
   IssuerSigner,
   TokenSigningKey,
+  CredentialStatusEntry,
   CredentialSubject,
   VerifiableCredentialClaim,
   VerifiedCredential,

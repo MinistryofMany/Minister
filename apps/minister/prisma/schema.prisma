@@ -268,6 +268,16 @@ model Badge {
   // string. See src/lib/nullifier/.
   nullifierRef String?
 
+  // Status anchor (revocation, docs/groups-revocation-design.md §5.1). The
+  // revocable FACT underneath the badge, NOT the badge row: "gm:<membershipId>"
+  // for a group-membership badge, "badge:<badgeId>" for a generic revocable type.
+  // null = non-revocable (the common case). Keyed on the fact so a 1-year renewal
+  // (new Badge row, same fact) inherits the same per-RP (list, index) handles and
+  // a kick still flips the one bit every RP watches. Ministry-internal: it never
+  // leaves Minister — what a disclosed VC carries is the per-RP (listId, bitIndex)
+  // allocated from it (BadgeStatusEntry), never this anchor.
+  statusAnchor String?
+
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, type])
@@ -823,6 +833,64 @@ model GroupConfig {
   // tiers raise this.
   maxOwnedGroups    Int
   updatedAt         DateTime @updatedAt
+}
+
+// ---------------------------------------------------------------------------
+// Badge revocation — per-RP Bitstring Status Lists (docs/groups-revocation-design.md).
+// A disclosed revocable badge carries a `credentialStatus` pointing at (its RP's
+// list, a randomly-assigned bit index). Ministry publishes each list as a
+// short-lived, #key-2-signed W3C BitstringStatusListCredential; kicking a member
+// flips one bit. Per-RP partitioning + per-RP random indices mean nothing is
+// joinable across RPs (§5.2/§5.3).
+// ---------------------------------------------------------------------------
+
+// One sharded bitstring for one relying party. `id` is the PUBLIC listId — an
+// opaque cuid served at /status/<id>, NOT derived from clientId (no
+// offline-guessable mapping if a secret leaks). Fixed 8,192-bit (1 KiB) shards
+// (§5.3): the KMS #key-2 RAW-sign ceiling is 4,096 bytes and a 16 Kib shard busts
+// it in the incompressible worst case. `bits` is the raw bitstring; `signedJwt`
+// is the latest pre-signed credential the GET route serves verbatim (hot path
+// does zero crypto). `version` is monotonic, bumped on EVERY republication
+// (content OR heartbeat) — the SDK's rollback high-water mark.
+model StatusList {
+  id          String   @id @default(cuid())
+  clientId    String
+  shardNo     Int
+  sizeBits    Int      @default(8192)
+  version     Int      @default(0)
+  bits        Bytes
+  // Empty ("") until the publisher first signs this shard. The GET route serves
+  // 503 for an unpublished shard; the SDK then fails open on last-known state.
+  signedJwt   String   @default("")
+  publishedAt DateTime @default(now())
+
+  @@unique([clientId, shardNo])
+}
+
+// The per-(fact, RP) revocation handle. `statusAnchor` is the Badge.statusAnchor
+// (the fact); (listId, bitIndex) is what the disclosed VC's credentialStatus
+// points at. Allocated LAZILY at first disclosure of the revocable badge to this
+// RP, with a crypto-random index (§5.2). Two @@unique invariants carry the
+// security properties: one handle per (fact, RP), and no index is EVER reused.
+model BadgeStatusEntry {
+  id           String    @id @default(cuid())
+  statusAnchor String
+  clientId     String
+  listId       String
+  bitIndex     Int
+  // Set => this fact is revoked and the bit must be published as 1. Monotonic:
+  // `revocation` status is irreversible by spec, so this is never cleared.
+  revokedAt    DateTime?
+  // Per-(event, list) jitter floor (§5.7): the publisher folds a revoked entry's
+  // bit only once `revealAfter <= now`, decorrelating one kick's publication
+  // instant across RPs. Drawn independently per row from a CSPRNG at revoke time.
+  revealAfter  DateTime?
+  createdAt    DateTime  @default(now())
+
+  @@unique([statusAnchor, clientId])
+  @@unique([listId, bitIndex])
+  // The publisher scans revoked-but-eligible entries by list.
+  @@index([listId, revokedAt])
 }
 
 // Singleton (id = "singleton"). Recovery threshold with delayed-apply. The live

@@ -17,6 +17,7 @@
     "oidc:seed-client": "tsx scripts/seed-client.ts",
     "sybil:seed": "tsx scripts/seed-sybil-config.ts",
     "stats:recompute": "tsx scripts/recompute-stats.ts",
+    "status:publish": "tsx scripts/publish-status-lists.ts",
     "admin:grant": "tsx scripts/make-admin.ts",
     "users:count": "tsx scripts/count-users.ts",
     "test": "vitest run",

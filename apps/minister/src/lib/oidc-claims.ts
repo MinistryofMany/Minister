@@ -1,4 +1,4 @@
-import { buildPairwiseUserDid, reMintVc } from "@minister/vc";
+import { buildPairwiseUserDid, type CredentialStatusEntry, reMintVc } from "@minister/vc";
 
 import { Prisma } from "@/generated/prisma";
 import { audit } from "@/lib/audit";
@@ -10,6 +10,7 @@ import { nullifierService } from "@/lib/nullifier";
 import { ACCESS_TOKEN_TTL } from "@/lib/oidc-tokens";
 import { derivePairwiseJti } from "@/lib/pairwise-backend";
 import { prisma } from "@/lib/prisma";
+import { allocateStatusEntry, credentialStatusFor } from "@/lib/status-list";
 
 // Presentation lifetime of a disclosed badge VC = the access-token TTL (1h),
 // the longest-lived artifact of the same OIDC grant. Evidence for the bound:
@@ -254,6 +255,9 @@ export async function loadApprovedBadgeJwts(
       nullifierRef: true,
       type: true,
       attributes: true,
+      // Revocation (§5.4): non-null on a revocable badge (group-membership today).
+      // Drives per-RP status allocation + the credentialStatus stamp below.
+      statusAnchor: true,
     },
   });
   if (rows.length === 0) return [];
@@ -349,6 +353,24 @@ export async function loadApprovedBadgeJwts(
           });
         }
 
+        // Revocation (§5.2/§5.4): a revocable badge (statusAnchor set) gets a
+        // per-RP (listId, bitIndex) handle allocated at FIRST disclosure to this
+        // RP (idempotent thereafter) and a `credentialStatus` stamped onto the
+        // re-minted VC. Per-RP by construction — the anchor never leaves Minister;
+        // only the RP-scoped (list, index) is disclosed, so it is NOT a cross-RP
+        // correlator (same discipline as the pairwise sub/jti). Allocation failure
+        // FAILS CLOSED via the per-badge catch: a revocable badge we cannot make
+        // revocable is omitted, never disclosed unrevocably. §2.6: this write is
+        // outside any transaction.
+        let credentialStatus: CredentialStatusEntry | undefined;
+        if (row.statusAnchor) {
+          const alloc = await allocateStatusEntry({
+            statusAnchor: row.statusAnchor,
+            clientId,
+          });
+          credentialStatus = credentialStatusFor(alloc.listId, alloc.bitIndex);
+        }
+
         return await reMintVc(issuer, row.vcJwt, {
           subjectId,
           // Route through the Phase 7 seam (async) so the per-RP jti can be
@@ -362,6 +384,7 @@ export async function loadApprovedBadgeJwts(
           // group badge this ALSO overrides `role` with the live value.
           sanitizeClaims: claimSanitizer,
           ...(nullifier !== undefined ? { nullifier } : {}),
+          ...(credentialStatus !== undefined ? { credentialStatus } : {}),
         });
       } catch (err) {
         const reason = err instanceof Error ? err.message : String(err);
