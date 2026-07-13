@@ -1,8 +1,9 @@
 # Groups — design
 
-Status: draft (v1 scope locked from the 2026-07-12 design discussion; three calls
-taken as recommended — short-TTL revocation, loose deep-link provisioning, public
-directory deferred to v2). Owner: Tyler. Implementer: Cipher.
+Status: draft. 2026-07-12: Tyler confirmed loose deep-link provisioning, public
+directory deferred to v2, and zero sybil weight. **Revocation reopened** — short-TTL
+was vetoed (re-proving UX); direction is a Bitstring Status List (see Revocation).
+Enterprise = a distinct `company-{name}` badge. Owner: Tyler. Implementer: Cipher.
 
 ## What this is
 
@@ -36,7 +37,9 @@ clearest path to revenue (paid tiers, purchased names, enterprise sub-groups).
   settled.
 - Paid tiers (pro = 20 groups, buy-a-name, enterprise sub-groups, custom
   per-group DNS). Design the **framing** now (unverified-by-default names), build
-  the tiers later.
+  the tiers later. **Enterprise / verified orgs use a distinct `company-{name}`
+  badge** (a separate type from `group-membership`) so a verified company reads
+  differently from a free community group — decided 2026-07-12.
 - FreedInk (blog) provisioning — FreedInk requests no badge scopes today and
   would need to learn badge-gating first. Deforum + Discreetly only in v1.
 
@@ -125,20 +128,25 @@ The owner has both a `Group.ownerUserId` pointer and an owner-role
 Revocation is the one genuinely new requirement — most current badges are "prove
 once, keep forever," but kicking a member must actually kill their badge.
 
-**Chosen mechanism: short TTL + re-issue on a live membership check** (rides the
-existing `reMintVc` path; no new revocation infra).
+**Revised 2026-07-12 (Tyler): NOT short-TTL.** Short-TTL was vetoed — forcing a
+re-disclosure at the RP is bad UX ("re-proving"), potentially enough to lose
+logins. Direction: a **W3C Bitstring Status List (StatusList2021)**. The membership
+VC stays long-lived (users never re-prove); each carries a `credentialStatus` index
+into a Ministry-published revocation bitstring; kicking a member flips one bit, and
+RPs check the cached bitstring on gated access. This is "a revocation list," but the
+bitstring form scales fine (a few KB gzipped for millions of entries, herd-private)
+— it answers the "a list won't scale" worry and is the standard VC-ecosystem
+answer, so it's the long-term design, not a stopgap.
 
-- The `group-membership` VC is issued with a **short `exp`** (e.g. 24h).
-- At disclosure time (the OIDC re-mint / `verifyMinisterBadges` path), Ministry
-  re-checks the live `GroupMembership` row before re-minting. No row (removed) →
-  no badge disclosed. Role changed → the re-minted VC carries the new role.
-- Net effect: removal takes effect within the TTL window at the RP, and
-  immediately for any fresh disclosure. Good enough for v1; a status-list /
-  instant-revocation upgrade is a documented future option if the window proves
-  too loose.
-- Add member → create `GroupMembership` + issue VC. Remove → delete row (next
-  disclosure discloses nothing). Role change → update row (next disclosure
-  re-mints with the new role). All audit-logged.
+- Status-list publishing (Ministry) + the status check (the `@minister/client` SDK)
+  is its **own follow-up build**, because it benefits EVERY revocable badge, not
+  just groups.
+- Until it lands: `addMember` → create `GroupMembership` + issue VC; `removeMember`
+  → delete the row (new disclosures then disclose nothing at mint time); role change
+  → update the row. All audit-logged. The "invalidate an already-held VC at the RP"
+  seam is reserved for the status list.
+- Latency target: revocation visible to RPs within their status-list cache window
+  (minutes to ~1h), with **zero** user-facing re-proving.
 
 ## Founding quota and the sybil gate
 
