@@ -134,10 +134,22 @@ export async function POST(request: Request) {
       id: true,
       displayName: true,
       avatarUrl: true,
+      // A donor auth code minted just before an account merge could otherwise
+      // redeem AFTER the merge and mint a live token on the tombstoned donor.
+      // The merge deletes the donor's codes inside its transaction; this is the
+      // second, independent closure of that race — never mint for a tombstone.
+      mergedIntoUserId: true,
     },
   });
   if (!user) {
     return tokenError("invalid_grant", "user no longer exists");
+  }
+  if (user.mergedIntoUserId !== null) {
+    await audit(null, "oidc.token.invalid_grant", {
+      clientId: client.clientId,
+      reason: "user_merged_tombstoned",
+    });
+    return tokenError("invalid_grant", "user account was merged");
   }
 
   // resolveSub consults the merge override seam (SubjectOverride) first,

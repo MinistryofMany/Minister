@@ -28,6 +28,8 @@ interface Tables {
   subjectOverride: Record<string, unknown>[];
   inviteRedemption: Record<string, unknown>[];
   oidcClient: Record<string, unknown>[];
+  oidcGrant: Record<string, unknown>[];
+  oidcAuthorizationCode: Record<string, unknown>[];
   mergeRecord: Record<string, unknown>[];
   nullifierEntry: Record<string, unknown>[];
 }
@@ -50,6 +52,8 @@ const h = vi.hoisted(() => {
     subjectOverride: [],
     inviteRedemption: [],
     oidcClient: [],
+    oidcGrant: [],
+    oidcAuthorizationCode: [],
     mergeRecord: [],
     nullifierEntry: [],
   };
@@ -137,6 +141,9 @@ const h = vi.hoisted(() => {
               for (const [k, v] of Object.entries(args.data)) {
                 if (v !== null && typeof v === "object" && "increment" in (v as object)) {
                   r[k] = (Number(r[k]) || 0) + Number((v as { increment: number }).increment);
+                } else if (v !== null && typeof v === "object" && "set" in (v as object)) {
+                  // Scalar-list update form `{ set: [...] }` (Prisma) → store the array.
+                  r[k] = (v as { set: unknown }).set;
                 } else {
                   r[k] = v;
                 }
@@ -171,6 +178,9 @@ const h = vi.hoisted(() => {
           for (const [k, v] of Object.entries(args.data)) {
             if (v !== null && typeof v === "object" && "increment" in (v as object)) {
               r[k] = (Number(r[k]) || 0) + Number((v as { increment: number }).increment);
+            } else if (v !== null && typeof v === "object" && "set" in (v as object)) {
+              // Scalar-list update form `{ set: [...] }` (Prisma) → store the array.
+              r[k] = (v as { set: unknown }).set;
             } else {
               r[k] = v;
             }
@@ -636,6 +646,95 @@ describe("mergeAccounts", () => {
     expect(summary.moved.badge).toBe(1);
   });
 
+  it("re-points a DONOR-ONLY OidcGrant wholesale to the survivor", async () => {
+    seedUsers();
+    // Survivor never used this RP → no grant collision; the donor's grant moves.
+    h.tables.oidcGrant.push({
+      id: "g_donor",
+      userId: DONOR,
+      clientId: "rp-donor-only",
+      badgeTypes: ["oauth-account"],
+      badgeIds: ["b_d"],
+      profileName: true,
+      profileAvatar: false,
+      sybilScore: true,
+    });
+
+    const summary = await mergeAccounts(SURVIVOR, DONOR);
+
+    expect(h.tables.oidcGrant).toHaveLength(1);
+    const moved = at(h.tables.oidcGrant, 0);
+    expect(moved.id).toBe("g_donor");
+    expect(moved.userId).toBe(SURVIVOR);
+    expect(moved.clientId).toBe("rp-donor-only");
+    // Snapshot records the re-pointed clientId for reversal.
+    const snap = at(h.tables.mergeRecord, 0).snapshot as MergeSnapshot;
+    expect(snap.moved.oidcGrant).toEqual(["rp-donor-only"]);
+    expect(summary.moved.oidcGrant).toBe(1);
+  });
+
+  it("UNION-ORs a SHARED-client OidcGrant into the survivor's and deletes the donor's row", async () => {
+    seedUsers();
+    h.tables.oidcGrant.push({
+      id: "g_survivor",
+      userId: SURVIVOR,
+      clientId: "rp-shared",
+      badgeTypes: ["email-domain"],
+      badgeIds: ["b_s"],
+      profileName: true,
+      profileAvatar: false,
+      sybilScore: false,
+    });
+    h.tables.oidcGrant.push({
+      id: "g_donor",
+      userId: DONOR,
+      clientId: "rp-shared",
+      badgeTypes: ["oauth-account"],
+      badgeIds: ["b_d"],
+      profileName: false,
+      profileAvatar: true,
+      sybilScore: true,
+    });
+
+    const summary = await mergeAccounts(SURVIVOR, DONOR);
+
+    // Exactly one grant remains — the survivor's, carrying the UNION of both.
+    expect(h.tables.oidcGrant).toHaveLength(1);
+    const g = at(h.tables.oidcGrant, 0);
+    expect(g.id).toBe("g_survivor");
+    expect(g.userId).toBe(SURVIVOR);
+    expect([...(g.badgeTypes as string[])].sort()).toEqual(["email-domain", "oauth-account"]);
+    expect([...(g.badgeIds as string[])].sort()).toEqual(["b_d", "b_s"]);
+    // Booleans OR together — once disclosed to the RP, they stay disclosed.
+    expect(g.profileName).toBe(true);
+    expect(g.profileAvatar).toBe(true);
+    expect(g.sybilScore).toBe(true);
+    // The donor's grant row is gone (union folded it in, not stranded).
+    expect(h.tables.oidcGrant.find((r) => r.id === "g_donor")).toBeUndefined();
+    // Nothing counted as a wholesale re-point; it went through the merge path.
+    expect(summary.moved.oidcGrant).toBe(0);
+    const snap = at(h.tables.mergeRecord, 0).snapshot as MergeSnapshot;
+    expect(snap.oidcGrantMerged).toHaveLength(1);
+    expect(snap.oidcGrantMerged![0]!.clientId).toBe("rp-shared");
+    expect(snap.oidcGrantMerged![0]!.survivorPrev.badgeTypes).toEqual(["email-domain"]);
+    expect(snap.oidcGrantMerged![0]!.donorDeleted.id).toBe("g_donor");
+  });
+
+  it("DELETES the donor's OIDC authorization codes and leaves the survivor's intact", async () => {
+    seedUsers();
+    // A donor code minted ~60s before the merge would otherwise redeem AFTER the
+    // merge and mint a token on the tombstoned donor; the merge deletes it.
+    h.tables.oidcAuthorizationCode.push({ code: "code_donor_1", userId: DONOR });
+    h.tables.oidcAuthorizationCode.push({ code: "code_donor_2", userId: DONOR });
+    h.tables.oidcAuthorizationCode.push({ code: "code_survivor", userId: SURVIVOR });
+
+    const summary = await mergeAccounts(SURVIVOR, DONOR);
+
+    const remaining = h.tables.oidcAuthorizationCode.map((c) => c.code);
+    expect(remaining).toEqual(["code_survivor"]);
+    expect(summary.moved.oidcAuthorizationCodeDeleted).toBe(2);
+  });
+
   it("refuses to merge an account into itself", async () => {
     seedUsers();
     await expect(mergeAccounts(SURVIVOR, SURVIVOR)).rejects.toThrow(/itself/);
@@ -767,6 +866,74 @@ describe("reverseMerge", () => {
     expect((restored!.eligibleAt as Date).getTime()).toBe(later.getTime());
     expect(restored!.fuzzDays).toBe(7);
     expect(restored!.source).toBe("survivor-src");
+  });
+
+  it("moves a re-pointed donor-only OidcGrant back to the donor on reverse", async () => {
+    seedUsers();
+    h.tables.oidcGrant.push({
+      id: "g_donor",
+      userId: DONOR,
+      clientId: "rp-donor-only",
+      badgeTypes: ["oauth-account"],
+      badgeIds: ["b_d"],
+      profileName: false,
+      profileAvatar: false,
+      sybilScore: false,
+    });
+
+    const summary = await mergeAccounts(SURVIVOR, DONOR);
+    expect(at(h.tables.oidcGrant, 0).userId).toBe(SURVIVOR);
+
+    const result = await reverseMerge(summary.mergeRecordId);
+    expect(result.ok).toBe(true);
+    expect(at(h.tables.oidcGrant, 0).userId).toBe(DONOR);
+  });
+
+  it("splits a union-merged shared OidcGrant back apart on reverse", async () => {
+    seedUsers();
+    h.tables.oidcGrant.push({
+      id: "g_survivor",
+      userId: SURVIVOR,
+      clientId: "rp-shared",
+      badgeTypes: ["email-domain"],
+      badgeIds: ["b_s"],
+      profileName: true,
+      profileAvatar: false,
+      sybilScore: false,
+    });
+    h.tables.oidcGrant.push({
+      id: "g_donor",
+      userId: DONOR,
+      clientId: "rp-shared",
+      badgeTypes: ["oauth-account"],
+      badgeIds: ["b_d"],
+      profileName: false,
+      profileAvatar: true,
+      sybilScore: true,
+    });
+
+    const summary = await mergeAccounts(SURVIVOR, DONOR);
+    // Merged into one row; reverse must restore two.
+    expect(h.tables.oidcGrant).toHaveLength(1);
+
+    const result = await reverseMerge(summary.mergeRecordId);
+    expect(result.ok).toBe(true);
+
+    const byId = new Map(h.tables.oidcGrant.map((g) => [g.id, g]));
+    // Survivor's grant restored to its PRE-merge state (the union is undone).
+    const s = byId.get("g_survivor")!;
+    expect(s.userId).toBe(SURVIVOR);
+    expect(s.badgeTypes).toEqual(["email-domain"]);
+    expect(s.badgeIds).toEqual(["b_s"]);
+    expect(s.profileName).toBe(true);
+    expect(s.profileAvatar).toBe(false);
+    expect(s.sybilScore).toBe(false);
+    // Donor's deleted grant recreated with its original id + data on the donor.
+    const d = byId.get("g_donor")!;
+    expect(d.userId).toBe(DONOR);
+    expect(d.badgeTypes).toEqual(["oauth-account"]);
+    expect(d.profileAvatar).toBe(true);
+    expect(d.sybilScore).toBe(true);
   });
 
   it("refuses to reverse twice", async () => {

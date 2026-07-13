@@ -90,6 +90,11 @@ export async function GET(request: Request) {
           id: true,
           displayName: true,
           avatarUrl: true,
+          // Never resolve claims for a tombstoned (merged) user. Merge re-points
+          // access tokens to the survivor, so this normally reads null; it is the
+          // defense-in-depth guard that a token still pointing at a merged donor
+          // can never serve that dead account's claims.
+          mergedIntoUserId: true,
         },
       },
     },
@@ -102,6 +107,9 @@ export async function GET(request: Request) {
   }
   if (row.expiresAt < new Date()) {
     return unauthorized("invalid_token", "Token has expired");
+  }
+  if (row.user.mergedIntoUserId !== null) {
+    return unauthorized("invalid_token", "Token is not recognized");
   }
 
   const approvedBadgeJwts = await loadApprovedBadgeJwts(

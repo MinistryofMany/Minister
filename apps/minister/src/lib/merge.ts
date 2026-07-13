@@ -36,6 +36,14 @@ function isWriteConflict(err: unknown): boolean {
   return err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2034";
 }
 
+// Stable, deduplicated union of two string sets — used to accumulate the
+// monotone OidcGrant badgeTypes / badgeIds when a donor grant merges into the
+// survivor's grant for a shared RP. Mirrors oidc-grants.ts:unionTypes; kept
+// local so the merge core stays independent of the grant module.
+function unionStrings(a: readonly string[], b: readonly string[]): string[] {
+  return [...new Set([...a, ...b])];
+}
+
 async function runWithWriteConflictRetry<T>(run: () => Promise<T>, label: string): Promise<T> {
   let lastErr: unknown;
   for (let attempt = 1; attempt <= MAX_TX_ATTEMPTS; attempt++) {
@@ -108,6 +116,20 @@ export interface MovedRows {
   eligibility: string[];
   // OidcClient.ownerUserId — re-pointed (nullable owner FK).
   oidcClientOwned: string[];
+  // OidcGrant rows re-pointed wholesale (donor-only clients: the survivor had
+  // no grant for that clientId). Keyed by clientId — reversal moves the
+  // (survivorUserId, clientId) row back to the donor. Optional so a snapshot
+  // written before OidcGrant merge handling existed reverses without it.
+  oidcGrant?: string[];
+}
+
+// The union-mergeable fields of an OidcGrant, captured for reversible merges.
+interface OidcGrantFields {
+  badgeTypes: string[];
+  badgeIds: string[];
+  profileName: boolean;
+  profileAvatar: boolean;
+  sybilScore: boolean;
 }
 
 export interface MergeSnapshot {
@@ -135,6 +157,15 @@ export interface MergeSnapshot {
   // SubjectOverride rows CREATED on the survivor for donor-only clients. Reversal
   // deletes exactly these (and not any the survivor already had).
   overridesCreated: Array<{ clientId: string; sub: string }>;
+  // OidcGrant collisions: BOTH accounts held a grant for the clientId, so the
+  // donor's was union-OR'd into the survivor's and the donor row deleted.
+  // Reversal restores the survivor's pre-merge grant state and recreates the
+  // donor's deleted row (with its original id). Optional for pre-change snapshots.
+  oidcGrantMerged?: Array<{
+    clientId: string;
+    survivorPrev: OidcGrantFields;
+    donorDeleted: OidcGrantFields & { id: string };
+  }>;
   // Clients BOTH accounts used: the donor's sub there is stranded (one login,
   // one sub). Carried for the UI + audit; nothing to undo.
   strandedClients: Array<{ clientId: string; donorSub: string }>;
@@ -547,6 +578,101 @@ export async function mergeAccounts(
     });
 
     // -----------------------------------------------------------------------
+    // (a2) OidcGrant — the durable per-(userId, clientId) "already proven these
+    // badge types / profile claims to this RP" consent-transparency record. The
+    // merge core predates this model, so without this block the donor's grants
+    // stay orphaned on the tombstoned donor and are lost. For a client the
+    // survivor never used, re-point the whole donor grant. For a SHARED client,
+    // union-OR the donor's grant into the survivor's (@@unique([userId,clientId])
+    // forbids a blind re-point) and delete the donor's row — snapshotting both
+    // sides so reverseMerge can split them back apart.
+    // -----------------------------------------------------------------------
+    const donorGrants = await tx.oidcGrant.findMany({
+      where: { userId: donorUserId },
+      select: {
+        id: true,
+        clientId: true,
+        badgeTypes: true,
+        badgeIds: true,
+        profileName: true,
+        profileAvatar: true,
+        sybilScore: true,
+      },
+    });
+    const survivorGrants = await tx.oidcGrant.findMany({
+      where: { userId: survivorUserId },
+      select: {
+        clientId: true,
+        badgeTypes: true,
+        badgeIds: true,
+        profileName: true,
+        profileAvatar: true,
+        sybilScore: true,
+      },
+    });
+    const survivorGrantByClient = new Map(survivorGrants.map((g) => [g.clientId, g]));
+    const oidcGrantMoved: string[] = [];
+    const oidcGrantMerged: NonNullable<MergeSnapshot["oidcGrantMerged"]> = [];
+    for (const dg of donorGrants) {
+      const sg = survivorGrantByClient.get(dg.clientId);
+      if (!sg) {
+        // Donor-only client: re-point the whole grant to the survivor.
+        await tx.oidcGrant.update({
+          where: { userId_clientId: { userId: donorUserId, clientId: dg.clientId } },
+          data: { userId: survivorUserId },
+        });
+        oidcGrantMoved.push(dg.clientId);
+      } else {
+        // Shared client: union-OR the donor's grant into the survivor's, then
+        // drop the donor's row. Snapshot the survivor's PRE-merge state + the
+        // donor's full deleted row so reverse restores the exact split.
+        oidcGrantMerged.push({
+          clientId: dg.clientId,
+          survivorPrev: {
+            badgeTypes: sg.badgeTypes,
+            badgeIds: sg.badgeIds,
+            profileName: sg.profileName,
+            profileAvatar: sg.profileAvatar,
+            sybilScore: sg.sybilScore,
+          },
+          donorDeleted: {
+            id: dg.id,
+            badgeTypes: dg.badgeTypes,
+            badgeIds: dg.badgeIds,
+            profileName: dg.profileName,
+            profileAvatar: dg.profileAvatar,
+            sybilScore: dg.sybilScore,
+          },
+        });
+        await tx.oidcGrant.update({
+          where: { userId_clientId: { userId: survivorUserId, clientId: dg.clientId } },
+          data: {
+            badgeTypes: { set: unionStrings(sg.badgeTypes, dg.badgeTypes) },
+            badgeIds: { set: unionStrings(sg.badgeIds, dg.badgeIds) },
+            profileName: sg.profileName || dg.profileName,
+            profileAvatar: sg.profileAvatar || dg.profileAvatar,
+            sybilScore: sg.sybilScore || dg.sybilScore,
+          },
+        });
+        await tx.oidcGrant.deleteMany({
+          where: { userId: donorUserId, clientId: dg.clientId },
+        });
+      }
+    }
+
+    // -----------------------------------------------------------------------
+    // (a3) Donor OIDC authorization codes — DELETE, never re-point. A donor
+    // auth code minted seconds before the merge would otherwise still redeem at
+    // /token AFTER the donor is tombstoned, minting a live token on a dead
+    // account (the /token tombstone check is the second closure of this gap).
+    // Codes are single-use, 60s-TTL, and worthless by the reversal window, so
+    // deletion is correct and needs no reverse-side restore.
+    // -----------------------------------------------------------------------
+    const deletedAuthCodes = await tx.oidcAuthorizationCode.deleteMany({
+      where: { userId: donorUserId },
+    });
+
+    // -----------------------------------------------------------------------
     // (b) Write the SubjectOverride rows for donor-only clients.
     // -----------------------------------------------------------------------
     for (const ov of overridesCreated) {
@@ -629,6 +755,7 @@ export async function mergeAccounts(
       inviteRedemption: inviteRedemptionToMove,
       eligibility: eligibilityToMove,
       oidcClientOwned: donorOwnedClients.map((r) => r.id),
+      oidcGrant: oidcGrantMoved,
     };
 
     // Sybil-dedup refs the donor holds — re-tagged to the survivor POST-COMMIT
@@ -646,6 +773,7 @@ export async function mergeAccounts(
       eligibilityDeleted,
       inviteRedemptionDeleted,
       overridesCreated,
+      oidcGrantMerged,
       strandedClients,
       survivorPrev: {
         isBanned: survivor.isBanned,
@@ -685,6 +813,9 @@ export async function mergeAccounts(
       inviteRedemption: moved.inviteRedemption.length,
       eligibility: moved.eligibility.length,
       oidcClientOwned: moved.oidcClientOwned.length,
+      oidcGrant: oidcGrantMoved.length,
+      oidcGrantMerged: oidcGrantMerged.length,
+      oidcAuthorizationCodeDeleted: deletedAuthCodes.count,
       eligibilityDeleted: eligibilityDeleted.length,
       inviteRedemptionDeleted: inviteRedemptionDeleted.length,
     };
@@ -758,13 +889,19 @@ export interface ReverseResult {
 //   * Moves every re-pointed row back to the donor: Account, Session,
 //     Authenticator, Badge, ShareLink, OidcAccessToken, WizardSession, AuditLog,
 //     UserEmail, RecoveryCode, RecoveryAttempt, the donor's own SubjectOverrides,
-//     re-pointed InviteRedemptions and Eligibilities, and OidcClient ownership —
-//     identified by the exact PK list captured in the snapshot, so only rows that
-//     actually moved are moved back (survivor-native rows are never touched).
+//     re-pointed InviteRedemptions and Eligibilities, OidcClient ownership, and
+//     donor-only OidcGrants — identified by the exact PK list captured in the
+//     snapshot, so only rows that actually moved are moved back (survivor-native
+//     rows are never touched).
 //   * Re-promotes the donor's demoted primary email(s).
 //   * Recreates the collision LOSERS that were deleted (Eligibility /
 //     InviteRedemption) with their original data, so the donor (or survivor) gets
-//     its row back.
+//     its row back. For a shared-client OidcGrant that was union-merged, restores
+//     the survivor's pre-merge grant and recreates the donor's deleted grant.
+//
+// WHAT THIS INTENTIONALLY DOES NOT RESTORE:
+//   * The donor's deleted OidcAuthorizationCodes: single-use, 60s-TTL codes are
+//     long dead by the reversal window, so there is nothing worth recreating.
 //
 // WHAT THIS DOES NOT (and CANNOT) RESTORE — called out, not faked:
 //   * STRANDED-CLIENT subs are not "restored" because nothing about them was
@@ -961,6 +1098,16 @@ export async function reverseMerge(mergeRecordId: string): Promise<ReverseResult
         })
       ).count;
     }
+    // OidcGrant: re-pointed donor-only grants move back to the donor (keyed by
+    // clientId, guarded on the survivor as the current owner). `?? []` tolerates
+    // a snapshot written before OidcGrant merge handling existed.
+    for (const clientId of m.oidcGrant ?? []) {
+      const res = await tx.oidcGrant.updateMany({
+        where: { userId: survivorUserId, clientId },
+        data: { userId: donorUserId },
+      });
+      restoredRows += res.count;
+    }
 
     // Remove the overrides the merge CREATED for donor-only clients.
     for (const ov of snap.overridesCreated) {
@@ -991,6 +1138,35 @@ export async function reverseMerge(mergeRecordId: string): Promise<ReverseResult
           inviteCodeId: r.inviteCodeId,
           userId: r.userId,
           redeemedAt: new Date(r.redeemedAt),
+        },
+      });
+      recreatedDeleted++;
+    }
+
+    // OidcGrant collisions: restore the survivor's PRE-merge grant state and
+    // recreate the donor's deleted grant (with its original id), splitting the
+    // union back apart. `?? []` tolerates pre-change snapshots.
+    for (const mg of snap.oidcGrantMerged ?? []) {
+      await tx.oidcGrant.updateMany({
+        where: { userId: survivorUserId, clientId: mg.clientId },
+        data: {
+          badgeTypes: { set: mg.survivorPrev.badgeTypes },
+          badgeIds: { set: mg.survivorPrev.badgeIds },
+          profileName: mg.survivorPrev.profileName,
+          profileAvatar: mg.survivorPrev.profileAvatar,
+          sybilScore: mg.survivorPrev.sybilScore,
+        },
+      });
+      await tx.oidcGrant.create({
+        data: {
+          id: mg.donorDeleted.id,
+          userId: donorUserId,
+          clientId: mg.clientId,
+          badgeTypes: mg.donorDeleted.badgeTypes,
+          badgeIds: mg.donorDeleted.badgeIds,
+          profileName: mg.donorDeleted.profileName,
+          profileAvatar: mg.donorDeleted.profileAvatar,
+          sybilScore: mg.donorDeleted.sybilScore,
         },
       });
       recreatedDeleted++;

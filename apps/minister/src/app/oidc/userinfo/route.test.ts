@@ -106,7 +106,12 @@ function liveRow(jti: string, sub: string) {
     profileAvatar: false,
     sybilScore: null,
     sybilBucket: null,
-    user: { id: "user_1", displayName: null, avatarUrl: null },
+    user: {
+      id: "user_1",
+      displayName: null,
+      avatarUrl: null,
+      mergedIntoUserId: null as string | null,
+    },
   };
 }
 
@@ -164,6 +169,28 @@ describe("GET /oidc/userinfo access-token key binding", () => {
     findUnique.mockResolvedValue(liveRow("jti_badge_key", sub));
 
     const res = await GET(bearer(forged));
+
+    expect(res.status).toBe(401);
+    const body = (await res.json()) as { error?: string };
+    expect(body.error).toBe("invalid_token");
+  });
+
+  it("refuses a token whose user was merged (tombstoned donor)", async () => {
+    const sub = "pairwise_sub_merged";
+    // A validly-signed token whose backing user has since been tombstoned by an
+    // account merge (mergedIntoUserId set). The route must never serve a merged
+    // account's claims, even for an otherwise-live, unrevoked, unexpired token.
+    const token = await mintAccessToken(issuer, {
+      jti: "jti_merged_user",
+      sub,
+      clientId: "client_A",
+      scopes: ["openid"],
+    });
+    const row = liveRow("jti_merged_user", sub);
+    row.user.mergedIntoUserId = "survivor_user_id";
+    findUnique.mockResolvedValue(row);
+
+    const res = await GET(bearer(token));
 
     expect(res.status).toBe(401);
     const body = (await res.json()) as { error?: string };
