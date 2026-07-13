@@ -173,6 +173,20 @@ function serializeState(state: WizardState): Prisma.InputJsonValue {
   } as unknown as Prisma.InputJsonValue;
 }
 
+// A wizard session's persisted `state` is overwritten with `{ scrubbed: true }`
+// once the batch is terminal (success OR compensated abort), so it carries no
+// `currentStep`. Such a row must never be hydrated back into the client renderer
+// or a plugin — both dereference `currentStep` and would 500. Detect it at the
+// load boundary and treat the session as gone (belt-and-suspenders alongside the
+// terminal-marking in issueBadgesAndComplete, which also keeps these rows off the
+// `completedAt: null` queries in the first place).
+function isScrubbedRow(row: { state: unknown }): boolean {
+  const s = row.state;
+  return (
+    s === null || typeof s !== "object" || (s as { currentStep?: unknown }).currentStep == null
+  );
+}
+
 function hydrate(row: {
   id: string;
   userId: string;
@@ -262,6 +276,9 @@ export async function loadWizard(sessionId: string, userId: string): Promise<Wiz
     await deleteExpiredSession(row.id);
     return null;
   }
+  // A terminal (scrubbed) session has no step to render — behave as if it's gone
+  // so the page restarts the wizard instead of 500ing on an undefined step.
+  if (isScrubbedRow(row)) return null;
   // The loaded state feeds the client-rendered wizard, so scrub its secrets/data.
   return toClientState(hydrate(row));
 }
@@ -284,6 +301,11 @@ export async function submitStep(
     // Delete the observed-expired row so its at-rest address is TTL-bounded.
     await deleteExpiredSession(row.id);
     return { kind: "error", message: "Wizard session expired" };
+  }
+  // A terminal (scrubbed) session can't be resumed — its step is gone. Surface a
+  // restart-able error rather than handing an undefined step to the plugin.
+  if (isScrubbedRow(row)) {
+    return { kind: "error", message: "This verification was reset — start over." };
   }
 
   const plugin = getPlugin(row.pluginId);
@@ -465,7 +487,17 @@ async function issueBadgesAndComplete(args: {
     if (anchorSeen) {
       await prisma.wizardSession.update({
         where: { id: sessionId },
-        data: { state: { scrubbed: true } as Prisma.InputJsonValue },
+        data: {
+          // Mirror the success-path scrub: an aborted batch is TERMINAL, so mark
+          // the session completed and drop its pendingToken alongside scrubbing
+          // the state. Scrubbing alone (without completedAt/pendingToken) left a
+          // resumable session whose `state` no longer has a `currentStep`, so a
+          // later loadWizard/resume would hydrate an undefined step and 500 in
+          // toClientState/handleStep. Terminal-marking keeps it off both paths.
+          completedAt: new Date(),
+          pendingToken: null,
+          state: { scrubbed: true } as Prisma.InputJsonValue,
+        },
       });
     }
   };

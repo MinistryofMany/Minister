@@ -490,10 +490,17 @@ describe("wizard mint path through the REAL signet backend", () => {
       seedSession("ws9");
       const result = await submitStep("ws9", USER, "http://localhost:3000", { code: "x" });
       expect(result).toEqual({ kind: "error", message: UNAVAILABLE_MESSAGE });
-      // Fail-closed: no badge, no ledger entry, session retryable.
+      // Fail-closed: no badge, no ledger entry. This batch minted a badge before
+      // the self-heal outage, so compensateBatch ran and left the session
+      // TERMINAL (completed + pendingToken cleared + state scrubbed) — the raw
+      // address never survives an anchor-carrying abort at rest. The retry below
+      // is via a FRESH session (ws10), the real resume path.
       expect(h.tables.badge).toHaveLength(0);
       expect(mock.entryCount()).toBe(0);
-      expect(h.tables.wizardSession.find((s) => s.id === "ws9")!.completedAt).toBeNull();
+      const aborted = h.tables.wizardSession.find((s) => s.id === "ws9")!;
+      expect(aborted.completedAt).not.toBeNull();
+      expect(aborted.pendingToken).toBeNull();
+      expect(aborted.state).toEqual({ scrubbed: true });
 
       // Outage over → a clean retry issues end-to-end.
       _setSignetTransportForTests(mock.transport());
