@@ -46,6 +46,7 @@ const h = vi.hoisted(() => {
       },
       authenticator: {
         findMany: vi.fn(),
+        findFirst: vi.fn(),
         findUnique: vi.fn(),
         update: vi.fn(),
         delete: vi.fn(),
@@ -80,6 +81,7 @@ vi.mock("@/lib/mailer", () => ({ sendMail: h.sendMail }));
 vi.mock("@/lib/audit", () => ({ audit: h.audit }));
 vi.mock("@/lib/prisma", () => ({ prisma: h.db }));
 
+import { PrivilegedActionQuarantineError } from "@/lib/credential-lifecycle";
 import { StepUpRequiredError } from "@/lib/session";
 
 const db = h.db;
@@ -99,17 +101,32 @@ import {
   removeEmail,
   removePasskey,
   setPrimaryEmail,
+  setPrimaryEmailAction,
 } from "./credential-actions";
 
 const USER = "user_1";
 
-function session(aal: 0 | 1 | 2, opts: { recovered?: boolean } = {}): Session {
+function session(aal: 0 | 1 | 2, opts: { recovered?: boolean; cred?: string } = {}): Session {
   return {
     user: { id: USER },
     aal,
     ...(opts.recovered ? { recovered: true } : {}),
+    ...(opts.cred !== undefined ? { cred: opts.cred } : {}),
     expires: new Date(Date.now() + 3600_000).toISOString(),
   } as Session;
+}
+
+// Passkey row shapes for the H-1 gate (credential-gate reads
+// prisma.authenticator.findMany through the same mocked client).
+function activePasskey(credentialID = "cred_orig") {
+  return { credentialID, status: "active", quarantinedUntil: null };
+}
+function quarantinedPasskey(credentialID = "cred_graft", msFromNow = 3_600_000) {
+  return {
+    credentialID,
+    status: "quarantined",
+    quarantinedUntil: new Date(Date.now() + msFromNow),
+  };
 }
 
 beforeEach(() => {
@@ -304,6 +321,12 @@ describe("removeEmail last-verified refusal", () => {
 // ---------------------------------------------------------------------------
 
 describe("setPrimaryEmail single-primary invariant", () => {
+  beforeEach(() => {
+    // The H-1 gate reads the passkey rows; default to an established (active)
+    // passkey so these invariant tests exercise the primary-email logic.
+    db.authenticator.findMany.mockResolvedValue([activePasskey()]);
+  });
+
   it("clears all primaries, sets one, and updates the User.email cache in one tx", async () => {
     setSession(session(2));
     db.userEmail.findUnique.mockResolvedValue({
@@ -349,6 +372,119 @@ describe("setPrimaryEmail single-primary invariant", () => {
 });
 
 // ---------------------------------------------------------------------------
+// setPrimaryEmail H-1 quarantine gate — the primary email is where security
+// notifications land, so a session held up only by a fresh graft must not be
+// able to redirect it. The REAL gate (credential-gate + credential-lifecycle)
+// runs here against the mocked prisma client, so these are end-to-end policy
+// tests of the enforcement, not of a mock.
+// ---------------------------------------------------------------------------
+
+describe("setPrimaryEmail H-1 quarantine gate", () => {
+  beforeEach(() => {
+    db.userEmail.findUnique.mockResolvedValue({
+      id: "ue_2",
+      userId: USER,
+      email: "new-primary@example.com",
+      verifiedAt: new Date(),
+    });
+    db.userEmail.updateMany.mockResolvedValue({ count: 1 });
+    db.userEmail.update.mockResolvedValue({});
+    db.user.update.mockResolvedValue({});
+  });
+
+  it("ATTACK: refuses when the user's only passkey is still quarantined", async () => {
+    setSession(session(2, { cred: "cred_graft" }));
+    db.authenticator.findMany.mockResolvedValue([quarantinedPasskey("cred_graft")]);
+
+    await expect(setPrimaryEmail("ue_2")).rejects.toBeInstanceOf(PrivilegedActionQuarantineError);
+    expect(db.$transaction).not.toHaveBeenCalled();
+    expect(notifyCredentialChange).not.toHaveBeenCalled();
+    // Every refused attempt leaves an audit trail — the pivot signature.
+    expect(h.audit).toHaveBeenCalledWith(
+      USER,
+      "credential.quarantine_refused",
+      expect.objectContaining({ action: "email.set-primary", reason: "no-active-passkey" }),
+    );
+  });
+
+  it("ATTACK: refuses a session RIDING the quarantined graft even when the owner's active passkey still exists", async () => {
+    setSession(session(2, { cred: "cred_graft" }));
+    db.authenticator.findMany.mockResolvedValue([
+      activePasskey("cred_orig"),
+      quarantinedPasskey("cred_graft"),
+    ]);
+
+    let thrown: unknown;
+    await setPrimaryEmail("ue_2").catch((e: unknown) => {
+      thrown = e;
+    });
+    expect(thrown).toBeInstanceOf(PrivilegedActionQuarantineError);
+    const refusal = (thrown as PrivilegedActionQuarantineError).refusal;
+    expect(refusal.reason).toBe("acting-passkey-untrusted");
+    // Forgiving path: re-authenticating with the established passkey clears it.
+    expect(refusal.canStepUp).toBe(true);
+    expect(db.$transaction).not.toHaveBeenCalled();
+  });
+
+  it("LEGIT: allows a session acting with an established passkey while a fresh graft exists", async () => {
+    setSession(session(2, { cred: "cred_orig" }));
+    db.authenticator.findMany.mockResolvedValue([
+      activePasskey("cred_orig"),
+      quarantinedPasskey("cred_graft"),
+    ]);
+
+    await setPrimaryEmail("ue_2");
+    expect(db.$transaction).toHaveBeenCalledTimes(1);
+  });
+
+  it("LEGIT: a lapsed quarantine window clears the gate by itself (time-based clearance)", async () => {
+    setSession(session(2, { cred: "cred_graft" }));
+    db.authenticator.findMany.mockResolvedValue([quarantinedPasskey("cred_graft", -1000)]);
+
+    await setPrimaryEmail("ue_2");
+    expect(db.$transaction).toHaveBeenCalledTimes(1);
+  });
+
+  it("LEGIT: a legacy session without a cred claim passes when an active passkey exists", async () => {
+    setSession(session(2)); // pre-claim JWT: no cred
+    db.authenticator.findMany.mockResolvedValue([
+      activePasskey("cred_orig"),
+      quarantinedPasskey("cred_graft"),
+    ]);
+
+    await setPrimaryEmail("ue_2");
+    expect(db.$transaction).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses a cred claim pointing at a passkey no longer on the account", async () => {
+    setSession(session(2, { cred: "cred_removed" }));
+    db.authenticator.findMany.mockResolvedValue([activePasskey("cred_orig")]);
+
+    let thrown: unknown;
+    await setPrimaryEmail("ue_2").catch((e: unknown) => {
+      thrown = e;
+    });
+    expect(thrown).toBeInstanceOf(PrivilegedActionQuarantineError);
+    expect((thrown as PrivilegedActionQuarantineError).refusal.canStepUp).toBe(true);
+  });
+
+  it("surfaces the refusal as a typed result with finished copy via setPrimaryEmailAction", async () => {
+    setSession(session(2, { cred: "cred_graft" }));
+    db.authenticator.findMany.mockResolvedValue([quarantinedPasskey("cred_graft")]);
+
+    const res = await setPrimaryEmailAction("ue_2");
+    expect(res.ok).toBe(false);
+    if (res.ok) throw new Error("expected a refusal");
+    if (res.stepUp) throw new Error("expected quarantine refusal, got stepUp");
+    expect(res.quarantine).toBeDefined();
+    expect(res.quarantine!.reason).toBe("no-active-passkey");
+    expect(res.quarantine!.retryAt).not.toBeNull();
+    // The message is user-facing copy that says when the hold clears.
+    expect(res.error).toMatch(/unlocks in about/i);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // canAddPasskey — bootstrap rule.
 // ---------------------------------------------------------------------------
 
@@ -385,82 +521,31 @@ describe("canAddPasskey bootstrap rule", () => {
 });
 
 // ---------------------------------------------------------------------------
-// markPasskeyEnrolled — quarantine stamping vs. active bootstrap.
+// markPasskeyEnrolled — a READ-ONLY reporter since H-1 enforcement: the
+// lifecycle stamp and the notification both moved to WRITE time (the
+// adapter's createAuthenticator override in src/auth.ts), so a raw ceremony
+// can't skip them and this client-callable action can't be abused to promote
+// or re-stamp anything.
 // ---------------------------------------------------------------------------
 
-describe("markPasskeyEnrolled lifecycle", () => {
-  it("leaves the bootstrap first passkey active and notifies", async () => {
+describe("markPasskeyEnrolled (read-only reporter)", () => {
+  it("reports an active bootstrap passkey and writes nothing", async () => {
     setSession(session(2));
-    db.authenticator.findMany.mockResolvedValue([{ credentialID: "cred_1", addedAt: new Date() }]);
-    db.authenticator.update.mockResolvedValue({});
+    db.authenticator.findFirst.mockResolvedValue({ status: "active", quarantinedUntil: null });
 
     const r = await markPasskeyEnrolled();
     expect(r).toEqual({ quarantined: false });
-    expect(db.authenticator.update).toHaveBeenCalledWith({
-      where: { userId_credentialID: { userId: USER, credentialID: "cred_1" } },
-      data: { status: "active", quarantinedUntil: null },
-    });
-    expect(notifyCredentialChange).toHaveBeenCalledWith(
-      USER,
-      expect.stringContaining("first passkey"),
-    );
-  });
-
-  it("quarantines a second passkey (requires AAL2) and notifies", async () => {
-    setSession(session(2));
-    db.authenticator.findMany.mockResolvedValue([
-      { credentialID: "cred_2", addedAt: new Date(Date.now()) },
-      { credentialID: "cred_1", addedAt: new Date(Date.now() - 1000) },
-    ]);
-    db.authenticator.update.mockResolvedValue({});
-
-    const r = await markPasskeyEnrolled();
-    expect(r).toEqual({ quarantined: true });
-    const arg = db.authenticator.update.mock.calls[0]![0];
-    expect(arg.where).toEqual({
-      userId_credentialID: { userId: USER, credentialID: "cred_2" },
-    });
-    expect(arg.data.status).toBe("quarantined");
-    expect(arg.data.quarantinedUntil).toBeInstanceOf(Date);
-    expect(notifyCredentialChange).toHaveBeenCalledWith(
-      USER,
-      expect.stringContaining("quarantined"),
-    );
-  });
-
-  it("rejects finalizing a second passkey from a sub-AAL2 session", async () => {
-    setSession(session(1));
-    db.authenticator.findMany.mockResolvedValue([
-      { credentialID: "cred_2", addedAt: new Date() },
-      { credentialID: "cred_1", addedAt: new Date(Date.now() - 1000) },
-    ]);
-    await expect(markPasskeyEnrolled()).rejects.toBeInstanceOf(StepUpRequiredError);
     expect(db.authenticator.update).not.toHaveBeenCalled();
+    // Notification is the adapter's job at write time — never doubled here.
+    expect(notifyCredentialChange).not.toHaveBeenCalled();
   });
 
-  it("throws when there is no enrolled passkey to finalize", async () => {
+  it("reports a quarantined (in-window) passkey and writes nothing", async () => {
     setSession(session(2));
-    db.authenticator.findMany.mockResolvedValue([]);
-    await expect(markPasskeyEnrolled()).rejects.toThrow(/No passkey/i);
-  });
-
-  it("does NOT promote a sole in-window quarantined survivor (bootstrap-branch cooldown bypass)", async () => {
-    // Attack: a hijacked AAL2 session adds a quarantined passkey, removePasskeys
-    // the victim's original (the survivor stays in-window quarantined), then
-    // calls markPasskeyEnrolledAction() with no WebAuthn ceremony. The sole
-    // remaining row is now length===1, so the bootstrap branch is reached — but
-    // a genuine bootstrap passkey is never quarantined, so this in-window row is
-    // a removal survivor and must not be promoted to active. Leave the window
-    // intact; do not update, do not notify.
-    setSession(session(2));
-    db.authenticator.findMany.mockResolvedValue([
-      {
-        credentialID: "cred_survivor",
-        addedAt: new Date(),
-        status: "quarantined",
-        quarantinedUntil: new Date(Date.now() + 3_600_000),
-      },
-    ]);
+    db.authenticator.findFirst.mockResolvedValue({
+      status: "quarantined",
+      quarantinedUntil: new Date(Date.now() + 3_600_000),
+    });
 
     const r = await markPasskeyEnrolled();
     expect(r).toEqual({ quarantined: true });
@@ -468,27 +553,38 @@ describe("markPasskeyEnrolled lifecycle", () => {
     expect(notifyCredentialChange).not.toHaveBeenCalled();
   });
 
-  it("cleanly stamps a sole lapsed-window quarantined survivor active", async () => {
-    // A lapsed-window sole survivor already reads as active via lazy expiry, so
-    // the bootstrap branch may safely re-stamp it active/null (no cooldown left
-    // to defeat) and notify.
+  it("reports a lapsed-window passkey as not quarantined (lazy expiry)", async () => {
     setSession(session(2));
-    db.authenticator.findMany.mockResolvedValue([
-      {
-        credentialID: "cred_survivor",
-        addedAt: new Date(),
-        status: "quarantined",
-        quarantinedUntil: new Date(Date.now() - 1000),
-      },
-    ]);
-    db.authenticator.update.mockResolvedValue({});
+    db.authenticator.findFirst.mockResolvedValue({
+      status: "quarantined",
+      quarantinedUntil: new Date(Date.now() - 1000),
+    });
 
     const r = await markPasskeyEnrolled();
     expect(r).toEqual({ quarantined: false });
-    expect(db.authenticator.update).toHaveBeenCalledWith({
-      where: { userId_credentialID: { userId: USER, credentialID: "cred_survivor" } },
-      data: { status: "active", quarantinedUntil: null },
+    expect(db.authenticator.update).not.toHaveBeenCalled();
+  });
+
+  it("cannot be used to promote a sole in-window quarantined survivor (cooldown bypass)", async () => {
+    // The historical attack: hijacked session grafts a passkey, removes the
+    // victim's original, then calls this finalize hoping the "bootstrap"
+    // branch promotes the survivor. The action no longer writes at all, so
+    // there is nothing to abuse — the survivor stays quarantined.
+    setSession(session(2));
+    db.authenticator.findFirst.mockResolvedValue({
+      status: "quarantined",
+      quarantinedUntil: new Date(Date.now() + 3_600_000),
     });
+
+    const r = await markPasskeyEnrolled();
+    expect(r).toEqual({ quarantined: true });
+    expect(db.authenticator.update).not.toHaveBeenCalled();
+  });
+
+  it("throws when there is no enrolled passkey to report on", async () => {
+    setSession(session(2));
+    db.authenticator.findFirst.mockResolvedValue(null);
+    await expect(markPasskeyEnrolled()).rejects.toThrow(/No passkey/i);
   });
 });
 

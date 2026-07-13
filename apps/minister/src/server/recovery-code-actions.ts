@@ -3,12 +3,14 @@
 import { headers } from "next/headers";
 
 import { signIn } from "@/auth";
+import { gatePrivilegedAction } from "@/lib/credential-gate";
+import type { QuarantineRefusal } from "@/lib/credential-lifecycle";
 import { notifyCredentialChange } from "@/lib/credential-notify";
 import { prisma } from "@/lib/prisma";
 import { clientIpFrom, createRateLimiter } from "@/lib/rate-limit";
 import { generateRecoveryCodes, redeemRecoveryCode } from "@/lib/recovery-codes";
 import { issueRecoveryTicket } from "@/lib/recovery-ticket";
-import { getCurrentSession, requireAal } from "@/lib/session";
+import { getCurrentSession } from "@/lib/session";
 
 // Server actions for slice 3 (recovery codes). Two surfaces:
 //   * generateMyRecoveryCodes — AUTHENTICATED, AAL2-gated. Mint a fresh batch
@@ -21,23 +23,52 @@ import { getCurrentSession, requireAal } from "@/lib/session";
 // Generate (authenticated, AAL2)
 // ---------------------------------------------------------------------------
 
+// Tagged result for the client. Failures are RETURNED, never thrown: a thrown
+// server-action error reaches a production client as an opaque digest, which
+// is exactly the unexplained dead-end this surface must not have. `stepUp`
+// routes the UI into a passkey ceremony; `quarantine` is the H-1 gate refusal
+// (`error` always carries presentable copy).
+export type GenerateRecoveryCodesResult =
+  | { ok: true; codes: string[] }
+  | { ok: false; stepUp: true; error: string }
+  | { ok: false; stepUp?: false; quarantine?: QuarantineRefusal; error: string };
+
 // Mint a new batch of recovery codes for the signed-in user. Requires AAL2
 // (DESIGNDECISIONS #4/#6): you must already hold a phishing-resistant factor to
-// create the codes that can later bypass it. Returns the PLAINTEXT codes; the
-// caller renders them once and never persists them. Regenerating invalidates
-// the previous unused batch (handled in generateRecoveryCodes).
+// create the codes that can later bypass it — plus the H-1 quarantine gate,
+// because minting codes is the persistence pivot a grafted passkey wants (a
+// code re-enters the account even after the graft is discovered and removed).
+// Returns the PLAINTEXT codes; the caller renders them once and never persists
+// them. Regenerating invalidates the previous unused batch (handled in
+// generateRecoveryCodes).
 //
-// KNOWN GAP H-1: the AAL2 gate below does NOT also check the acting credential
-// is past its quarantine cooldown (see credential-actions.ts header + TODO.md).
-// Accepted for alpha.
-export async function generateMyRecoveryCodes(): Promise<{ codes: string[] }> {
+// Recovery-flow note: this does NOT dead-end a user who just recovered their
+// account. A recovered session bootstraps a first passkey, which is active
+// immediately (DESIGNDECISIONS #4 — no quarantine on the bootstrap), so after
+// climbing back to AAL2 they can regenerate codes right away. The gate only
+// holds when every passkey on the account is still in its cooldown window —
+// the graft-shaped state — and clears by itself when the window lapses.
+export async function generateMyRecoveryCodes(): Promise<GenerateRecoveryCodesResult> {
   const session = await getCurrentSession();
   if (!session?.user?.id) {
-    throw new Error("Not signed in");
+    return { ok: false, error: "Not signed in" };
   }
-  // Throws StepUpRequiredError when below AAL2; the UI catches it to route into
-  // step-up rather than showing a generic failure.
-  requireAal(session, 2);
+  if ((session.aal ?? 0) < 2) {
+    return {
+      ok: false,
+      stepUp: true,
+      error: "Generating recovery codes requires signing in with a passkey first.",
+    };
+  }
+
+  const refusal = await gatePrivilegedAction(
+    session.user.id,
+    session.cred,
+    "recovery-codes.generate",
+  );
+  if (refusal) {
+    return { ok: false, quarantine: refusal, error: refusal.message };
+  }
 
   const codes = await generateRecoveryCodes(session.user.id);
 
@@ -45,7 +76,7 @@ export async function generateMyRecoveryCodes(): Promise<{ codes: string[] }> {
   // a credential change a compromised session could attempt.
   await notifyCredentialChange(session.user.id, "recovery codes regenerated");
 
-  return { codes };
+  return { ok: true, codes };
 }
 
 // ---------------------------------------------------------------------------

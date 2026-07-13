@@ -82,6 +82,20 @@ export const authConfig: NextAuthConfig = {
         const newAal = aalForProvider(account.provider);
         const existingAal = typeof token.aal === "number" ? (token.aal as Aal) : 0;
         token.aal = Math.max(existingAal, newAal) as Aal;
+        if (account.provider === "passkey" && typeof account.providerAccountId === "string") {
+          // Acting credential (DESIGNDECISIONS #15 / H-1): remember WHICH
+          // passkey this session most recently proved. For the passkey
+          // provider, providerAccountId IS the WebAuthn credentialID
+          // (Authenticator.credentialID) on both the register and
+          // authenticate flows, so privileged actions can ask "is the
+          // credential this session rides itself quarantined?". Latest-wins
+          // is deliberate: registering a fresh (quarantined) passkey
+          // downgrades even an already-AAL2 session's privileged power until
+          // it re-proves an established passkey — exactly the graft case the
+          // quarantine exists for. Only passkeys are tracked: email/recovery
+          // are AAL1 and never pass the AAL2 floor that fronts this gate.
+          token.cred = account.providerAccountId;
+        }
         if (account.provider === "recovery") {
           token.recovered = true;
         }
@@ -109,6 +123,7 @@ export const authConfig: NextAuthConfig = {
       }
       session.aal = typeof token.aal === "number" ? (token.aal as Aal) : 0;
       session.auth_time = typeof token.auth_time === "number" ? token.auth_time : undefined;
+      session.cred = typeof token.cred === "string" ? token.cred : undefined;
       if (token.recovered === true) {
         session.recovered = true;
       }
@@ -140,6 +155,13 @@ declare module "next-auth" {
     // on the JWT only when `account` is present. Recency-sensitive actions
     // (requireAuthRecency) gate on it; undefined means "no fresh auth on record".
     auth_time?: number;
+    // WebAuthn credentialID of the passkey this session most recently proved
+    // (latest passkey sign-in / step-up / registration). The privileged-action
+    // quarantine gate (credential-gate.ts) uses it to refuse a session riding
+    // a still-quarantined graft. Undefined on email-only sessions and on JWTs
+    // minted before this claim existed (the gate fails open on undefined —
+    // the hold-at-least-one-active-passkey layer still applies).
+    cred?: string;
     recovered?: boolean;
   }
 
@@ -158,6 +180,9 @@ declare module "next-auth/jwt" {
     // Unix seconds of the last real authentication; set only when `account` is
     // present (sign-in / step-up), preserved across refreshes.
     auth_time?: number;
+    // WebAuthn credentialID of the most recently proven passkey; set only on
+    // passkey authentication events, preserved across refreshes.
+    cred?: string;
     recovered?: boolean;
   }
 }

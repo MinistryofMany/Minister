@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { signIn as signInWebAuthn } from "next-auth/webauthn";
@@ -9,6 +9,7 @@ import { KeyRound, Mail, ShieldCheck, Trash2, UserCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { describeRemaining } from "@/lib/credential-lifecycle";
 import {
   addEmailAction,
   canAddPasskeyAction,
@@ -21,18 +22,28 @@ import {
   type CredentialListing,
 } from "@/server/credential-actions";
 
-// Run a wrapped action; on a step-up result, run the passkey ceremony then
-// retry ONCE. Returns the final non-step-up result, or null if the user
-// abandoned/failed the step-up ceremony.
+// True when a passkey ceremony can clear this refusal right now: an AAL2
+// step-up, or the H-1 quarantine gate refusing the session's ACTING passkey
+// while an established one exists (re-authing with the established passkey
+// updates the session's `cred` claim and the retry passes).
+function ceremonyCanClear<T>(res: ActionResult<T>): boolean {
+  if (res.ok) return false;
+  if ("stepUp" in res && res.stepUp) return true;
+  return "quarantine" in res && res.quarantine?.canStepUp === true;
+}
+
+// Run a wrapped action; when a passkey ceremony can clear its refusal, run
+// the ceremony then retry ONCE. Returns the final result, or null if the user
+// abandoned/failed the ceremony.
 async function withStepUp<T>(
   call: () => Promise<ActionResult<T>>,
 ): Promise<ActionResult<T> | null> {
   const first = await call();
-  if (first.ok || !("stepUp" in first) || !first.stepUp) {
+  if (!ceremonyCanClear(first)) {
     return first;
   }
-  // Step-up: run a passkey assertion in place (redirect:false so we stay on
-  // the page), then retry the action against the now-AAL2 session.
+  // Run a passkey assertion in place (redirect:false so we stay on the
+  // page), then retry the action against the refreshed session.
   try {
     const res = await signInWebAuthn("passkey", { redirect: false });
     if (res && "error" in res && res.error) {
@@ -42,7 +53,9 @@ async function withStepUp<T>(
     return null;
   }
   const retried = await call();
-  // If it STILL wants step-up, the ceremony didn't raise the session — give up.
+  // If it STILL wants a bare step-up, the ceremony didn't raise the session —
+  // give up. A repeated quarantine refusal is returned as-is: its message
+  // explains which passkey can approve and when the hold clears.
   if (!retried.ok && "stepUp" in retried && retried.stepUp) return null;
   return retried;
 }
@@ -187,7 +200,7 @@ export function CredentialsManager({ initial }: { initial: CredentialListing }) 
       }
       setNotice(
         fin.data.quarantined
-          ? "Passkey added. It's quarantined for a short window before it can manage other credentials."
+          ? "Passkey added. You can sign in with it right away; for a short security hold it can't approve sensitive account changes (your other credentials can). We've emailed your verified addresses."
           : "Passkey added.",
       );
       await refresh();
@@ -235,7 +248,10 @@ export function CredentialsManager({ initial }: { initial: CredentialListing }) 
                         <Badge tone="pending">Unverified</Badge>
                       )}
                       {e.status === "quarantined" ? (
-                        <Badge tone="quarantined">Quarantined</Badge>
+                        <>
+                          <Badge tone="quarantined">Security hold</Badge>
+                          <QuarantineHint until={e.quarantinedUntil} />
+                        </>
                       ) : null}
                     </div>
                   </div>
@@ -339,7 +355,10 @@ export function CredentialsManager({ initial }: { initial: CredentialListing }) 
                     <ShieldCheck className="h-4 w-4 text-neutral-500" />
                     <span className="text-sm font-medium">{p.label ?? "Passkey"}</span>
                     {p.status === "quarantined" ? (
-                      <Badge tone="quarantined">Quarantined</Badge>
+                      <>
+                        <Badge tone="quarantined">Security hold</Badge>
+                        <QuarantineHint until={p.quarantinedUntil} />
+                      </>
                     ) : (
                       <Badge tone="active">Active</Badge>
                     )}
@@ -402,7 +421,10 @@ export function CredentialsManager({ initial }: { initial: CredentialListing }) 
                 >
                   <span className="text-sm font-medium capitalize">{a.label ?? a.provider}</span>
                   {a.status === "quarantined" ? (
-                    <Badge tone="quarantined">Quarantined</Badge>
+                    <span className="flex items-center gap-2">
+                      <Badge tone="quarantined">Security hold</Badge>
+                      <QuarantineHint until={a.quarantinedUntil} />
+                    </span>
                   ) : (
                     <Badge tone="active">Active</Badge>
                   )}
@@ -438,6 +460,27 @@ function Badge({ tone, children }: { tone: BadgeTone; children: React.ReactNode 
       className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${TONE[tone]}`}
     >
       {children}
+    </span>
+  );
+}
+
+// "Clears in about …" next to a security-hold badge, so a quarantined
+// credential never looks stuck (the workspace-reported confusion: a sole
+// surviving passkey stays on hold by design after the other is removed, and
+// without this hint that read as a bug). Rendered only after mount: the
+// remaining wall-clock time isn't stable across the SSR/hydration boundary,
+// and the hint is progressive detail, not critical path.
+function QuarantineHint({ until }: { until: string | null }) {
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+  if (!mounted || until === null) return null;
+  const untilMs = Date.parse(until);
+  if (!Number.isFinite(untilMs) || untilMs <= Date.now()) return null;
+  return (
+    <span className="whitespace-nowrap text-xs text-neutral-500">
+      clears in {describeRemaining(untilMs)}
     </span>
   );
 }

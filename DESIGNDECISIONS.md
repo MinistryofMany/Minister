@@ -305,6 +305,21 @@ falloff), so reword that when the as-built doc is updated.
 - **Change:** add a `cred` claim in `auth.config.ts` jwt callback + check it in the
   credential actions. Small follow-on.
 
+### Resolved 2026-07-12 (H-1 closed)
+
+The `cred` claim now exists (stamped on every passkey auth event, latest wins,
+so registering a graft downgrades even the grafting session) and the four
+privileged pivots (`startMerge`, `confirmMerge`, `generateMyRecoveryCodes`,
+`setPrimaryEmail`) enforce a two-layer gate (`credential-lifecycle.ts` /
+`credential-gate.ts`): hold >=1 non-quarantined passkey, AND the acting passkey
+(when known) must be non-quarantined — the latter cleared instantly by
+re-authing with an established passkey, which the UIs run as a one-tap
+ceremony-and-retry. Passkey quarantine + notification moved to write time
+(adapter `createAuthenticator`), so a raw WebAuthn ceremony can't skip them.
+Remaining softening owed: the #4-revised email-confirmation step-up for the
+only-quarantined-passkey user (today they wait out the <=72h hold, with copy
+saying exactly when it clears).
+
 ## 16. reverseMerge restores ownership, not content
 
 - **Chose:** `reverseMerge` (within the 7-day window) un-tombstones the donor, moves
