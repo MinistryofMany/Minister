@@ -7,7 +7,7 @@ export function Footer() {
           Minister is a prototype. Kick the tires, but don&apos;t rely on it for anything important
           yet.
         </p>
-        <p className="text-neutral-400 dark:text-neutral-600">Beta · {buildDate}</p>
+        <p className="text-neutral-400 dark:text-neutral-600">Alpha · {buildDate}</p>
       </div>
     </footer>
   );
