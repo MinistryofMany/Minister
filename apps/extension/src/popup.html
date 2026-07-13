@@ -37,12 +37,11 @@
       proofs in the browser and submit them back to Minister.
     </p>
     <p>
-      <strong>Stage 6 — placeholder.</strong> The TLSNotary prover
-      (<code>tlsn-js</code>) is not yet integrated. The architectural
-      skeleton, the manifest, the background service-worker, and the
-      Minister <code>/api/tlsn/submit</code> endpoint are all in place;
-      wiring the prover is the remaining work.
+      Open a Minister badge wizard that needs a proof, then run it from
+      here. The proof runs in an offscreen document via
+      <code>tlsn-js</code> and is submitted to
+      <code>/api/tlsn/submit</code>.
     </p>
-    <script type="module" src="popup.ts"></script>
+    <script type="module" src="popup.js"></script>
   </body>
 </html>

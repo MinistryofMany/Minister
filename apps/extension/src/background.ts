@@ -1,36 +1,64 @@
 // Minister browser extension — background service worker.
 //
-// Listens for messages from Minister pages (via the popup; MV3 doesn't
-// allow direct content-script-from-arbitrary-page postMessage to
-// background, so the bridge lives in the popup). When the user opens
-// a wizard whose step is `kind: "extension-action"`, the popup picks
-// up the in-flight action and walks the user through the proof.
-//
-// Stage 6 — the actual TLSNotary prover (tlsn-js WASM) is not yet
-// wired. This file is the architectural placeholder; the prover lands
-// alongside the WS-proxy + notary integration in a later commit.
+// Orchestration only. The background worker is short-lived and cannot host the
+// heavy TLSNotary WASM, so it delegates the actual proof to an offscreen
+// document (see offscreen.ts) and keeps for itself: receiving the popup's
+// request, ensuring the offscreen document exists, relaying the proof request,
+// and submitting the finished presentation to Minister with the session cookie.
 
-interface ProveRequest {
-  // The submitUrl the plugin embedded in extension-action.payload.params
-  // (under TLSN, this is `/api/tlsn/submit` on the Minister origin).
-  submitUrl: string;
-  // The Minister-side session token; we echo it back as `sessionToken`
-  // in the submit body so Minister resolves the right wizard session.
-  sessionToken: string;
-  // The HTTPS endpoint the user is attesting against. tlsn-js opens a
-  // session against this through the ws-proxy and asks the notary for
-  // co-signature.
-  url: string;
+import { endpoints } from "./config.ts";
+import {
+  isProveMessage,
+  type OffscreenRunResult,
+  type ProveRequest,
+  type ProveResult,
+} from "./messages.ts";
+
+const OFFSCREEN_PATH = "offscreen.html";
+
+// Ensure exactly one offscreen document exists. Creating a second throws, and
+// hasDocument() races under concurrent calls, so we serialize on a promise.
+let creating: Promise<void> | undefined;
+
+async function ensureOffscreenDocument(): Promise<void> {
+  const contexts = await chrome.runtime.getContexts({
+    contextTypes: [chrome.runtime.ContextType.OFFSCREEN_DOCUMENT],
+  });
+  if (Array.isArray(contexts) && contexts.length > 0) {
+    return;
+  }
+  if (!creating) {
+    creating = chrome.offscreen
+      .createDocument({
+        url: OFFSCREEN_PATH,
+        // WORKERS: tlsn-js runs the prover across web workers.
+        reasons: [chrome.offscreen.Reason.WORKERS],
+        justification: "Run the TLSNotary WASM prover for a Minister badge proof.",
+      })
+      .finally(() => {
+        creating = undefined;
+      });
+  }
+  await creating;
 }
 
-async function performProof(_req: ProveRequest): Promise<string> {
-  // TODO(stage-6+): integrate `tlsn-js` to run the prover in an
-  // offscreen document, talk to the ws-proxy, exchange handshake with
-  // the notary, return the finalized presentation as a base64 string.
-  throw new Error(
-    "TLSNotary prover not yet wired. Background skeleton is in place; " +
-      "the prover lands when tlsn-js is integrated.",
-  );
+async function performProof(req: ProveRequest): Promise<string> {
+  await ensureOffscreenDocument();
+
+  const result: OffscreenRunResult = await chrome.runtime.sendMessage({
+    target: "offscreen",
+    kind: "tlsn-run",
+    request: {
+      url: req.url,
+      notaryUrl: endpoints.notaryUrl,
+      websocketProxyUrl: endpoints.websocketProxyUrl,
+    },
+  });
+
+  if (!result || result.ok !== true) {
+    throw new Error(result?.error ?? "offscreen prover returned no result");
+  }
+  return result.presentationBase64;
 }
 
 async function submitPresentation(req: ProveRequest, presentationBase64: string): Promise<void> {
@@ -50,23 +78,23 @@ async function submitPresentation(req: ProveRequest, presentationBase64: string)
   }
 }
 
-// Popup → background message router. Kept narrow on purpose; the
-// surface area an extension exposes is part of its threat model.
+// Popup -> background message router. Kept narrow on purpose; the surface area
+// an extension exposes is part of its threat model.
 chrome.runtime.onMessage.addListener((msg: unknown, _sender, sendResponse) => {
-  if (!msg || typeof msg !== "object" || !("kind" in msg) || msg.kind !== "tlsn-prove") {
+  if (!isProveMessage(msg)) {
     return false;
   }
-  const req = (msg as unknown as { request: ProveRequest }).request;
+  const req = msg.request;
   (async () => {
     try {
       const presentation = await performProof(req);
       await submitPresentation(req, presentation);
-      sendResponse({ ok: true });
+      sendResponse({ ok: true } satisfies ProveResult);
     } catch (err) {
       sendResponse({
         ok: false,
         error: err instanceof Error ? err.message : String(err),
-      });
+      } satisfies ProveResult);
     }
   })();
   return true; // keep the message channel open for the async response
