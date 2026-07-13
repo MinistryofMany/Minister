@@ -89,6 +89,19 @@ const serverSchema = z
       .max(86_400_000)
       .default(3_600_000),
 
+    // Badge-revocation status-list PUBLISHER interval (docs/groups-revocation-design.md
+    // §5.5). The in-process single-writer job (instrumentation.ts) re-signs dirty
+    // lists at epoch cadence and quiet lists at heartbeat cadence; a second app
+    // instance no-ops via a Postgres advisory lock. Must stay under the 15-min
+    // validity window so a list never expires between passes. Default 60s (EPOCH_MS),
+    // bounded 10s..5min.
+    MINISTER_STATUS_PUBLISH_INTERVAL_MS: z.coerce
+      .number()
+      .int()
+      .min(10_000)
+      .max(300_000)
+      .default(60_000),
+
     NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   })
   .superRefine((val, ctx) => {

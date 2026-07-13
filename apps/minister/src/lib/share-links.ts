@@ -154,6 +154,22 @@ export async function loadShareLinkByToken(token: string): Promise<{
       // Unknown badge type: nothing to render — skip BEFORE signing; we
       // never re-sign an artifact we won't serve.
       if (!meta) return null;
+      // WARNING B: a share link has NO relying-party context, so NEITHER revocation
+      // layer can attach — layer 1 (the live GroupMembership re-check) is the
+      // disclosure path's job, and layer 2 (`credentialStatus`) needs a per-RP
+      // (list, index) keyed to a clientId a link doesn't have. Re-minting a
+      // revocable badge here would let a kicked member keep asserting membership via
+      // a link for up to its 7-day validity, immune to both layers. EXCLUDE
+      // revocable types from share links (the safer minimal v1 choice): omit +
+      // audit, never disclose a fact we cannot revoke. Runs BEFORE any signing.
+      if (meta.revocable) {
+        await safeAudit(row.userId, "sharelink.badge_disclosure_omitted", {
+          badgeId: b.id,
+          shareLinkId: row.id,
+          reason: "revocable-badge-excluded-from-share-links",
+        });
+        return null;
+      }
       // Per-badge FAIL-CLOSED OMIT (ADR M5), same posture as the OIDC disclosure
       // path: a per-badge throw omits only THAT badge from the share page — it
       // must never 500 the whole page and kill every other badge on the link.

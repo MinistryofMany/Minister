@@ -18,9 +18,12 @@ import { JITTER_MAX_MS } from "./constants";
 
 const AUDIT_ACTION = "status.anchor_revoked";
 
-// Accepts the caller's transaction client so the revoke + its audit commit
-// atomically with the membership mutation that triggered it.
-type RevokeClient = Pick<Prisma.TransactionClient, "badgeStatusEntry" | "auditLog">;
+// Accepts the caller's transaction client so the revoke + its durable tombstone +
+// its audit commit atomically with the membership mutation that triggered it.
+type RevokeClient = Pick<
+  Prisma.TransactionClient,
+  "badgeStatusEntry" | "statusAnchorRevocation" | "auditLog"
+>;
 
 export async function revokeStatusAnchor(args: {
   anchor: string;
@@ -32,6 +35,19 @@ export async function revokeStatusAnchor(args: {
   const client = args.client ?? prisma;
 
   const nowMs = Date.now();
+
+  // W1: write the durable per-anchor tombstone FIRST, so a disclosure that
+  // allocates a fresh entry for this anchor AFTER this transaction commits sees it
+  // and is born revoked. Written even when there are ZERO existing entries (a
+  // member kicked before ever disclosing) — that is the case a per-entry-only
+  // revoke could never cover. Idempotent: a repeat revoke keeps the first
+  // revokedAt/reason.
+  await client.statusAnchorRevocation.upsert({
+    where: { statusAnchor: anchor },
+    create: { statusAnchor: anchor, revokedAt: new Date(nowMs), reason },
+    update: {},
+  });
+
   const entries = await client.badgeStatusEntry.findMany({
     where: { statusAnchor: anchor, revokedAt: null },
     select: { id: true },

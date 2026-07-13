@@ -398,6 +398,32 @@ describe("loadShareLinkByToken — pairwise disclosure re-mint (MIN-1)", () => {
     expect(link!.badges).toEqual([]);
   });
 
+  // WARNING B: a share link has NO relying-party context, so neither revocation
+  // layer can attach to a re-minted badge. A revocable type (group-membership)
+  // must therefore be EXCLUDED from the link entirely — never re-minted — or a
+  // kicked member could keep asserting membership via the link for its lifetime.
+  it("excludes a revocable (group-membership) badge from a share link, and audits it", async () => {
+    const link = await viewLink(linkRow(), [
+      badgeRow({
+        type: "group-membership",
+        attributes: { group: "acme", role: "member", groupId: "g1" },
+      }),
+    ]);
+    expect(link).not.toBeNull();
+    // Excluded BEFORE any signing — nothing revocable is served unrevocably.
+    expect(link!.badges).toEqual([]);
+    expect(auditCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          action: "sharelink.badge_disclosure_omitted",
+          metadata: expect.objectContaining({
+            reason: "revocable-badge-excluded-from-share-links",
+          }),
+        }),
+      }),
+    );
+  });
+
   // ADR §2.5 decision: SHARE LINKS GET NO NULLIFIER. The link is a
   // human-audience bearer artifact, not a Sybil-gated RP — injecting a
   // persistent per-RP tracking tag into a URL-borne disclosure widens the leak

@@ -12,10 +12,13 @@ export { revokeStatusAnchor } from "./revoke";
 export {
   publishList,
   runPublisherOnce,
+  runScheduledPublish,
   buildStatusListPayload,
   signStatusListCredential,
+  PUBLISHER_ADVISORY_LOCK_KEY,
   type PublishResult,
   type PublisherRunSummary,
+  type ScheduledPublishOutcome,
   type StatusListCredentialPayload,
 } from "./publish";
 export { encodeList, getBit, setBit, newBitstring } from "./bitstring";

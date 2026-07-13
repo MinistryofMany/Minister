@@ -30,6 +30,7 @@ const h = vi.hoisted(() => {
     users: [] as { id: string }[],
     issued: [] as { userId: string; badge: { type: string; claims: Record<string, unknown> } }[],
     audits: [] as { userId: string | null; action: string; metadata: Record<string, unknown> }[],
+    tombstones: [] as { slug: string; deletedAt: Date }[],
     seq: 0,
   };
   const cfg = {
@@ -120,6 +121,33 @@ const h = vi.hoisted(() => {
         return store.users.find((u) => u.id === args.where.id) ?? null;
       }),
     },
+    groupSlugTombstone: {
+      findUnique: vi.fn(async (args: { where: { slug: string } }) => {
+        const t = store.tombstones.find((x) => x.slug === args.where.slug);
+        return t ? { deletedAt: t.deletedAt } : null;
+      }),
+      upsert: vi.fn(
+        async (args: {
+          where: { slug: string };
+          create: { slug: string };
+          update: { deletedAt?: Date };
+        }) => {
+          const existing = store.tombstones.find((x) => x.slug === args.where.slug);
+          if (existing) {
+            existing.deletedAt = args.update.deletedAt ?? new Date();
+            return existing;
+          }
+          const row = { slug: args.create.slug, deletedAt: new Date() };
+          store.tombstones.push(row);
+          return row;
+        },
+      ),
+      deleteMany: vi.fn(async (args: { where: { slug: string } }) => {
+        const before = store.tombstones.length;
+        store.tombstones = store.tombstones.filter((x) => x.slug !== args.where.slug);
+        return { count: before - store.tombstones.length };
+      }),
+    },
     auditLog: { create: vi.fn(async () => ({})) },
   };
 
@@ -194,6 +222,7 @@ beforeEach(() => {
   h.store.users = [];
   h.store.issued = [];
   h.store.audits = [];
+  h.store.tombstones = [];
   h.store.seq = 0;
   h.cfg.actorId = "O";
   h.cfg.bucket = 3;
@@ -229,6 +258,24 @@ describe("createGroup — founding gate", () => {
     const res = await createGroup({ slug: "acme", displayName: "Acme" });
     expect(res.ok).toBe(false);
     if (!res.ok) expect(res.error).toMatch(/taken/i);
+  });
+
+  it("W5: refuses to re-found a slug tombstoned within the cooldown", async () => {
+    h.store.tombstones.push({ slug: "acme", deletedAt: new Date() });
+    const res = await createGroup({ slug: "acme", displayName: "Acme" });
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.error).toMatch(/isn't available yet/i);
+  });
+
+  it("W5: allows founding once the slug tombstone has aged past the cooldown", async () => {
+    h.store.tombstones.push({
+      slug: "acme",
+      deletedAt: new Date(Date.now() - 31 * 24 * 60 * 60 * 1000), // > 30d
+    });
+    const res = await createGroup({ slug: "acme", displayName: "Acme" });
+    expect(res.ok).toBe(true);
+    // The stale tombstone is cleared on a successful founding.
+    expect(h.store.tombstones.some((t) => t.slug === "acme")).toBe(false);
   });
 
   it("rejects an invalid slug shape", async () => {
@@ -374,6 +421,12 @@ describe("owner-only lifecycle", () => {
     expect(res.ok).toBe(true);
     expect(h.store.groups).toHaveLength(0);
     expect(h.store.memberships).toHaveLength(0);
+  });
+
+  it("W5: deleting a group tombstones its slug (blocks immediate re-founding)", async () => {
+    h.cfg.actorId = OWNER;
+    await deleteGroup({ groupId: GID });
+    expect(h.store.tombstones.map((t) => t.slug)).toContain("team");
   });
 
   it("an admin cannot rename the group", async () => {

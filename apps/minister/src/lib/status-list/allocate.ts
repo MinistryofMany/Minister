@@ -98,17 +98,30 @@ async function currentWritableShard(clientId: string): Promise<ShardRow> {
 
 // Try random free indices in one shard. Returns the allocation, or null if every
 // random attempt collided (shard too full — caller rolls to a fresh shard). A
-// concurrent same-fact allocation short-circuits to the winner's handle.
+// concurrent same-fact allocation short-circuits to the winner's handle. When
+// `revokedAt` is non-null the anchor is ALREADY revoked (W1): the entry is born
+// revoked (revokedAt = revealAfter = revokedAt) so the publisher sets its bit — a
+// late allocation can never mint an un-revocable handle.
 async function allocateInShard(
   list: ShardRow,
   statusAnchor: string,
   clientId: string,
+  revokedAt: Date | null,
 ): Promise<AllocatedStatus | null> {
   for (let attempt = 0; attempt < MAX_RANDOM_ATTEMPTS; attempt++) {
     const bitIndex = randomInt(0, SHARD_SIZE_BITS);
     try {
       await prisma.badgeStatusEntry.create({
-        data: { statusAnchor, clientId, listId: list.id, bitIndex },
+        data: {
+          statusAnchor,
+          clientId,
+          listId: list.id,
+          bitIndex,
+          // Born revoked with an immediate reveal (no jitter): the fact is already
+          // public via the sibling entries' kick, and prompt enforcement outweighs
+          // decorrelation for a straggler re-allocation.
+          ...(revokedAt ? { revokedAt, revealAfter: revokedAt } : {}),
+        },
       });
       return { listId: list.id, bitIndex };
     } catch (err) {
@@ -126,26 +139,71 @@ async function allocateInShard(
   return null;
 }
 
+// Has this anchor been durably revoked (W1 tombstone)? A returned Date is the
+// revocation instant; null means "not revoked (yet)".
+async function anchorRevokedAt(statusAnchor: string): Promise<Date | null> {
+  const row = await prisma.statusAnchorRevocation.findUnique({
+    where: { statusAnchor },
+    select: { revokedAt: true },
+  });
+  return row?.revokedAt ?? null;
+}
+
+// Mark a just-allocated (or pre-existing) entry revoked, immediately reveal-able.
+// Idempotent and race-safe: only touches a still-clear row.
+async function forceRevokeEntry(statusAnchor: string, clientId: string): Promise<void> {
+  const now = new Date();
+  await prisma.badgeStatusEntry.updateMany({
+    where: { statusAnchor, clientId, revokedAt: null },
+    data: { revokedAt: now, revealAfter: now },
+  });
+}
+
 export async function allocateStatusEntry(args: {
   statusAnchor: string;
   clientId: string;
 }): Promise<AllocatedStatus> {
   const { statusAnchor, clientId } = args;
 
+  // W1: if the anchor is already revoked, any entry we hand back MUST be revoked,
+  // or the disclosure re-mints a credentialStatus whose bit nobody ever sets.
+  const revokedAt = await anchorRevokedAt(statusAnchor);
+
   const existing = await findExisting(statusAnchor, clientId);
-  if (existing) return existing;
+  if (existing) {
+    // Defense for the tight race where a prior allocation created a CLEAR entry
+    // and the kick landed between its create and its own reconcile: fix it now.
+    if (revokedAt) await forceRevokeEntry(statusAnchor, clientId);
+    return existing;
+  }
 
   const shard = await currentWritableShard(clientId);
-  const first = await allocateInShard(shard, statusAnchor, clientId);
-  if (first) return first;
+  const alloc =
+    (await allocateInShard(shard, statusAnchor, clientId, revokedAt)) ??
+    // The chosen shard filled up under us — open the next and allocate there
+    // (empty shard: a random index cannot collide, so this succeeds).
+    (await allocateInShard(
+      await getOrCreateShard(clientId, shard.shardNo + 1),
+      statusAnchor,
+      clientId,
+      revokedAt,
+    ));
 
-  // The chosen shard filled up under us — open the next and allocate there
-  // (empty shard: a random index cannot collide, so this succeeds).
-  const nextShard = await getOrCreateShard(clientId, shard.shardNo + 1);
-  const second = await allocateInShard(nextShard, statusAnchor, clientId);
-  if (second) return second;
+  if (!alloc) {
+    throw new Error(
+      `status-list: could not allocate a bit index for (${statusAnchor}, ${clientId}) after shard roll`,
+    );
+  }
 
-  throw new Error(
-    `status-list: could not allocate a bit index for (${statusAnchor}, ${clientId}) after shard roll`,
-  );
+  // Reconcile the post-revoke race. If the anchor was already revoked at our read
+  // (revokedAt), OR its tombstone COMMITTED while we were mid-allocation (re-check
+  // below), ensure the handle we hand back is revoked. Idempotent — forceRevokeEntry
+  // only touches a still-clear row, so a born-revoked entry is a no-op, but a CLEAR
+  // entry we raced into (e.g. a concurrent first-disclosure that read the anchor
+  // pre-kick and won the create) gets fixed. Only on the create path.
+  if (revokedAt || (await anchorRevokedAt(statusAnchor))) {
+    await forceRevokeEntry(statusAnchor, clientId);
+  }
+
+  return alloc;
 }

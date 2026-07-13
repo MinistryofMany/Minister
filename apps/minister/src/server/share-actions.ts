@@ -3,6 +3,8 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
+import { BADGE_TYPES } from "@minister/shared";
+
 import { audit } from "@/lib/audit";
 import {
   emailButton,
@@ -58,10 +60,24 @@ export async function createShareLink(
   // somebody else's badge through one of your own share links.
   const owned = await prisma.badge.findMany({
     where: { userId: session.user.id, id: { in: badgeIds } },
-    select: { id: true },
+    select: { id: true, type: true },
   });
   if (owned.length !== badgeIds.length) {
     return { ok: false, error: "Some badges are not yours" };
+  }
+
+  // WARNING B: revocable badge types (group membership) can't ride a share link —
+  // a link carries no relying-party context, so neither the live-membership
+  // re-check nor a `credentialStatus` can attach, and a kicked member would keep
+  // asserting the fact for the link's lifetime. Reject at creation with a clear
+  // message; the render path (loadShareLinkByToken) also excludes them (defense in
+  // depth for any link created before this guard).
+  if (owned.some((b) => BADGE_TYPES[b.type]?.revocable)) {
+    return {
+      ok: false,
+      error:
+        "Group membership badges can't be shared via a link because they can be revoked. Disclose them by signing in to an app instead.",
+    };
   }
 
   const token = generateShareToken();

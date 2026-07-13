@@ -797,6 +797,17 @@ model Group {
   @@index([ownerUserId])
 }
 
+// Slug tombstone (W5). A group slug is the RP gating key (rooms gate on
+// `where: { group: "acme" }`), so deleting a group and immediately re-founding the
+// same slug would let the NEW group's members satisfy a gate meant for the old
+// group. deleteGroup writes a tombstone; createGroup refuses to re-found a slug
+// tombstoned within SLUG_TOMBSTONE_DAYS, giving RP status lists + entitlement
+// sweeps time to propagate the old group's revocations before the name is reusable.
+model GroupSlugTombstone {
+  slug      String   @id
+  deletedAt DateTime @default(now())
+}
+
 model GroupMembership {
   id       String  @id @default(cuid())
   groupId  String
@@ -891,6 +902,21 @@ model BadgeStatusEntry {
   @@unique([listId, bitIndex])
   // The publisher scans revoked-but-eligible entries by list.
   @@index([listId, revokedAt])
+}
+
+// Durable per-ANCHOR revocation tombstone (W1). Keyed on the fact (statusAnchor),
+// written by revokeStatusAnchor INDEPENDENTLY of whether any per-RP
+// BadgeStatusEntry existed at revoke time. This closes the post-revoke allocation
+// race: a member kicked before ever disclosing to an RP (no entry to flip) — or a
+// disclosure in flight while the kick commits — would otherwise allocate a FRESH
+// entry whose bit nobody sets, a permanently un-revocable handle. allocateStatusEntry
+// consults this row and is born-revoked (revokedAt = revealAfter = now) for an
+// already-revoked anchor. Never deleted (a re-add makes a NEW anchor, §5.1).
+model StatusAnchorRevocation {
+  statusAnchor String   @id
+  revokedAt    DateTime @default(now())
+  reason       String
+  createdAt    DateTime @default(now())
 }
 
 // Singleton (id = "singleton"). Recovery threshold with delayed-apply. The live

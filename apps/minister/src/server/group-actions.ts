@@ -26,6 +26,14 @@ export type CreateGroupResult =
 // Canonical slug: lowercase [a-z0-9] with single internal hyphens (no leading/
 // trailing/double hyphen). Kept in lockstep with GroupMembershipClaims.group.
 const SLUG_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/u;
+
+// W5: how long a deleted slug is quarantined before it may be re-founded. A group
+// slug is the RP gating key (`where: { group: "acme" }`), so immediate re-founding
+// would let a NEW group's members satisfy a gate meant for the old one. The window
+// covers RP status-list publication + entitlement-sweep propagation (minutes) with
+// wide margin; 30 days is deliberately conservative for v1.
+const SLUG_TOMBSTONE_DAYS = 30;
+const SLUG_TOMBSTONE_MS = SLUG_TOMBSTONE_DAYS * 24 * 60 * 60 * 1000;
 const SlugSchema = z
   .string()
   .trim()
@@ -109,6 +117,20 @@ export async function createGroup(input: unknown): Promise<CreateGroupResult> {
   const existing = await prisma.group.findUnique({ where: { slug }, select: { id: true } });
   if (existing) return { ok: false, error: "That group name is already taken." };
 
+  // W5: refuse to re-found a slug tombstoned within the cooldown, so a
+  // deleted group's gating name can't be immediately reused to admit a new
+  // group's members to rooms gated on the old group.
+  const tombstone = await prisma.groupSlugTombstone.findUnique({
+    where: { slug },
+    select: { deletedAt: true },
+  });
+  if (tombstone && Date.now() - tombstone.deletedAt.getTime() < SLUG_TOMBSTONE_MS) {
+    return {
+      ok: false,
+      error: "That group name was recently used and isn't available yet. Please choose another.",
+    };
+  }
+
   // Founding gate — config-driven, never hardcoded.
   let config: { foundingMinBucket: number; maxOwnedGroups: number };
   try {
@@ -164,6 +186,9 @@ export async function createGroup(input: unknown): Promise<CreateGroupResult> {
         statusAnchor: groupMembershipAnchor(membership.id),
         tx,
       });
+      // Clear any (now expired-and-passed) tombstone for this slug — this founding
+      // already cleared the cooldown check above.
+      await tx.groupSlugTombstone.deleteMany({ where: { slug } });
       await audit(userId, "group.created", { groupId: group.id, slug: group.slug }, tx);
       return group.id;
     });
@@ -193,7 +218,7 @@ export async function deleteGroup(input: unknown): Promise<GroupActionResult> {
   const { groupId } = parsed.data;
 
   try {
-    await requireGroupRole(groupId, session.user.id, "owner");
+    const ctx = await requireGroupRole(groupId, session.user.id, "owner");
     await prisma.$transaction(async (tx) => {
       // Revoke every member's badge BEFORE the cascade deletes the membership
       // rows (§7.1): the anchor is "gm:<membershipId>", so we must read the ids
@@ -214,7 +239,14 @@ export async function deleteGroup(input: unknown): Promise<GroupActionResult> {
         });
       }
       await tx.group.delete({ where: { id: groupId } });
-      await audit(session.user.id, "group.deleted", { groupId }, tx);
+      // W5: tombstone the slug so it can't be re-founded during the cooldown while
+      // RPs are still propagating this group's revocations.
+      await tx.groupSlugTombstone.upsert({
+        where: { slug: ctx.group.slug },
+        create: { slug: ctx.group.slug },
+        update: { deletedAt: new Date() },
+      });
+      await audit(session.user.id, "group.deleted", { groupId, slug: ctx.group.slug }, tx);
     });
     revalidatePath("/groups");
     return { ok: true };

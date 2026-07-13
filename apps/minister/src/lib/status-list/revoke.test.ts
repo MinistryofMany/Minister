@@ -8,13 +8,38 @@ interface EntryRow {
   revokedAt: Date | null;
   revealAfter: Date | null;
 }
+interface AnchorRevRow {
+  statusAnchor: string;
+  revokedAt: Date;
+  reason: string;
+}
 
 const h = vi.hoisted(() => {
   const store = {
     entries: [] as EntryRow[],
+    anchorRevs: [] as AnchorRevRow[],
     audits: [] as { userId: string | null; action: string; metadata: Record<string, unknown> }[],
   };
   const client = {
+    statusAnchorRevocation: {
+      upsert: vi.fn(
+        async ({
+          where,
+          create,
+        }: {
+          where: { statusAnchor: string };
+          create: { statusAnchor: string; revokedAt: Date; reason: string };
+          update: Record<string, never>;
+        }) => {
+          const existing = store.anchorRevs.find((r) => r.statusAnchor === where.statusAnchor);
+          // update: {} => idempotent, keep the first revocation.
+          if (existing) return existing;
+          const row = { ...create };
+          store.anchorRevs.push(row);
+          return row;
+        },
+      ),
+    },
     badgeStatusEntry: {
       findMany: vi.fn(async ({ where }: { where: { statusAnchor: string; revokedAt: null } }) => {
         return store.entries
@@ -67,6 +92,7 @@ const asClient = client as unknown as RevokeClientArg;
 
 beforeEach(() => {
   store.entries = [];
+  store.anchorRevs = [];
   store.audits = [];
   vi.clearAllMocks();
 });
@@ -126,5 +152,28 @@ describe("revokeStatusAnchor", () => {
   it("no handles for the fact (never disclosed) => nothing to do", async () => {
     const count = await revokeStatusAnchor({ anchor: "gm:never", reason: "r", client: asClient });
     expect(count).toBe(0);
+  });
+
+  it("W1: writes a durable anchor tombstone even when the fact was NEVER disclosed", async () => {
+    // The case a per-entry-only revoke could never cover: a member kicked before
+    // ever disclosing to any RP. The durable row is what makes a LATER disclosure's
+    // allocation born-revoked.
+    const count = await revokeStatusAnchor({
+      anchor: "gm:neverdisclosed",
+      reason: "group.member_removed",
+      client: asClient,
+    });
+    expect(count).toBe(0);
+    expect(store.anchorRevs.map((r) => r.statusAnchor)).toContain("gm:neverdisclosed");
+  });
+
+  it("W1: the anchor tombstone is idempotent (keeps the first revocation)", async () => {
+    await revokeStatusAnchor({ anchor: "gm:m1", reason: "first", client: asClient });
+    const firstAt = store.anchorRevs[0]!.revokedAt;
+    await revokeStatusAnchor({ anchor: "gm:m1", reason: "second", client: asClient });
+    const rows = store.anchorRevs.filter((r) => r.statusAnchor === "gm:m1");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.revokedAt).toBe(firstAt);
+    expect(rows[0]!.reason).toBe("first");
   });
 });

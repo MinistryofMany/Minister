@@ -172,6 +172,48 @@ export async function register(): Promise<void> {
     }, jitter);
     startTimer.unref();
   }
+
+  // Badge-revocation status-list PUBLISHER interval (docs/groups-revocation-design.md
+  // §5.5). Without a runner NO list is ever signed: /status/[listId] 503s forever,
+  // every RP status check returns "stale", and — with the SDK's fail-open default —
+  // a kicked member silently RETAINS access. This is the layer-2 single-writer.
+  // PRODUCTION-ONLY (dev/test use the `status:publish` script); jittered start;
+  // advisory-locked so a second instance no-ops; publisher-lag alerting (a SECURITY
+  // control, §9.8) runs each pass. Every tick is wrapped so a failure LOGS and never
+  // crashes boot or serving.
+  //
+  // The explicit NEXT_RUNTIME guard (redundant with the early return above at
+  // runtime) is FOR WEBPACK, exactly like the stats block: the publisher pulls in
+  // issuer -> @minister/vc -> node:path/node:fs, which cannot resolve on edge. The
+  // statically-false branch makes webpack drop this dynamic import from the edge
+  // compile entirely.
+  if (process.env.NEXT_RUNTIME === "nodejs" && process.env.NODE_ENV === "production") {
+    const { env } = await import("@/env");
+    const publishIntervalMs = env.MINISTER_STATUS_PUBLISH_INTERVAL_MS;
+
+    const publishOnce = async (): Promise<void> => {
+      try {
+        const { runScheduledPublish } = await import("@/lib/status-list");
+        const outcome = await runScheduledPublish(publishIntervalMs);
+        if (outcome === "published") {
+          console.info("[instrumentation] status-list publisher pass complete.");
+        }
+      } catch (err) {
+        console.error(
+          "[instrumentation] status-list publish failed (will retry next interval): " +
+            (err instanceof Error ? err.message : String(err)),
+        );
+      }
+    };
+
+    const publishJitter = Math.floor(Math.random() * publishIntervalMs);
+    const publishStartTimer = setTimeout(() => {
+      void publishOnce();
+      const interval = setInterval(() => void publishOnce(), publishIntervalMs);
+      interval.unref();
+    }, publishJitter);
+    publishStartTimer.unref();
+  }
 }
 
 // A Prisma/Postgres "schema object is missing" error (table or column absent),
