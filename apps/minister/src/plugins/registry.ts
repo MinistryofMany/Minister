@@ -6,12 +6,14 @@ import { emailExactPlugin } from "./email-exact";
 import { githubPlugin } from "./github";
 import { googlePlugin } from "./google";
 import { hackernewsPlugin } from "./hackernews";
+import { instagramPlugin } from "./instagram";
 import { inviteCodePlugin } from "./invite-code";
 import { publicKeyPlugin } from "./public-key";
 import { redditPlugin } from "./reddit";
 import { steamPlugin } from "./steam";
 import { tlsnAttestationPlugin } from "./tlsn-attestation";
 import { walletPlugin } from "./wallet";
+import { youtubePlugin } from "./youtube";
 
 // In-process registry — CLAUDE.md explicitly forbids dynamic loading.
 // Add a plugin by importing it and appending here.
@@ -24,6 +26,8 @@ const PLUGINS: Plugin[] = [
   redditPlugin,
   steamPlugin,
   hackernewsPlugin,
+  instagramPlugin,
+  youtubePlugin,
   walletPlugin,
   inviteCodePlugin,
   tlsnAttestationPlugin,

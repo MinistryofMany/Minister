@@ -34,12 +34,13 @@ origin, so register whichever origin you actually run on.
 
 The `OAUTH_PROVIDERS` list lives in `packages/shared/src/badge-types.ts` AND is
 hand-transcribed into the separate `@minister/client` repo
-(`minister-client/src/badges`). This repo just added `reddit`, `steam`,
-`hackernews`, and `x` to that list. The SDK mirror and the planned cross-repo
-drift-check are **not** updated by this change. Before any relying party
-(FreedInk, Discreetly, etc.) gates on a badge from one of these new providers,
-update the `@minister/client` mirror and the drift-check, or the RP will
-silently reject the badge (strict drift fails closed).
+(`minister-client/src/badges`). This repo has added `reddit`, `steam`,
+`hackernews`, `x`, `instagram`, and `youtube` to that list over time. The SDK
+mirror and the planned cross-repo drift-check are **not** updated by any of
+these additions. Before any relying party (FreedInk, Discreetly, etc.) gates on
+a badge from one of these new providers, update the `@minister/client` mirror
+and the drift-check, or the RP will silently reject the badge (strict drift
+fails closed).
 
 ---
 
@@ -106,15 +107,60 @@ immutable anchor) and `account-age` (from `created`).
 
 Notes: tier-1 only. This issues a plain Google-account `oauth-account` badge
 whose handle is the user's **verified** email; the Sybil anchor is the immutable
-`sub`. **Follow-on (not built):** YouTube channel-ownership proof needs the
-`youtube.readonly` scope, which is a **sensitive scope requiring Google app
-review and verification**. That is deliberately out of scope here; wire it as a
-separate flow once the review is done.
+`sub`. YouTube channel-ownership is now a separate plugin (below) that reuses
+this same OAuth client.
 
-## Instagram - deferred (do not build)
+## YouTube
 
-Instagram has **no personal-account identity API** since Basic Display was shut
-down (the Graph API covers only Business/Creator accounts via a linked Facebook
-Page, which is not a personal-account ownership proof). An Instagram badge is
-**deferred to the TLSNotary track** (prove control by notarizing an
-authenticated instagram.com session), not built as an OAuth provider.
+- **Register at:** the same **Google Cloud** project as Google above
+  (`console.cloud.google.com/apis/credentials`); enable the **YouTube Data API
+  v3**. No separate OAuth client is required.
+- **Redirect / callback URI:** `https://ministry.id/badges/new/youtube/callback`
+- **Scopes:** `https://www.googleapis.com/auth/youtube.readonly` — a
+  **sensitive scope requiring Google app verification/review** before it works
+  for anyone beyond the app's own registered test users.
+- **Env (.env):** shares the Google plugin's credentials, no new vars:
+  ```
+  GOOGLE_CLIENT_ID=...
+  GOOGLE_CLIENT_SECRET=...
+  ```
+
+Notes: same OAuth client as Google, different requested scope and API
+(`youtube/v3/channels?part=snippet&mine=true`). Issues `oauth-account` (handle
+= the channel's `@handle` customUrl, falling back to its display title; Sybil
+anchor = the immutable channel id). Until the OAuth client passes Google's
+sensitive-scope review, this plugin only works for the app's own test users —
+`isConfigured()` only checks the credentials are present, not that review has
+been granted.
+
+## Instagram
+
+- **Register at:** https://developers.facebook.com/apps -> create a Meta App
+  with the **Facebook Login** and **Instagram** products enabled. There is no
+  Instagram-specific developer console anymore.
+- **Redirect / callback URI:** `https://ministry.id/badges/new/instagram/callback`
+- **Scopes:** `pages_show_list,instagram_basic` — both **Advanced Access**
+  permissions requiring Meta App Review before they work for anyone beyond the
+  app's own admins/testers/developers.
+- **Env (.env):**
+  ```
+  INSTAGRAM_CLIENT_ID=...
+  INSTAGRAM_CLIENT_SECRET=...
+  ```
+
+**Read before gating anything on this badge:** Meta shut down the Instagram
+Basic Display API in December 2024, which was the only OAuth path that proved
+control of a plain **personal** Instagram account. The only remaining
+OAuth-based identity path — "Instagram API with Facebook Login", used here —
+reaches **only** Instagram Business/Creator accounts linked to a Facebook Page
+the user administers. This plugin therefore proves "you administer a Facebook
+Page with a linked Instagram Business/Creator account", **not** "you own a
+personal Instagram account". A plain personal-account proof would still need
+the TLSNotary track (notarizing an authenticated instagram.com session);
+that remains unbuilt.
+
+Notes: the plugin walks the user's `/me/accounts` Pages (as returned, no
+pagination beyond the first response) looking for the first one with a linked
+`instagram_business_account`, then reads that account's `username`. Issues
+`oauth-account` (handle = username; Sybil anchor = the immutable Instagram
+Business Account id).
