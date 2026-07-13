@@ -106,6 +106,10 @@ services:
     environment:
       VERIFIER_MODE: ${VERIFIER_MODE:-passthrough}
       RUST_LOG: ${RUST_LOG:-info}
+      # In real mode, pin the notary's verifying key (hex) so only OUR notary's
+      # signatures are trusted. Unset => cryptographic validity is still
+      # enforced, but any notary is accepted (dev only; logs a warning).
+      TLSN_NOTARY_PUBLIC_KEY: ${TLSN_NOTARY_PUBLIC_KEY:-}
     ports:
       - "7048:7048"
     healthcheck:
