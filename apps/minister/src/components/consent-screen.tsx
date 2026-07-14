@@ -212,6 +212,18 @@ export function ConsentScreen({
         nameValue,
         avatarValue,
       });
+      if (result && "redirectTo" in result) {
+        // Anon-identity fragment delivery (spec §8.2). The client vault appends
+        // "#minister_anon=v1.<per-app-secret>" to redirectTo before navigating.
+        // Until that vault lands (spec §11.3), navigate WITHOUT the fragment:
+        // login completes and the RP shows its "connect your anonymous identity"
+        // state — the documented fail-closed degradation (§8.3), never a made-up
+        // secret. redirectTo is held only in this transient scope and never
+        // written to storage/logs (§8.2 step 4).
+        // ponytail: fragment append lands with the client vault module.
+        window.location.assign(result.redirectTo);
+        return;
+      }
       if (result?.error) setError(result.error);
     });
   }

@@ -5,6 +5,7 @@ import { randomBytes } from "node:crypto";
 import { redirect } from "next/navigation";
 import { z } from "zod";
 
+import { env } from "@/env";
 import { audit } from "@/lib/audit";
 import { holderCountsByType } from "@/lib/anonymity-sets";
 import { getIssuer } from "@/lib/issuer";
@@ -57,7 +58,7 @@ const CODE_TTL_SECONDS = 60; // per CLAUDE.md "Required security" §
 
 export async function approveConsent(
   input: z.infer<typeof ApproveInput>,
-): Promise<never | { error: string }> {
+): Promise<never | { error: string } | { redirectTo: string; anonAppId: string }> {
   const session = await getCurrentSession();
   if (!session?.user?.id) {
     return { error: "Not signed in" };
@@ -339,7 +340,28 @@ export async function approveConsent(
     sybilBucket,
   });
 
-  redirect(buildSuccessRedirect(request.redirectUri, code, request.state));
+  const successUrl = buildSuccessRedirect(request.redirectUri, code, request.state);
+
+  // Anon-identity fragment delivery (spec §8.2). For an anon-enabled client
+  // (the feature flag is on AND the client carries an anonAppId), the final hop
+  // becomes CLIENT-driven: RETURN the same code+state success URL so the consent
+  // client can append the per-app-secret fragment — which the server never
+  // holds (§2) — before navigating. The authorization code is UNCHANGED: still
+  // PKCE(S256)- and state-bound, single-use, 60s TTL, created transiently in the
+  // transaction above and never re-issued here. A non-anon client, or the flag
+  // off, keeps the existing server-side redirect byte-for-byte (§8.3), so the
+  // whole feature is inert until both conditions hold.
+  if (env.ANON_IDENTITY_ENABLED) {
+    const client = await prisma.oidcClient.findUnique({
+      where: { clientId: request.clientId },
+      select: { anonAppId: true },
+    });
+    if (client?.anonAppId) {
+      return { redirectTo: successUrl, anonAppId: client.anonAppId };
+    }
+  }
+
+  redirect(successUrl);
 }
 
 export async function denyConsent(

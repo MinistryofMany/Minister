@@ -103,6 +103,13 @@ model User {
   // owner-role membership row) and hold memberships in others' groups.
   ownedGroups      Group[]           @relation("GroupOwner")
   groupMemberships GroupMembership[]
+
+  // Anonymous-identity derivation (anon-identity master spec). One enrollment
+  // row per user (created lazily at first seed generation, never deleted) plus
+  // the PRF-wrapped seed blobs. Ministry holds CIPHERTEXT ONLY — never the seed
+  // (governing invariant, spec §2).
+  anonSeedEnrollment AnonSeedEnrollment?
+  anonSeedBlobs      AnonSeedBlob[]
 }
 
 // A user-uploaded avatar photo, held as a bytea blob. Deliberately a SEPARATE
@@ -333,6 +340,11 @@ model OidcClient {
   redirectUris     String[]
   allowedScopes    String[]
   ownerUserId      String?
+  // Anonymous-identity namespace (anon-identity master spec §8.1). A lowercase
+  // slug (^[a-z0-9-]{3,32}$); null = the client is NOT anon-enabled (no fragment
+  // ever delivered). IMMUTABLE once set — the admin update path refuses changes,
+  // because rotating it would silently fork every user's identity in that app.
+  anonAppId        String?  @unique
   createdAt        DateTime @default(now())
 
   owner User? @relation(fields: [ownerUserId], references: [id], onDelete: SetNull)
@@ -498,6 +510,49 @@ model AuditLog {
 
   @@index([userId, createdAt])
   @@index([action, createdAt])
+}
+
+// Anonymous-identity enrollment state (anon-identity master spec §6.1, §11.1).
+// Holds ONLY metadata — timestamps, status, and a monotonic epoch counter. No
+// key material ever (governing invariant §2). One row per user, created lazily
+// at first seed generation and NEVER deleted thereafter (user-deletion cascade
+// aside); every reset bumps `enrollmentEpoch` and nulls the timestamps.
+//
+// State encoding: `none` = no row or seedGeneratedAt null; PENDING_BACKUP =
+// seedGeneratedAt set + backupConfirmedAt null; ACTIVE = both set.
+model AnonSeedEnrollment {
+  userId            String    @id
+  user              User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // Monotonic; +1 on every reset. AAD-bound into every PRF-wrapped blob (§7.1),
+  // so a stale pre-reset blob fails GCM authentication — the anti-rollback
+  // property (I12).
+  enrollmentEpoch   Int       @default(1)
+  seedGeneratedAt   DateTime?
+  backupConfirmedAt DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+}
+
+// A PRF-wrapped root-seed blob (anon-identity master spec §7.1, §11.1). Stores
+// AES-256-GCM CIPHERTEXT ONLY, under a KEK derived from a WebAuthn PRF output
+// that never leaves the user's browser. A full DB dump yields zero seeds. The
+// AAD binding (userId, credentialId, wrapVersion, enrollmentEpoch) lives in the
+// ciphertext, not here.
+model AnonSeedBlob {
+  id           String   @id @default(cuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // base64url WebAuthn credential id used for the PRF wrap.
+  credentialId String
+  // AES-256-GCM(seed) including the 16-byte tag: exactly 32 bytes.
+  ciphertext   Bytes
+  // Fresh random 12-byte IV per wrap.
+  iv           Bytes
+  wrapVersion  Int      @default(1)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@unique([userId, credentialId])
 }
 
 // Per-user, per-plugin wizard run. Persists across requests (and email
