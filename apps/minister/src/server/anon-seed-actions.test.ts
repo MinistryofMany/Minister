@@ -317,6 +317,27 @@ describe("rate limiting (spec §13) — per-user, fail closed on the write actio
     expect(h.audit).not.toHaveBeenCalled();
   });
 
+  it("confirmSeedBackup is refused and touches no table", async () => {
+    const res = await confirmSeedBackup();
+    expect(res.ok).toBe(false);
+    if (res.ok) return;
+    expect(res.error).toMatch(/too many requests/i);
+    expect(h.rateLimit.check).toHaveBeenCalledWith("user-123");
+    expect(h.db.anonSeedEnrollment.findUnique).not.toHaveBeenCalled();
+    expect(h.db.anonSeedEnrollment.update).not.toHaveBeenCalled();
+    expect(h.audit).not.toHaveBeenCalled();
+  });
+
+  it("deleteSeedBlob is refused and touches no table", async () => {
+    const res = await deleteSeedBlob({ credentialId: CRED });
+    expect(res.ok).toBe(false);
+    if (res.ok) return;
+    expect(res.error).toMatch(/too many requests/i);
+    expect(h.rateLimit.check).toHaveBeenCalledWith("user-123");
+    expect(h.db.anonSeedBlob.deleteMany).not.toHaveBeenCalled();
+    expect(h.audit).not.toHaveBeenCalled();
+  });
+
   it("read actions are NOT rate limited (getAnonSeedState ignores the limiter)", async () => {
     h.db.anonSeedEnrollment.findUnique.mockResolvedValue(activeEnrollment(1));
     const res = await getAnonSeedState();

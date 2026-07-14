@@ -474,6 +474,18 @@ async function issueBadgesAndComplete(args: {
 }): Promise<string[]> {
   const { sessionId, userId, pluginId, issued } = args;
 
+  // In-flight-wizard backup gate (spec §6.4): the single completion choke point
+  // every badge-issuance path routes through. startWizard already refuses to
+  // START a wizard mid-enrollment, but a user can generate a seed (→
+  // PENDING_BACKUP) AFTER a wizard began and then reach completion here — so
+  // re-check at the terminal step, before anything is minted. No-op for
+  // none/ACTIVE users and when the flag is off (isAnonBackupPending returns
+  // false for all three), so it never bites a user without an in-progress
+  // enrollment. Lazily imported to keep the env-coupled gate out of wizard.ts's
+  // static graph (mirrors the startWizard gate).
+  const { isAnonBackupPending } = await import("@/lib/anon-seed/backup-gate");
+  if (await isAnonBackupPending(userId)) throw new AnonBackupPendingError();
+
   const anchorSeen = issued.some((b) => typeof b.sybilAnchor === "string");
   // Minted once, lazily, only if this batch actually nullifies something.
   let ownerHandle: string | null = null;

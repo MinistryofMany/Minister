@@ -176,6 +176,9 @@ export async function confirmSeedBackup(): Promise<Result<{ state: AnonSeedState
   const session = await requireSession();
   const userId = session.user.id;
 
+  const limited = rateLimitGuard(userId);
+  if (limited) return limited;
+
   const existing = await prisma.anonSeedEnrollment.findUnique({ where: { userId } });
   if (!existing || existing.seedGeneratedAt === null) {
     return { ok: false, error: "Generate an anonymous key before confirming its backup." };
@@ -301,6 +304,9 @@ export async function deleteSeedBlob(
   if (!env.ANON_IDENTITY_ENABLED) return { ok: false, error: DISABLED_ERROR };
   const session = await requireSession();
   const userId = session.user.id;
+
+  const limited = rateLimitGuard(userId);
+  if (limited) return limited;
 
   const parsed = DeleteBlobInput.safeParse(input);
   if (!parsed.success) return { ok: false, error: "Invalid credential id" };

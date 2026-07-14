@@ -126,6 +126,11 @@ vi.mock("@/lib/prisma", () => ({ prisma: h.prisma }));
 vi.mock("@/lib/issuer", () => ({ getIssuer: vi.fn() }));
 vi.mock("@/lib/mailer", () => ({ sendMail: vi.fn().mockResolvedValue(undefined) }));
 vi.mock("@/plugins/registry", () => ({ getPlugin: vi.fn() }));
+// This harness exercises the minting/nullifier path, not the Private Identity
+// enrollment gate: stub it to "no in-progress enrollment" (as flag-off/none
+// would report) so completion runs, and so the real env-coupled gate module is
+// never loaded (its @/env parse would throw here — AUTH_SECRET is unset).
+vi.mock("@/lib/anon-seed/backup-gate", () => ({ isAnonBackupPending: vi.fn(async () => false) }));
 
 import { getIssuer } from "@/lib/issuer";
 import { emailDomainPlugin } from "@/plugins/email-domain";
