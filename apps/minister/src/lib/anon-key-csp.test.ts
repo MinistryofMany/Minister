@@ -1,17 +1,22 @@
 import { describe, expect, it } from "vitest";
 
-import { anonKeyCspResponse, buildAnonKeyCsp, isAnonKeyPath } from "@/lib/anon-key-csp";
+import { anonKeyCspResponse, buildAnonKeyCsp, isStrictCspPath } from "@/lib/anon-key-csp";
 
-describe("isAnonKeyPath", () => {
+describe("isStrictCspPath", () => {
   it("matches the anon-key route and its subpaths", () => {
-    expect(isAnonKeyPath("/settings/private-identity")).toBe(true);
-    expect(isAnonKeyPath("/settings/private-identity/recover")).toBe(true);
+    expect(isStrictCspPath("/settings/private-identity")).toBe(true);
+    expect(isStrictCspPath("/settings/private-identity/recover")).toBe(true);
+  });
+
+  it("matches the OIDC authorize consent route", () => {
+    expect(isStrictCspPath("/oidc/authorize")).toBe(true);
   });
 
   it("does not match sibling settings routes or prefix look-alikes", () => {
-    expect(isAnonKeyPath("/settings")).toBe(false);
-    expect(isAnonKeyPath("/settings/profile")).toBe(false);
-    expect(isAnonKeyPath("/settings/private-identities")).toBe(false);
+    expect(isStrictCspPath("/settings")).toBe(false);
+    expect(isStrictCspPath("/settings/profile")).toBe(false);
+    expect(isStrictCspPath("/settings/private-identities")).toBe(false);
+    expect(isStrictCspPath("/oidc/token")).toBe(false);
   });
 });
 
@@ -42,7 +47,22 @@ describe("anonKeyCspResponse", () => {
     expect(csp).toMatch(/'nonce-[a-f0-9]+'/);
   });
 
+  it("sets the CSP header + nonce on /oidc/authorize and forwards it to Next", () => {
+    const requestHeaders = new Headers();
+    const res = anonKeyCspResponse("/oidc/authorize", requestHeaders, false);
+    expect(res).not.toBeNull();
+    // Nonce must ride the outgoing response header so the consent page is locked.
+    const csp = res!.headers.get("content-security-policy");
+    expect(csp).toContain("script-src 'self'");
+    expect(csp).toContain("'strict-dynamic'");
+    expect(csp).toMatch(/'nonce-[a-f0-9]+'/);
+    // style-src must keep 'unsafe-inline' — the consent form and Next/Tailwind
+    // inline critical CSS would white-screen otherwise.
+    expect(csp).toContain("style-src 'self' 'unsafe-inline'");
+  });
+
   it("returns null (no header) for out-of-scope routes", () => {
     expect(anonKeyCspResponse("/settings/profile", new Headers(), false)).toBeNull();
+    expect(anonKeyCspResponse("/oidc/token", new Headers(), false)).toBeNull();
   });
 });

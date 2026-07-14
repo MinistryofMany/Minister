@@ -41,10 +41,11 @@ export default auth((req) => {
     return Response.redirect(url);
   }
 
-  // Strict CSP for the anon-key dogfood route only (user is authed by here).
-  // Blocks inline/third-party script — the at-use XSS that would read the
-  // client-side seed this page holds in memory. Nonce-based so Next 15 still
-  // hydrates. Scoped here, NOT globally and NOT on /oidc/authorize.
+  // Strict CSP for the seed-bearing routes only (user is authed by here):
+  // /settings/private-identity and /oidc/authorize (the consent page derives
+  // per-app anon identity client-side). Blocks inline/third-party script — the
+  // at-use XSS that would read the client-side seed these pages hold in memory.
+  // Nonce + strict-dynamic so Next 15 still hydrates and the consent form works.
   const csp = anonKeyCspResponse(pathname, req.headers, process.env.NODE_ENV !== "production");
   if (csp) return csp;
 });

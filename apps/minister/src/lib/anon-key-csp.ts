@@ -1,17 +1,23 @@
 import { NextResponse } from "next/server";
 
-// The /settings/private-identity route holds the client-side anonymous seed in JS
-// memory during dogfooding, which makes it the one page where an at-use XSS
-// could read the seed. This module builds a strict, nonce-based CSP scoped to
-// that route only (wired in middleware). It is deliberately NOT applied to
-// /oidc/authorize: that page only handles the seed for anon-enabled OIDC
-// clients (none in the dogfood) and a bad CSP there would break consent for
-// every client — a separate, higher-blast-radius change.
+// Two routes touch the client-side anonymous seed in JS memory, which makes them
+// the pages where an at-use XSS could read the seed: /settings/private-identity
+// (dogfood seed management) and /oidc/authorize (the consent page, which derives
+// per-app anon identity for anon-enabled OIDC clients). This module builds a
+// strict, nonce-based CSP scoped to those routes only (wired in middleware). The
+// same nonce + strict-dynamic policy is used for both — it is the only strict
+// script-src that survives Next 15 hydration, so it does not break the consent
+// form. style-src keeps 'unsafe-inline' (not a seed-read vector).
 
 export const ANON_KEY_PATH = "/settings/private-identity";
+export const OIDC_AUTHORIZE_PATH = "/oidc/authorize";
 
-export function isAnonKeyPath(pathname: string): boolean {
-  return pathname === ANON_KEY_PATH || pathname.startsWith(`${ANON_KEY_PATH}/`);
+export function isStrictCspPath(pathname: string): boolean {
+  return (
+    pathname === ANON_KEY_PATH ||
+    pathname.startsWith(`${ANON_KEY_PATH}/`) ||
+    pathname === OIDC_AUTHORIZE_PATH
+  );
 }
 
 // Nonce-based is the only strict script-src that survives Next 15 hydration:
@@ -46,7 +52,7 @@ export function buildAnonKeyCsp(nonce: string, isDev: boolean): string {
   ].join("; ");
 }
 
-// Returns a pass-through response carrying the strict CSP for the anon-key
+// Returns a pass-through response carrying the strict CSP for a seed-bearing
 // route, or null when the path is out of scope (the caller then continues its
 // normal middleware flow). Next reads the nonce from the request-side CSP
 // header to nonce its own inline scripts, so we set the header on BOTH the
@@ -56,7 +62,7 @@ export function anonKeyCspResponse(
   requestHeaders: Headers,
   isDev: boolean,
 ): NextResponse | null {
-  if (!isAnonKeyPath(pathname)) return null;
+  if (!isStrictCspPath(pathname)) return null;
 
   const nonce = crypto.randomUUID().replace(/-/g, "");
   const csp = buildAnonKeyCsp(nonce, isDev);
