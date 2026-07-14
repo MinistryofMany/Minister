@@ -42,7 +42,7 @@ export const ANON_FRAGMENT_PREFIX = "#minister_anon=v1.";
 const PRF_EVAL_INPUT = new TextEncoder().encode("minister/anon-seed/prf/v1");
 
 /** PasswordCredential id for the L2 password-manager entry (spec §7.2). */
-export const PM_CREDENTIAL_ID = "anonymous-writing-key";
+export const PM_CREDENTIAL_ID = "Ministry Private Identity";
 
 // Preference key prefix (per-user, multi-account check 15). Value "1" only —
 // a stored CHOICE, never key material.
@@ -393,7 +393,7 @@ export async function savePasswordToManager(userId: string): Promise<PmSaveResul
     await navigator.credentials.store(
       new ctor({
         id: PM_CREDENTIAL_ID,
-        name: "Ministry anonymous key",
+        name: "Ministry Private Identity",
         password: encodeSeedToString(seed),
       }),
     );

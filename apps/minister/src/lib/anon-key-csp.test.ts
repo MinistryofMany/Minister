@@ -4,14 +4,14 @@ import { anonKeyCspResponse, buildAnonKeyCsp, isAnonKeyPath } from "@/lib/anon-k
 
 describe("isAnonKeyPath", () => {
   it("matches the anon-key route and its subpaths", () => {
-    expect(isAnonKeyPath("/settings/anonymous-key")).toBe(true);
-    expect(isAnonKeyPath("/settings/anonymous-key/recover")).toBe(true);
+    expect(isAnonKeyPath("/settings/private-identity")).toBe(true);
+    expect(isAnonKeyPath("/settings/private-identity/recover")).toBe(true);
   });
 
   it("does not match sibling settings routes or prefix look-alikes", () => {
     expect(isAnonKeyPath("/settings")).toBe(false);
     expect(isAnonKeyPath("/settings/profile")).toBe(false);
-    expect(isAnonKeyPath("/settings/anonymous-keys")).toBe(false);
+    expect(isAnonKeyPath("/settings/private-identities")).toBe(false);
   });
 });
 
@@ -33,7 +33,7 @@ describe("buildAnonKeyCsp", () => {
 
 describe("anonKeyCspResponse", () => {
   it("sets the CSP header on the anon-key route with a nonce", () => {
-    const res = anonKeyCspResponse("/settings/anonymous-key", new Headers(), false);
+    const res = anonKeyCspResponse("/settings/private-identity", new Headers(), false);
     expect(res).not.toBeNull();
     const csp = res!.headers.get("content-security-policy");
     expect(csp).toContain("script-src 'self'");

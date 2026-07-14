@@ -33,8 +33,8 @@ export default async function SettingsPage() {
     ? [
         ...SECURITY_LINKS,
         {
-          href: "/settings/anonymous-key",
-          title: "Anonymous writing key",
+          href: "/settings/private-identity",
+          title: "Private Identity",
           description:
             "Set up, unlock, and manage the key behind your anonymous identity in connected apps.",
         },

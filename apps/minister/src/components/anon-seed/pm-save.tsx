@@ -123,7 +123,7 @@ export function PmSave({ userId }: { userId: string }) {
                 autoComplete="new-password"
                 defaultValue={fallbackSecret}
                 readOnly
-                aria-label="Anonymous key"
+                aria-label="Private Identity"
                 className="rounded-md border border-neutral-300 bg-neutral-50 px-3 py-2 font-mono text-sm dark:border-neutral-700 dark:bg-neutral-900"
               />
             </div>

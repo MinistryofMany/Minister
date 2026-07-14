@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-// The /settings/anonymous-key route holds the client-side anonymous seed in JS
+// The /settings/private-identity route holds the client-side anonymous seed in JS
 // memory during dogfooding, which makes it the one page where an at-use XSS
 // could read the seed. This module builds a strict, nonce-based CSP scoped to
 // that route only (wired in middleware). It is deliberately NOT applied to
@@ -8,7 +8,7 @@ import { NextResponse } from "next/server";
 // clients (none in the dogfood) and a bad CSP there would break consent for
 // every client — a separate, higher-blast-radius change.
 
-export const ANON_KEY_PATH = "/settings/anonymous-key";
+export const ANON_KEY_PATH = "/settings/private-identity";
 
 export function isAnonKeyPath(pathname: string): boolean {
   return pathname === ANON_KEY_PATH || pathname.startsWith(`${ANON_KEY_PATH}/`);

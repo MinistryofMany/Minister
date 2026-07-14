@@ -316,7 +316,7 @@ function StoreStep({ userId, onDone }: { userId: string; onDone: () => void }) {
 // client-side via a Blob object URL — no request carries it anywhere.
 function downloadBackupFile(seedString: string, words: string[]): void {
   const content = [
-    "Ministry anonymous writing key — backup",
+    "Ministry Private Identity — backup",
     `Saved: ${new Date().toISOString().slice(0, 10)}`,
     "",
     `Key: ${seedString}`,
@@ -331,7 +331,7 @@ function downloadBackupFile(seedString: string, words: string[]): void {
   const url = URL.createObjectURL(new Blob([content], { type: "text/plain" }));
   const a = document.createElement("a");
   a.href = url;
-  a.download = "ministry-anonymous-key.txt";
+  a.download = "ministry-private-identity.txt";
   document.body.appendChild(a);
   a.click();
   a.remove();

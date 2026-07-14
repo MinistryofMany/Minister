@@ -293,6 +293,8 @@ describe("L2 save (spec 7.2)", () => {
       },
     });
     await expect(savePasswordToManager(USER)).resolves.toBe("stored");
-    expect(stored).toEqual([{ id: "anonymous-writing-key", password: encodeSeedToString(SEED) }]);
+    expect(stored).toEqual([
+      { id: "Ministry Private Identity", password: encodeSeedToString(SEED) },
+    ]);
   });
 });
