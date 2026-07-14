@@ -8,9 +8,9 @@
 //!     of shape `{ sent, received, serverName }` and returns it
 //!     untouched. Lets us exercise the Minister side without a real
 //!     TLSNotary prover.
-//!   - `real`: invokes the `tlsn-verifier` crate to actually verify the
-//!     presentation cryptographically. Crate integration is TODO — the
-//!     entry point is `verify_real()` below.
+//!   - `real`: cryptographically verifies the presentation via `tlsn-core`
+//!     (`Presentation::verify`). Entry point is `tlsn::verify_real`; it fails
+//!     closed on any input it cannot verify (never rubber-stamps).
 //!
 //! Listens on `0.0.0.0:7048` by default; override with `LISTEN_ADDR`.
 
@@ -27,6 +27,8 @@ use axum::{
 use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
+
+mod tlsn;
 
 #[derive(Clone)]
 struct AppState {
@@ -55,12 +57,21 @@ struct VerifyRequest {
     expected_domain: String,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Debug)]
 struct Transcript {
     sent: String,
     received: String,
     #[serde(rename = "serverName")]
     server_name: String,
+}
+
+/// The result of a verification, plus the notary key the caller may pin.
+#[derive(Debug)]
+pub struct VerifyOutcome {
+    transcript: Transcript,
+    /// Hex-encoded notary verifying key the presentation was signed with.
+    /// `None` in passthrough mode (no real signature).
+    notary_key: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -87,7 +98,9 @@ async fn main() -> Result<()> {
         )
         .init();
 
-    let state = AppState { mode: Mode::from_env() };
+    let state = AppState {
+        mode: Mode::from_env(),
+    };
     info!(?state.mode, "starting tlsn-verifier sidecar");
 
     let app = Router::new()
@@ -115,16 +128,19 @@ async fn verify(
 ) -> impl IntoResponse {
     let outcome = match state.mode {
         Mode::Passthrough => verify_passthrough(&req),
-        Mode::Real => verify_real(&req),
+        Mode::Real => tlsn::verify_real(&req.presentation, &req.expected_domain),
     };
 
     match outcome {
-        Ok(transcript) => (
+        Ok(VerifyOutcome {
+            transcript,
+            notary_key,
+        }) => (
             StatusCode::OK,
             Json(VerifyResponse::Ok {
                 ok: true,
                 transcript,
-                notary_key: None,
+                notary_key,
             }),
         ),
         Err(err) => {
@@ -144,7 +160,7 @@ async fn verify(
 /// shape `{ sent, received, serverName }`. Verify only that the server
 /// name matches; trust the rest. Lets Minister plugin flows be tested
 /// end-to-end without a TLSNotary prover in the loop.
-fn verify_passthrough(req: &VerifyRequest) -> Result<Transcript> {
+fn verify_passthrough(req: &VerifyRequest) -> Result<VerifyOutcome> {
     let bytes = B64
         .decode(req.presentation.as_bytes())
         .map_err(|e| anyhow!("presentation is not valid base64: {e}"))?;
@@ -159,10 +175,13 @@ fn verify_passthrough(req: &VerifyRequest) -> Result<Transcript> {
         ));
     }
 
-    Ok(Transcript {
-        sent: transcript.sent,
-        received: transcript.received,
-        server_name: transcript.server_name,
+    Ok(VerifyOutcome {
+        transcript: Transcript {
+            sent: transcript.sent,
+            received: transcript.received,
+            server_name: transcript.server_name,
+        },
+        notary_key: None,
     })
 }
 
@@ -174,20 +193,10 @@ struct PassthroughTranscript {
     server_name: String,
 }
 
-/// Real verification using the `tlsn-verifier` crate. TODO: wire the
-/// crate dependency in Cargo.toml, then implement against its API.
-/// Returns an error for now so a misconfigured prod doesn't silently
-/// rubber-stamp.
-fn verify_real(_req: &VerifyRequest) -> Result<Transcript> {
-    Err(anyhow!(
-        "VERIFIER_MODE=real is not yet wired to the tlsn-verifier crate. \
-         Pin the crate in Cargo.toml and replace this function."
-    ))
-}
-
 /// Exact-match domain check, with the small concession that the
 /// recorded server name is allowed to be `<expected>` or `<expected>:<port>`.
-fn host_matches(server_name: &str, expected: &str) -> bool {
+/// `pub(crate)` so the real-verification module (`tlsn`) reuses the same rule.
+pub(crate) fn host_matches(server_name: &str, expected: &str) -> bool {
     let trimmed = server_name.split(':').next().unwrap_or(server_name);
     trimmed.eq_ignore_ascii_case(expected)
 }
@@ -245,7 +254,7 @@ mod tests {
             presentation: B64.encode(payload),
             expected_domain: "example.com".to_string(),
         };
-        let transcript = verify_passthrough(&req).unwrap();
+        let transcript = verify_passthrough(&req).unwrap().transcript;
         assert_eq!(transcript.server_name, "example.com");
         assert!(transcript.received.contains("hello"));
     }
@@ -260,13 +269,18 @@ mod tests {
     }
 
     #[test]
-    fn real_mode_refuses_without_crate_integration() {
+    fn passthrough_returns_no_notary_key() {
+        let payload = serde_json::to_string(&serde_json::json!({
+            "sent": "",
+            "received": "",
+            "serverName": "example.com",
+        }))
+        .unwrap();
         let req = VerifyRequest {
-            presentation: B64.encode(b"{}"),
+            presentation: B64.encode(payload),
             expected_domain: "example.com".to_string(),
         };
-        let result = verify_real(&req);
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("not yet wired"));
+        let outcome = verify_passthrough(&req).unwrap();
+        assert!(outcome.notary_key.is_none());
     }
 }

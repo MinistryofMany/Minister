@@ -5,13 +5,17 @@
   "description": "Minister browser extension. Performs TLSNotary proofs in the user's browser and submits finalized presentations to Minister.",
   "type": "module",
   "scripts": {
-    "build": "tsc --noEmit",
-    "lint": "echo 'noop'",
     "typecheck": "tsc --noEmit",
-    "test": "echo 'no tests yet — prover lands in Stage 6+'"
+    "build": "node build.mjs",
+    "lint": "echo 'noop'",
+    "test": "node --test --experimental-strip-types src/*.test.ts"
+  },
+  "dependencies": {
+    "tlsn-js": "0.1.0-alpha.11.0"
   },
   "devDependencies": {
     "@types/chrome": "^0.0.287",
+    "esbuild": "^0.25.0",
     "typescript": "^5.6.3"
   },
   "license": "AGPL-3.0-only",
