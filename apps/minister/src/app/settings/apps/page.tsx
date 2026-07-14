@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 
 import { RpProfileForm } from "@/app/settings/apps/rp-profile-form";
+import { loadPerAppIds } from "@/app/settings/per-app-ids";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { prisma } from "@/lib/prisma";
 import { getCurrentSession } from "@/lib/session";
@@ -48,6 +49,10 @@ export default async function ConnectedAppsPage() {
   const nameByClientId = new Map(clients.map((c) => [c.clientId, c.name]));
   const overrideByClientId = new Map(overrides.map((o) => [o.clientId, o]));
 
+  // The pairwise `sub` each app receives (resolved server-side). Surfaced
+  // read-only below as an anti-correlation signal: a different ID per app.
+  const perAppIds = await loadPerAppIds(userId);
+
   const globalName = user?.displayName ?? null;
   const globalAvatar = user?.avatarUrl ?? null;
 
@@ -82,6 +87,34 @@ export default async function ConnectedAppsPage() {
           with that app.
         </p>
       </header>
+
+      {perAppIds.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Your IDs per app</CardTitle>
+            <CardDescription>
+              Each app sees a different pseudonymous ID for you, so they can&apos;t link your
+              activity across apps. These are the IDs Minister issues each app you&apos;ve
+              connected.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <ul className="flex flex-col gap-2">
+              {perAppIds.map((app) => (
+                <li
+                  key={app.sub}
+                  className="rounded-lg border border-neutral-200 p-3 dark:border-neutral-800"
+                >
+                  <div className="text-sm font-medium">{app.appName}</div>
+                  <div className="mt-1 break-all font-mono text-xs text-neutral-600 dark:text-neutral-400">
+                    {app.sub}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </CardContent>
+        </Card>
+      )}
 
       {apps.length === 0 ? (
         <Card>
