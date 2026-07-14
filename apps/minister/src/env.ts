@@ -102,6 +102,15 @@ const serverSchema = z
       .max(300_000)
       .default(60_000),
 
+    // Anonymous-identity feature flag (anon-identity master spec). Default
+    // false: when unset/false, every new anon route, server action, and the
+    // consent fragment-delivery path is inert — zero behavior change. Only
+    // "true" turns it on; any other value is off.
+    ANON_IDENTITY_ENABLED: z
+      .union([z.literal("true"), z.literal("false")])
+      .optional()
+      .transform((v) => v === "true"),
+
     NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   })
   .superRefine((val, ctx) => {

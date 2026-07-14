@@ -5,7 +5,12 @@ import { z } from "zod";
 
 import { audit } from "@/lib/audit";
 import { generateInviteCode, normalizeInviteCode } from "@/lib/invite-codes";
-import { parseRedirectUris, validateClientScopes } from "@/lib/oidc-client-admin";
+import {
+  parseRedirectUris,
+  resolveAnonAppIdUpdate,
+  validateAnonAppId,
+  validateClientScopes,
+} from "@/lib/oidc-client-admin";
 import { generateClientId, generateClientSecret, hashClientSecret } from "@/lib/oidc-clients";
 import { prisma } from "@/lib/prisma";
 import { adminAction } from "@/server/admin-action";
@@ -211,6 +216,10 @@ const OidcClientFields = z.object({
   // parseRedirectUris.
   redirectUris: z.string(),
   scopes: z.array(z.string()).min(1, "Pick at least one scope"),
+  // Anonymous-identity namespace (anon-identity master spec §8.1). Optional;
+  // empty/absent → not anon-enabled. Shape-validated by validateAnonAppId;
+  // immutable once set (enforced in updateOidcClient).
+  anonAppId: z.string().optional(),
 });
 
 const CreateOidcClientInput = OidcClientFields.extend({
@@ -228,6 +237,19 @@ export const createOidcClient = adminAction(
     if (!uris.ok) return { ok: false, error: uris.error };
     const scopes = validateClientScopes(input.scopes);
     if (!scopes.ok) return { ok: false, error: scopes.error };
+    const anonAppId = validateAnonAppId(input.anonAppId);
+    if (!anonAppId.ok) return { ok: false, error: anonAppId.error };
+
+    // Uniqueness pre-check for a clean error (the DB unique constraint is the
+    // hard guarantee; a rare race surfaces as a P2002 the admin can retry).
+    if (anonAppId.anonAppId) {
+      const clash = await prisma.oidcClient.findUnique({
+        where: { anonAppId: anonAppId.anonAppId },
+        select: { id: true },
+      });
+      if (clash)
+        return { ok: false, error: `anon app id "${anonAppId.anonAppId}" is already in use` };
+    }
 
     const clientId = generateClientId();
     const clientSecret = input.publicClient ? null : generateClientSecret();
@@ -239,6 +261,7 @@ export const createOidcClient = adminAction(
         name: input.name,
         redirectUris: uris.uris,
         allowedScopes: scopes.scopes,
+        anonAppId: anonAppId.anonAppId,
         ownerUserId: session.user.id,
       },
       select: { id: true },
@@ -251,6 +274,7 @@ export const createOidcClient = adminAction(
       publicClient: input.publicClient,
       redirectUris: uris.uris,
       scopes: scopes.scopes,
+      anonAppId: anonAppId.anonAppId,
     });
 
     revalidatePath("/admin/oidc-clients");
@@ -271,14 +295,31 @@ export const updateOidcClient = adminAction(
     if (!uris.ok) return { ok: false, error: uris.error };
     const scopes = validateClientScopes(input.scopes);
     if (!scopes.ok) return { ok: false, error: scopes.error };
+    const anonAppId = validateAnonAppId(input.anonAppId);
+    if (!anonAppId.ok) return { ok: false, error: anonAppId.error };
 
     // Need clientId (the string outstanding tokens/codes reference by; no
-    // FK) to revoke them alongside the update.
+    // FK) to revoke them alongside the update, plus the current anonAppId to
+    // enforce immutability.
     const existing = await prisma.oidcClient.findUnique({
       where: { id: input.id },
-      select: { clientId: true },
+      select: { clientId: true, anonAppId: true },
     });
     if (!existing) return { ok: false, error: "Client not found" };
+
+    // anonAppId is IMMUTABLE ONCE SET (spec §8.1, invariant I7). resolve* only
+    // ever permits a null→slug first-set; a set value is untouched, a change is
+    // rejected. `set` is the value to newly write, or null to leave it alone.
+    const anonUpdate = resolveAnonAppIdUpdate(existing.anonAppId, anonAppId.anonAppId);
+    if (!anonUpdate.ok) return { ok: false, error: anonUpdate.error };
+    if (anonUpdate.set !== null) {
+      // First-time set on a not-yet-anon-enabled client. Uniqueness pre-check.
+      const clash = await prisma.oidcClient.findUnique({
+        where: { anonAppId: anonUpdate.set },
+        select: { id: true },
+      });
+      if (clash) return { ok: false, error: `anon app id "${anonUpdate.set}" is already in use` };
+    }
 
     // Any change to the client invalidates outstanding grants: it signals
     // to the RP that something changed and forces a fresh code exchange,
@@ -293,6 +334,9 @@ export const updateOidcClient = adminAction(
           name: input.name,
           redirectUris: uris.uris,
           allowedScopes: scopes.scopes,
+          // Only ever a null→slug first-set; a set value stays untouched
+          // (null omits the field from the UPDATE).
+          ...(anonUpdate.set !== null ? { anonAppId: anonUpdate.set } : {}),
         },
       }),
       prisma.oidcAccessToken.updateMany({

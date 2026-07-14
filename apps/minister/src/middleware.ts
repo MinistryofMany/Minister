@@ -1,5 +1,6 @@
 import NextAuth from "next-auth";
 
+import { anonKeyCspResponse } from "@/lib/anon-key-csp";
 import { authConfig } from "@/auth.config";
 import { clientIpFrom, signInEmailLimiter } from "@/lib/rate-limit";
 
@@ -39,6 +40,13 @@ export default auth((req) => {
     url.searchParams.set("from", req.nextUrl.pathname + req.nextUrl.search);
     return Response.redirect(url);
   }
+
+  // Strict CSP for the anon-key dogfood route only (user is authed by here).
+  // Blocks inline/third-party script — the at-use XSS that would read the
+  // client-side seed this page holds in memory. Nonce-based so Next 15 still
+  // hydrates. Scoped here, NOT globally and NOT on /oidc/authorize.
+  const csp = anonKeyCspResponse(pathname, req.headers, process.env.NODE_ENV !== "production");
+  if (csp) return csp;
 });
 
 // Routes the middleware gates. /, /u/[userId], /.well-known/* and

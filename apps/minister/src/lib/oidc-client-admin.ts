@@ -1,3 +1,5 @@
+import { ANON_APP_ID_PATTERN } from "@minister/shared";
+
 import { badgeScopes } from "@/lib/oidc-config";
 
 // Validation helpers for the admin OIDC-client management UI. Pure
@@ -90,6 +92,48 @@ export function parseRedirectUris(text: string): RedirectUrisResult {
 
   const unique = [...new Set(lines)];
   return { ok: true, uris: unique };
+}
+
+export type AnonAppIdResult = { ok: true; anonAppId: string | null } | { ok: false; error: string };
+
+// Validate the anonymous-identity namespace slug (anon-identity master spec
+// §8.1): a lowercase `^[a-z0-9-]{3,32}$` slug, or empty/absent → null (the
+// client is not anon-enabled). Immutability (a set value never changing) is
+// enforced by the admin ACTIONS, not here — this only checks shape. Uniqueness
+// is enforced by the DB unique constraint plus a pre-check in the action.
+export function validateAnonAppId(value: string | undefined | null): AnonAppIdResult {
+  const trimmed = (value ?? "").trim();
+  if (trimmed.length === 0) return { ok: true, anonAppId: null };
+  if (!ANON_APP_ID_PATTERN.test(trimmed)) {
+    return {
+      ok: false,
+      error: `Invalid anon app id "${trimmed}": must match ^[a-z0-9-]{3,32}$`,
+    };
+  }
+  return { ok: true, anonAppId: trimmed };
+}
+
+// Decide what an admin edit may do to a client's anonAppId, enforcing
+// immutability-once-set (anon-identity master spec §8.1, invariant I7). A set
+// value can NEVER change (rotating it silently forks every user's anonymous
+// identity in that app); only a null value may be first-set (null → slug). The
+// result's `set` is the value to write when it is a first-set, or null to leave
+// the field untouched (a blank submit can never clear a set value, and a repeat
+// of the current value is a no-op). Uniqueness of a first-set value is the
+// caller's job (DB unique constraint + pre-check).
+export type AnonAppIdUpdate = { ok: true; set: string | null } | { ok: false; error: string };
+
+export function resolveAnonAppIdUpdate(
+  existing: string | null,
+  submitted: string | null,
+): AnonAppIdUpdate {
+  if (existing !== null) {
+    if (submitted !== null && submitted !== existing) {
+      return { ok: false, error: "anon app id is immutable once set and cannot be changed" };
+    }
+    return { ok: true, set: null }; // untouched
+  }
+  return { ok: true, set: submitted }; // null → first-set (or still null)
 }
 
 export type ScopesResult = { ok: true; scopes: string[] } | { ok: false; error: string };

@@ -4,8 +4,10 @@ import { redirect } from "next/navigation";
 import { getBadgeType } from "@minister/shared";
 import { issuanceMonthStartSeconds } from "@minister/vc";
 
+import type { AnonConsentView } from "@/components/anon-seed/anon-consent-section";
 import { ConsentScreen } from "@/components/consent-screen";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { env } from "@/env";
 import type { AnonymityHint } from "@/lib/anonymity-hint";
 import { holderCountsByType } from "@/lib/anonymity-sets";
 import { loadUserBadges, summarizeAttributes, type DisplayBadge } from "@/lib/badges";
@@ -187,6 +189,37 @@ export default async function OidcAuthorizePage({ searchParams }: PageProps) {
       ? await loadBucketAnonymityHint(sybilBucketPreview)
       : null;
 
+  // Anon-identity (spec §6.2): for an anon-enabled client (flag on AND
+  // anonAppId set) surface the user's enrollment state so the consent screen
+  // can run inline enrollment/unlock and deliver the per-app-secret fragment
+  // client-side after approve. Absent otherwise — the section never renders
+  // and the flow is byte-identical to today's.
+  let anon: AnonConsentView | null = null;
+  if (env.ANON_IDENTITY_ENABLED) {
+    const anonClient = await prisma.oidcClient.findUnique({
+      where: { clientId: request.clientId },
+      select: { anonAppId: true },
+    });
+    if (anonClient?.anonAppId) {
+      const [enrollment, passkeyBlobCount] = await Promise.all([
+        prisma.anonSeedEnrollment.findUnique({ where: { userId: session.user.id } }),
+        prisma.anonSeedBlob.count({ where: { userId: session.user.id } }),
+      ]);
+      const status =
+        !enrollment || enrollment.seedGeneratedAt === null
+          ? ("none" as const)
+          : enrollment.backupConfirmedAt === null
+            ? ("pending_backup" as const)
+            : ("active" as const);
+      anon = {
+        appId: anonClient.anonAppId,
+        status,
+        passkeyBlobCount,
+        userId: session.user.id,
+      };
+    }
+  }
+
   return (
     <div className="mx-auto flex max-w-lg flex-col gap-6 px-4 py-12">
       <header className="space-y-1">
@@ -209,6 +242,7 @@ export default async function OidcAuthorizePage({ searchParams }: PageProps) {
         badgeChoices={badgeChoices}
         alreadyGranted={alreadyGranted}
         policyView={policyView}
+        anon={anon}
         requestToken={requestToken}
       />
     </div>
