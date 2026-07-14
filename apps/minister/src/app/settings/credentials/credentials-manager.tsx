@@ -415,19 +415,12 @@ export function CredentialsManager({ initial }: { initial: CredentialListing }) 
           ) : (
             <ul className="flex flex-col divide-y divide-neutral-200 dark:divide-neutral-800">
               {listing.accounts.map((a) => (
-                <li
-                  key={`${a.provider}:${a.providerAccountId}`}
-                  className="flex items-center justify-between gap-3 py-3"
-                >
-                  <span className="text-sm font-medium capitalize">{a.label ?? a.provider}</span>
-                  {a.status === "quarantined" ? (
-                    <span className="flex items-center gap-2">
-                      <Badge tone="quarantined">Security hold</Badge>
-                      <QuarantineHint until={a.quarantinedUntil} />
-                    </span>
-                  ) : (
-                    <Badge tone="active">Active</Badge>
-                  )}
+                <li key={a.id} className="flex items-center justify-between gap-3 py-3">
+                  <span className="text-sm font-medium">
+                    <span className="capitalize">{a.provider}</span>
+                    {a.handle ? <span className="text-neutral-500"> @{a.handle}</span> : null}
+                  </span>
+                  <Badge tone="active">Linked</Badge>
                 </li>
               ))}
             </ul>
