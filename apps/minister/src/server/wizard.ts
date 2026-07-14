@@ -39,6 +39,19 @@ export class PluginNotConfiguredError extends Error {
   }
 }
 
+// Thrown when startWizard is called while the user's Private Identity enrollment
+// is PENDING_BACKUP (spec §6.4): no badge value may be built on a seed that
+// hasn't been backed up. Carries the settings link the UI renders so the user
+// can go finish the backup. Only raised when the flag is on and the user is
+// mid-enrollment — `none` and ACTIVE users never see it.
+export class AnonBackupPendingError extends Error {
+  readonly href = "/settings/private-identity";
+  constructor() {
+    super("Finish backing up your Private Identity key before adding badges.");
+    this.name = "AnonBackupPendingError";
+  }
+}
+
 const SESSION_TTL_MINUTES = 60;
 
 // Copy for a mint that failed on issuance INFRASTRUCTURE (Signet down/slow,
@@ -228,6 +241,16 @@ export async function startWizard(
   const plugin = getPlugin(pluginId);
   if (!plugin) throw new Error(`Unknown plugin: ${pluginId}`);
   if (!isPluginConfigured(plugin)) throw new PluginNotConfiguredError(pluginId);
+
+  // Badge gate (spec §6.4): refuse to start any badge wizard while the user's
+  // Private Identity enrollment is PENDING_BACKUP, so nobody builds badge value
+  // on an unbackuped seed. No-op when the flag is off or the user has no
+  // in-progress enrollment (isAnonBackupPending returns false for none/active).
+  // Imported lazily so the env-coupled gate module stays out of wizard.ts's
+  // static graph — submitStep-only unit tests must not have to stub env just to
+  // load this file.
+  const { isAnonBackupPending } = await import("@/lib/anon-seed/backup-gate");
+  if (await isAnonBackupPending(userId)) throw new AnonBackupPendingError();
 
   const ctx = buildPluginContext(userId, origin);
   const state = await plugin.startWizard(ctx);

@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { KeyRound, Plus } from "lucide-react";
 
 import { ProfileForm } from "@/app/settings/profile-form";
+import { BackupPendingBanner } from "@/components/anon-seed/backup-pending-banner";
 import { BadgeGrid } from "@/components/badge-grid";
 import { RegisterPasskeyButton } from "@/components/register-passkey-button";
 import { RelyingParties } from "@/components/relying-parties";
@@ -53,6 +54,8 @@ export default async function ProfilePage() {
 
   return (
     <div className="mx-auto flex max-w-2xl flex-col gap-6 px-4 py-12">
+      <BackupPendingBanner userId={session.user.id} />
+
       {passkeyCount === 0 ? (
         <div
           role="region"
