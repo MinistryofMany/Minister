@@ -38,7 +38,7 @@ The user runs the **Minister browser extension** (`apps/extension/`, Stage 6+). 
 - VC format: W3C VC Data Model 2.0, serialized as JWT-VC. Signing algorithm Ed25519 (`alg: EdDSA`). Use the `jose` library.
 - Issuer identity: `did:web:<minister-domain>` (dev default: `minister.local`). DID document at `/.well-known/did.json`; JWKS at `/.well-known/jwks.json`.
 - OIDC provider: implement directly against the spec (Stage 3+). Don't depend on an off-the-shelf "OIDC provider for Next.js" library — most are abandoned, broken, or too opinionated about user/session models.
-- TLSNotary: official `tlsn` Rust notary server, and a small Rust HTTP sidecar (`services/tlsn-verifier`) using the `tlsn-verifier` crate (Stage 6+). The Next.js app calls it over HTTP.
+- TLSNotary: official `tlsn` notary-server image (pinned `v0.1.0-alpha.11`), and a small Rust HTTP sidecar (`services/tlsn-verifier`) using `tlsn-core`'s `Presentation::verify` (Stage 6+). The Next.js app calls it over HTTP.
 - Plugin system: in-process TypeScript modules under `apps/minister/src/plugins/<id>/`, registered through a central registry. No dynamic loading.
 
 Package manager: pnpm. Node 20+.
@@ -422,7 +422,7 @@ export interface Plugin {
 - `email-domain` — collect email → magic-link verify → issue `email-domain` badge. The user's email itself is _not_ stored; only the domain is.
 - `github` — OAuth `redirect` step → /badges/new/github/callback → `oauth-account` badge with `{ provider: "github", accountId, handle }`. Requires `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET`.
 - `invite-code` — form step → atomic redemption against admin-minted `InviteCode` rows → `invite-code` badge with `{ label }`. Invalid/revoked/expired/exhausted all return one uniform error so the form can't be used as a code oracle.
-- `tlsn-attestation` — generic TLSNotary plugin. Issues an `extension-action` step, the browser extension produces a TLSNotary presentation and POSTs it to `/api/tlsn/submit`, Minister calls the `tlsn-verifier` sidecar to check it, then issues a `tlsn-attestation` badge. The extension's prover is not yet integrated — see Stage 6 status.
+- `tlsn-attestation` — generic TLSNotary plugin. Issues an `extension-action` step, the browser extension produces a TLSNotary presentation and POSTs it to `/api/tlsn/submit`, Minister calls the `tlsn-verifier` sidecar to check it, then issues a `tlsn-attestation` badge. The extension's tlsn-js prover is integrated (offscreen document); browser-level e2e is still outstanding — see Stage 6 status.
 
 ## OIDC provider (Stage 3+)
 
@@ -492,7 +492,7 @@ Subject: `sub` is a **pairwise pseudonymous identifier**, computed as `base64url
 
 ## TLSNotary integration (Stage 6+)
 
-When we get to it:
+The classic model, as built (all three components pinned to `v0.1.0-alpha.11`):
 
 - Extension performs the proof, talking to `ws-proxy` to reach the target server and `notary-server` for the co-signature.
 - Extension POSTs the finalized presentation to `POST /api/tlsn/submit` with `{ sessionToken, presentation }` (the `sessionToken` resolves the wizard session via `resumeViaPendingToken`; the signed-in cookie identifies the user).
@@ -535,7 +535,7 @@ Why a separate Rust sidecar over WASM in Node: simpler operationally, pins one t
 - **Stage 4** — Demo client Next.js app doing the full OIDC dance, gated by a specific badge.
 - **Stage 5** ✅ — GitHub OAuth plugin. Validated the plugin interface against the `redirect` step kind; `oauth-account` badge end-to-end (requires real GitHub OAuth app creds for the live flow). Briefly removed in a scope trim, then restored.
 - **Consolidation** ✅ — invite-code plugin + admin panel (`/admin`: users with ban/unban, invite-code minting/revocation, audit-log viewer), ported from the prior Express/tRPC Minister iteration (since deleted after the port). `User.isAdmin` / `User.isBanned` added; ban enforcement folded into the session loader.
-- **Stage 6** ◐ partial — TLSNotary integration. Minister-side complete: `tlsn-attestation` plugin, `/api/tlsn/submit` endpoint, `extension-action` step renderer, `tlsn-verifier` Rust sidecar (with `passthrough` mode for dev), `notary-server` running the pinned official binary, browser extension skeleton at `apps/extension/`. **Not yet wired:** `tlsn-js` prover inside the extension, `ws-proxy` real implementation, `tlsn-verifier` crate integration in the sidecar's `verify_real()` (currently throws).
+- **Stage 6** ◐ mostly wired — TLSNotary integration, classic model (self-hosted notary + WS proxy + offline `Presentation` verification), everything pinned to `v0.1.0-alpha.11`. Minister-side complete: `tlsn-attestation` plugin, `/api/tlsn/submit` endpoint, `extension-action` step renderer. Sidecar `real` mode implemented: `tlsn-core` `Presentation::verify` with a REQUIRED pinned notary key (`TLSN_NOTARY_PUBLIC_KEY`; refuses to boot/verify unpinned), server-name binding against `expectedDomain`, unrevealed bytes masked `X`, fail-closed on every unverifiable input (`passthrough` mode remains for dev). `ws-proxy` is a real Go WS->TCP relay (exact-match host allowlist, port allowlist, DNS-rebind/SSRF guard, per-IP rate + concurrency limits, byte/duration caps). Extension hosts the `tlsn-js` prover in an offscreen document and POSTs the finished presentation to `/api/tlsn/submit`. **Still outstanding:** browser-level runtime validation (WASM/SAB in the offscreen doc, popup→wizard wiring, full e2e against a live notary) and a real-presentation happy-path fixture for the sidecar (needs a live prove run; `tlsn-core` `Secrets` are `pub(crate)`).
 - **Stage 7** ✅ — Shareable proof links. `/shares` lists + creates, `/share/[token]` public view with expiry/revocation/account-gate, optional email send via the existing mailer (console-log in dev). Views recorded in `ShareLinkView`. Tokens are 32 random bytes → 43 base64url chars.
 - **Stage 8** — Age / id.me plugin via TLSNotary; eligibility records with month fuzzing.
 - **Stage 9** — Hardening: rate limits, audit-log review, OIDC security review, key rotation, production deploy guide. (Real email transport via Resend already landed — see `src/lib/mailer.ts` and `docs/email-setup.md`.)
