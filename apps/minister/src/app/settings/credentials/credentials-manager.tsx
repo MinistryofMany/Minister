@@ -209,6 +209,23 @@ export function CredentialsManager({ initial }: { initial: CredentialListing }) 
 
   return (
     <div className="flex flex-col gap-6">
+      {listing.canBootstrapPasskey ? (
+        <div className="flex flex-col items-start gap-2 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-300 sm:flex-row sm:items-center sm:justify-between">
+          <p>
+            You don&apos;t have a passkey yet. Add one to secure your account — sensitive changes
+            require it.
+          </p>
+          <Button
+            type="button"
+            variant="outline"
+            className="shrink-0 self-start border-amber-300 bg-transparent hover:bg-amber-100 dark:border-amber-800 dark:hover:bg-amber-900"
+            disabled={pending}
+            onClick={handleAddPasskey}
+          >
+            Add a passkey
+          </Button>
+        </div>
+      ) : null}
       {error ? (
         <p className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-300">
           {error}
@@ -344,9 +361,7 @@ export function CredentialsManager({ initial }: { initial: CredentialListing }) 
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
           {listing.passkeys.length === 0 ? (
-            <p className="text-sm text-neutral-500">
-              No passkeys yet. Add one to secure your account.
-            </p>
+            <p className="text-sm text-neutral-500">No passkeys yet.</p>
           ) : (
             <ul className="flex flex-col divide-y divide-neutral-200 dark:divide-neutral-800">
               {listing.passkeys.map((p) => (
@@ -389,15 +404,6 @@ export function CredentialsManager({ initial }: { initial: CredentialListing }) 
               ))}
             </ul>
           )}
-          <Button
-            type="button"
-            variant="outline"
-            className="self-start"
-            disabled={pending}
-            onClick={handleAddPasskey}
-          >
-            Add a passkey
-          </Button>
         </CardContent>
       </Card>
 
