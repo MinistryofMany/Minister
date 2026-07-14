@@ -8,7 +8,6 @@ import type { Adapter, AdapterAuthenticator, AdapterUser } from "next-auth/adapt
 
 import { authConfig } from "@/auth.config";
 import { audit } from "@/lib/audit";
-import { lifecycleForNewPasskey } from "@/lib/credential-lifecycle";
 import { notifyCredentialChange } from "@/lib/credential-notify";
 import { createEmailUser, getUserByEmailIdentity, USER_SELECT } from "@/lib/email-signin-user";
 import {
@@ -21,6 +20,7 @@ import {
   renderEmail,
 } from "@/lib/email-layout";
 import { sendMail } from "@/lib/mailer";
+import { insertPasskeyWithLifecycle } from "@/lib/passkey-enroll";
 import { prisma } from "@/lib/prisma";
 import { clientIpFrom, signInOtpIdentityLimiter, signInOtpIpLimiter } from "@/lib/rate-limit";
 import { verifyRecoveryTicket } from "@/lib/recovery-ticket";
@@ -128,16 +128,9 @@ function ministerAdapter(): Adapter {
     //     (DESIGNDECISIONS #4);
     //   * every subsequent passkey — quarantined for the full window.
     async createAuthenticator(data: AdapterAuthenticator): Promise<AdapterAuthenticator> {
-      const existing = await prisma.authenticator.count({ where: { userId: data.userId } });
-      const lifecycle = lifecycleForNewPasskey(existing);
-      const { transports, ...rest } = data;
-      const created = await prisma.authenticator.create({
-        data: {
-          ...rest,
-          ...(transports === undefined ? {} : { transports }),
-          ...lifecycle,
-        },
-      });
+      // Count + insert run atomically under a per-user advisory lock so the
+      // bootstrap decision can't race (insertPasskeyWithLifecycle).
+      const { existing, created } = await insertPasskeyWithLifecycle(data);
       // Out-of-band alert at write time, so even a raw-ceremony graft mails
       // every verified address. Best-effort: with the quarantine stamp above
       // bounding the new credential's power, a mail-transport hiccup must not
