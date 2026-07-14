@@ -200,6 +200,15 @@ const serverSchema = z
     }
   });
 
-const env = serverSchema.parse(process.env);
+// `next build` page-data collection loads every page module, so a page that
+// imports `env` would force this parse to throw on the prod secrets that are
+// absent at build time. The container build sets SKIP_ENV_VALIDATION=true for
+// `next build` ONLY (see apps/minister/Dockerfile.prod) so the module loads;
+// runtime (`pnpm start`) runs with it unset, so full validation still runs and
+// boot still fails fast on bad config.
+const env =
+  process.env.SKIP_ENV_VALIDATION === "true"
+    ? (process.env as unknown as z.infer<typeof serverSchema>)
+    : serverSchema.parse(process.env);
 
 export { env };

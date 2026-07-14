@@ -42,7 +42,11 @@ RUN pnpm install --frozen-lockfile --filter "@minister/app..." --ignore-scripts
 COPY . .
 
 # `pnpm build` in apps/minister = `prisma generate && next build`.
-RUN cd apps/minister && pnpm build
+# SKIP_ENV_VALIDATION is set INLINE for this RUN only (not a persistent ENV),
+# so `next build` can collect pages that import `@/env` without the prod
+# secrets present. Runtime (`pnpm start` in CMD) runs without it, so env.ts
+# still validates on boot.
+RUN cd apps/minister && SKIP_ENV_VALIDATION=true pnpm build
 
 ENV NODE_ENV=production
 WORKDIR /app/apps/minister
