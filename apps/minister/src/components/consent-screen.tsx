@@ -1,10 +1,15 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
+import { useMemo, useRef, useState, useTransition } from "react";
 
+import {
+  AnonConsentSection,
+  type AnonConsentView,
+} from "@/components/anon-seed/anon-consent-section";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { buildAnonRedirect } from "@/lib/anon-seed/vault";
 import type { AnonymityBucket, AnonymityHint } from "@/lib/anonymity-hint";
 import { initialConsentDefaults } from "@/lib/consent-defaults";
 import type { PolicyConsentView } from "@/lib/oidc-policy-view";
@@ -92,6 +97,10 @@ interface Props {
   // Present when the RP sent a structured minister_policy: render the
   // requirement as a choice instead of flat independent groups.
   policyView: PolicyConsentView | null;
+  // Present only when the anon-identity flag is on AND this client is
+  // anon-enabled (anonAppId set): renders the inline enrollment/unlock
+  // section and enables client-side fragment delivery on approve (spec §8.2).
+  anon: AnonConsentView | null;
   requestToken: string;
 }
 
@@ -107,6 +116,7 @@ export function ConsentScreen({
   badgeChoices,
   alreadyGranted,
   policyView,
+  anon,
   requestToken,
 }: Props) {
   // Defaults: opt-in for everything. Each disclosure requires an explicit
@@ -149,6 +159,10 @@ export function ConsentScreen({
   });
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
+  // W1: the anon unlock field registers a cleaner here; it runs before any
+  // consent submit is dispatched, so the autofilled/typed key can never sit
+  // in the DOM while the approve request is in flight.
+  const anonClearRef = useRef<(() => void) | null>(null);
 
   // crypto-core M5: which badge ids carry a per-RP Sybil nullifier, across
   // every place a badge can be shown (flat groups, the already-proven locked
@@ -194,6 +208,9 @@ export function ConsentScreen({
 
   function submitApprove() {
     setError(null);
+    // W1: clear the anon unlock field before the approve dispatch — the seed
+    // string must never be present in the DOM when any request leaves.
+    anonClearRef.current?.();
     const approvedBadgeIds = Object.entries(selectedBadges)
       .filter(([, v]) => v)
       .map(([id]) => id);
@@ -213,15 +230,20 @@ export function ConsentScreen({
         avatarValue,
       });
       if (result && "redirectTo" in result) {
-        // Anon-identity fragment delivery (spec §8.2). The client vault appends
-        // "#minister_anon=v1.<per-app-secret>" to redirectTo before navigating.
-        // Until that vault lands (spec §11.3), navigate WITHOUT the fragment:
-        // login completes and the RP shows its "connect your anonymous identity"
-        // state — the documented fail-closed degradation (§8.3), never a made-up
-        // secret. redirectTo is held only in this transient scope and never
-        // written to storage/logs (§8.2 step 4).
-        // ponytail: fragment append lands with the client vault module.
-        window.location.assign(result.redirectTo);
+        // Anon-identity fragment delivery (spec §8.2): derive the per-app
+        // secret in the client vault and append it as a URL fragment — the
+        // server never holds it, and browsers never transmit a fragment.
+        // buildAnonRedirect fails CLOSED to the plain URL (login lands, the RP
+        // shows its connect state, §8.3) on any failure — locked vault,
+        // declined unlock, inactive enrollment — never a made-up secret.
+        // redirectTo (and the auth code inside it) lives only in this
+        // transient scope: no storage, no surviving state, no history entry
+        // (§8.2 step 4). location.assign is the ONLY navigation here — no JS
+        // redirect may run after it that could destroy the fragment (S3).
+        const target = anon
+          ? await buildAnonRedirect(result.redirectTo, result.anonAppId, anon.userId)
+          : result.redirectTo;
+        window.location.assign(target);
         return;
       }
       if (result?.error) setError(result.error);
@@ -496,6 +518,10 @@ export function ConsentScreen({
       )}
 
       {anySelectedCarriesNullifier ? <NullifierNotice clientName={clientName} /> : null}
+
+      {anon ? (
+        <AnonConsentSection anon={anon} clientName={clientName} clearRef={anonClearRef} />
+      ) : null}
 
       <div className="flex justify-end gap-2 pt-2">
         <Button type="button" variant="outline" disabled={pending} onClick={submitDeny}>

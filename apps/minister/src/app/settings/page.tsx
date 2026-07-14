@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { RevokeAllButton } from "@/components/revoke-all-button";
 import { SignOutButton } from "@/components/sign-out-button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { env } from "@/env";
 import { getCurrentSession } from "@/lib/session";
 
 // Links into the account-security surfaces (multi-credential, recovery). Each
@@ -27,6 +28,18 @@ const SECURITY_LINKS = [
 export default async function SettingsPage() {
   const session = await getCurrentSession();
   if (!session?.user) redirect("/");
+
+  const securityLinks = env.ANON_IDENTITY_ENABLED
+    ? [
+        ...SECURITY_LINKS,
+        {
+          href: "/settings/anonymous-key",
+          title: "Anonymous writing key",
+          description:
+            "Set up, unlock, and manage the key behind your anonymous identity in connected apps.",
+        },
+      ]
+    : SECURITY_LINKS;
 
   return (
     <div className="mx-auto flex max-w-2xl flex-col gap-6 px-4 py-12">
@@ -83,7 +96,7 @@ export default async function SettingsPage() {
           <CardDescription>Your credentials and account recovery.</CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-2">
-          {SECURITY_LINKS.map((link) => (
+          {securityLinks.map((link) => (
             <Link
               key={link.href}
               href={link.href}

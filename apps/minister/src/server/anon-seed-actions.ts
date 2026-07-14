@@ -234,6 +234,22 @@ export async function putSeedBlob(input: z.infer<typeof PutBlobInput>): Promise<
   return { ok: true };
 }
 
+// List the signed-in user's registered passkey credential ids (public WebAuthn
+// handles, no key material) so the client vault can limit its dedicated PRF
+// `get()` to them (spec §7.1 step 2, allowCredentials). Quarantined passkeys are
+// included on purpose: the PRF wrap is client-side crypto on the user's own
+// seed, not a privileged server action, so the H-1 quarantine gate does not
+// apply here.
+export async function getAnonPasskeyCredentialIds(): Promise<Result<{ credentialIds: string[] }>> {
+  if (!env.ANON_IDENTITY_ENABLED) return { ok: false, error: DISABLED_ERROR };
+  const session = await requireSession();
+  const rows = await prisma.authenticator.findMany({
+    where: { userId: session.user.id },
+    select: { credentialID: true },
+  });
+  return { ok: true, credentialIds: rows.map((r) => r.credentialID) };
+}
+
 // Return the owner's own wrapped blobs (spec §11.2 fetch-blob). CIPHERTEXT ONLY,
 // scoped to the signed-in user by construction — no blob crosses accounts. The
 // current epoch rides along so the client rebuilds the unwrap AAD.
