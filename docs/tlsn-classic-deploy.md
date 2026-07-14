@@ -87,7 +87,11 @@ build is pinned to).
     image: ghcr.io/ministryofmany/ministry-tlsn-verifier:latest
     restart: unless-stopped
     environment:
-      VERIFIER_MODE: "real"            # NOT passthrough — passthrough trusts client-supplied transcripts
+      # `real` is the binary's DEFAULT — this line is belt-and-suspenders, not
+      # the thing standing between prod and a rubber-stamp. Passthrough now
+      # requires a loud opt-in (VERIFIER_MODE=passthrough + ALLOW_INSECURE_PASSTHROUGH=1,
+      # or TLSN_DEV=1), so a missing/mistyped VERIFIER_MODE fails closed to `real`.
+      VERIFIER_MODE: "real"
       RUST_LOG: "info"
       TLSN_NOTARY_PUBLIC_KEY: "<hex from step 2>"
     # no ports: — Minister reaches it in-network as http://tlsn-verifier:7048
@@ -96,12 +100,17 @@ volumes:
   notary_data:
 ```
 
-`VERIFIER_MODE=real` is the whole point of the classic model: it runs
+`real` mode (the default) is the whole point of the classic model: it runs
 `tlsn-core`'s `Presentation::verify` (notary signature + server-identity/cert
 chain + transcript proof), masks unrevealed bytes with `X`, binds the server name
 to the plugin's `expectedDomain`, and returns `Err` on anything it can't
 cryptographically verify. `passthrough` is dev-only and would trust a
-client-supplied JSON transcript — never set it in prod.
+client-supplied JSON transcript; it is unreachable without a deliberate
+`VERIFIER_MODE=passthrough` **and** `ALLOW_INSECURE_PASSTHROUGH=1` (or `TLSN_DEV=1`)
+— never set those in prod. Defense in depth: even if a keyless passthrough
+sidecar were somehow in the loop, Minister rejects any transcript with an
+absent/empty `notaryKey`, and (when `MINISTER_TLSN_EXPECTED_NOTARY_KEY` is set)
+any transcript whose notary key doesn't match the pin — so no badge is issued.
 
 ## 4. Point Minister at the verifier
 
@@ -113,6 +122,11 @@ environment:
   TLSN_VERIFIER_URL: "http://tlsn-verifier:7048"
   # SSRF allowlist for the verifier host (silences the boot nag, enforces the host)
   MINISTER_TLSN_VERIFIER_ALLOWED_HOSTS: "tlsn-verifier"
+  # Optional defense-in-depth pin: require the verified transcript's notary key
+  # to equal this exact hex (constant-time compare). Recommended — set it to the
+  # same key as the verifier's TLSN_NOTARY_PUBLIC_KEY. A keyless (passthrough)
+  # transcript is ALWAYS rejected regardless of this var.
+  MINISTER_TLSN_EXPECTED_NOTARY_KEY: "<hex from step 2>"
   # Origins allowed to POST /api/tlsn/submit — the published extension's
   # chrome-extension://<id> origin(s), comma-separated. Fail-closed: an
   # unknown Origin is rejected.

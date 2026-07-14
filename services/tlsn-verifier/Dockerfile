@@ -28,8 +28,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
 COPY --from=builder /build/target/release/minister-tlsn-verifier /usr/local/bin/minister-tlsn-verifier
 
 EXPOSE 7048
-# Default to passthrough; set VERIFIER_MODE=real (and TLSN_NOTARY_PUBLIC_KEY)
-# to enable cryptographic verification against tlsn-core.
-ENV VERIFIER_MODE=passthrough
+# No VERIFIER_MODE default: the binary defaults to `real` (fails closed, and
+# refuses to boot without TLSN_NOTARY_PUBLIC_KEY). Passthrough is a deliberate,
+# loud opt-in only (VERIFIER_MODE=passthrough + ALLOW_INSECURE_PASSTHROUGH=1, or
+# TLSN_DEV=1) — never baked into the image.
 ENV RUST_LOG=info
 CMD ["minister-tlsn-verifier"]

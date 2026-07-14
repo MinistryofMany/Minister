@@ -104,11 +104,17 @@ services:
       context: ./services/tlsn-verifier
     restart: unless-stopped
     environment:
-      VERIFIER_MODE: ${VERIFIER_MODE:-passthrough}
+      # Secure by default: `real` cryptographic verification. To run the
+      # no-crypto dev passthrough you must opt in LOUDLY — set both
+      # VERIFIER_MODE=passthrough and ALLOW_INSECURE_PASSTHROUGH=1 (or TLSN_DEV=1)
+      # in your env/.env. A bare VERIFIER_MODE=passthrough stays `real`.
+      VERIFIER_MODE: ${VERIFIER_MODE:-real}
+      ALLOW_INSECURE_PASSTHROUGH: ${ALLOW_INSECURE_PASSTHROUGH:-}
+      TLSN_DEV: ${TLSN_DEV:-}
       RUST_LOG: ${RUST_LOG:-info}
       # REQUIRED in real mode: the notary's verifying key (hex) so only OUR
-      # notary's signatures are trusted. VERIFIER_MODE=real refuses to boot
-      # without it (read it from GET http://notary-server:7047/info).
+      # notary's signatures are trusted. `real` mode refuses to boot without it
+      # (read it from GET http://notary-server:7047/info).
       TLSN_NOTARY_PUBLIC_KEY: ${TLSN_NOTARY_PUBLIC_KEY:-}
     ports:
       - "7048:7048"

@@ -42,6 +42,7 @@ describe("verifyPresentation", () => {
           received: "HTTP/1.1 200 OK\r\n\r\nExample Domain",
           serverName: "example.com",
         },
+        notaryKey: "abcdef0123456789",
       }),
     );
 
@@ -96,6 +97,75 @@ describe("verifyPresentation", () => {
     await expect(verifyPresentation({ presentation: "x", expectedDomain: "y" })).rejects.toThrow(
       /expected shape/,
     );
+  });
+
+  it("rejects a keyless (passthrough) transcript — no badge is ever minted", async () => {
+    fetchSpy.mockResolvedValueOnce(
+      jsonResponse({
+        ok: true,
+        transcript: {
+          sent: "GET / HTTP/1.1\r\n",
+          received: "HTTP/1.1 200 OK\r\n\r\nExample Domain",
+          serverName: "example.com",
+        },
+        // notaryKey absent — this is what a passthrough sidecar returns.
+      }),
+    );
+    await expect(
+      verifyPresentation({ presentation: "x", expectedDomain: "example.com" }),
+    ).rejects.toThrow(/no notary key/);
+  });
+
+  it("rejects an empty-string notary key", async () => {
+    fetchSpy.mockResolvedValueOnce(
+      jsonResponse({
+        ok: true,
+        transcript: { sent: "", received: "", serverName: "example.com" },
+        notaryKey: "   ",
+      }),
+    );
+    await expect(
+      verifyPresentation({ presentation: "x", expectedDomain: "example.com" }),
+    ).rejects.toThrow(/no notary key/);
+  });
+
+  it("rejects a transcript whose notary key does not match the configured pin", async () => {
+    const prev = process.env.MINISTER_TLSN_EXPECTED_NOTARY_KEY;
+    process.env.MINISTER_TLSN_EXPECTED_NOTARY_KEY = "0xAABBCC";
+    try {
+      fetchSpy.mockResolvedValueOnce(
+        jsonResponse({
+          ok: true,
+          transcript: { sent: "", received: "", serverName: "example.com" },
+          notaryKey: "ddeeff",
+        }),
+      );
+      await expect(
+        verifyPresentation({ presentation: "x", expectedDomain: "example.com" }),
+      ).rejects.toThrow(/did not match the pinned/);
+    } finally {
+      if (prev === undefined) delete process.env.MINISTER_TLSN_EXPECTED_NOTARY_KEY;
+      else process.env.MINISTER_TLSN_EXPECTED_NOTARY_KEY = prev;
+    }
+  });
+
+  it("accepts a matching pinned notary key (case- and 0x-insensitive)", async () => {
+    const prev = process.env.MINISTER_TLSN_EXPECTED_NOTARY_KEY;
+    process.env.MINISTER_TLSN_EXPECTED_NOTARY_KEY = "aabbcc";
+    try {
+      fetchSpy.mockResolvedValueOnce(
+        jsonResponse({
+          ok: true,
+          transcript: { sent: "", received: "OK", serverName: "example.com" },
+          notaryKey: "0xAABBCC",
+        }),
+      );
+      const t = await verifyPresentation({ presentation: "x", expectedDomain: "example.com" });
+      expect(t.serverName).toBe("example.com");
+    } finally {
+      if (prev === undefined) delete process.env.MINISTER_TLSN_EXPECTED_NOTARY_KEY;
+      else process.env.MINISTER_TLSN_EXPECTED_NOTARY_KEY = prev;
+    }
   });
 
   it("refuses a non-http(s) verifier URL before fetching", async () => {

@@ -3,14 +3,18 @@
 //! Accepts POST /verify {presentation, expectedDomain} from the
 //! Minister Next.js app, returns the verified transcript (or an error).
 //!
-//! Two modes, switched by `VERIFIER_MODE`:
-//!   - `passthrough` (default in dev): decodes the presentation as JSON
-//!     of shape `{ sent, received, serverName }` and returns it
-//!     untouched. Lets us exercise the Minister side without a real
-//!     TLSNotary prover.
-//!   - `real`: cryptographically verifies the presentation via `tlsn-core`
-//!     (`Presentation::verify`). Entry point is `tlsn::verify_real`; it fails
-//!     closed on any input it cannot verify (never rubber-stamps).
+//! Two modes:
+//!   - `real` (the DEFAULT): cryptographically verifies the presentation via
+//!     `tlsn-core` (`Presentation::verify`). Entry point is `tlsn::verify_real`;
+//!     it fails closed on any input it cannot verify (never rubber-stamps), and
+//!     refuses to boot without a pinned notary key.
+//!   - `passthrough`: decodes the presentation as JSON of shape
+//!     `{ sent, received, serverName }` and returns it untouched — a no-crypto
+//!     rubber stamp for dev only. It is NOT reachable by a single env var:
+//!     it requires a loud, deliberate opt-in (`VERIFIER_MODE=passthrough`
+//!     together with `ALLOW_INSECURE_PASSTHROUGH=1`, or `TLSN_DEV=1`).
+//!     Anything short of that runs `real`, so a mistyped/missing env var
+//!     fails closed instead of rubber-stamping.
 //!
 //! Listens on `0.0.0.0:7048` by default; override with `LISTEN_ADDR`.
 
@@ -43,9 +47,29 @@ enum Mode {
 
 impl Mode {
     fn from_env() -> Self {
-        match std::env::var("VERIFIER_MODE").ok().as_deref() {
-            Some("real") => Mode::Real,
-            _ => Mode::Passthrough,
+        Self::resolve(
+            std::env::var("VERIFIER_MODE").ok().as_deref(),
+            std::env::var("ALLOW_INSECURE_PASSTHROUGH").ok().as_deref(),
+            std::env::var("TLSN_DEV").ok().as_deref(),
+        )
+    }
+
+    /// Secure by default. `real` unless the operator has EXPLICITLY and loudly
+    /// opted into the no-crypto passthrough: `VERIFIER_MODE=passthrough` AND
+    /// `ALLOW_INSECURE_PASSTHROUGH=1` together, or `TLSN_DEV=1`. A lone
+    /// `VERIFIER_MODE=passthrough` (or any mistyped/missing var) resolves to
+    /// `real`, which then refuses to boot unpinned — so misconfig fails closed.
+    fn resolve(
+        mode: Option<&str>,
+        allow_passthrough: Option<&str>,
+        tlsn_dev: Option<&str>,
+    ) -> Self {
+        let explicit_passthrough = mode == Some("passthrough") && allow_passthrough == Some("1");
+        let dev = tlsn_dev == Some("1");
+        if explicit_passthrough || dev {
+            Mode::Passthrough
+        } else {
+            Mode::Real
         }
     }
 }
@@ -211,6 +235,50 @@ pub(crate) fn host_matches(server_name: &str, expected: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mode_defaults_to_real_when_unset() {
+        assert_eq!(Mode::resolve(None, None, None), Mode::Real);
+    }
+
+    #[test]
+    fn mode_real_when_explicitly_requested() {
+        assert_eq!(Mode::resolve(Some("real"), None, None), Mode::Real);
+    }
+
+    #[test]
+    fn lone_passthrough_flag_is_not_enough_and_falls_back_to_real() {
+        // The single-env-var footgun the audit flagged: VERIFIER_MODE=passthrough
+        // with no loud opt-in must NOT rubber-stamp.
+        assert_eq!(Mode::resolve(Some("passthrough"), None, None), Mode::Real);
+    }
+
+    #[test]
+    fn passthrough_requires_both_mode_and_allow_flag() {
+        assert_eq!(
+            Mode::resolve(Some("passthrough"), Some("1"), None),
+            Mode::Passthrough
+        );
+    }
+
+    #[test]
+    fn allow_flag_alone_does_not_enable_passthrough() {
+        assert_eq!(Mode::resolve(None, Some("1"), None), Mode::Real);
+        assert_eq!(Mode::resolve(Some("real"), Some("1"), None), Mode::Real);
+    }
+
+    #[test]
+    fn tlsn_dev_enables_passthrough() {
+        assert_eq!(Mode::resolve(None, None, Some("1")), Mode::Passthrough);
+    }
+
+    #[test]
+    fn unrecognized_values_resolve_to_real() {
+        assert_eq!(
+            Mode::resolve(Some("PASSTHROUGH"), Some("true"), Some("yes")),
+            Mode::Real
+        );
+    }
 
     #[test]
     fn host_matches_is_case_insensitive() {

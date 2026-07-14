@@ -122,6 +122,22 @@ describe("tlsnAttestationPlugin.handleStep — verification path", () => {
     expect(result.message).toMatch(/didn't|Expected/);
   });
 
+  it("issues NO badge when the verifier rejects a keyless (passthrough) transcript", async () => {
+    // verifyPresentation enforces notary-key presence and throws on a keyless
+    // transcript; the plugin must surface that as an error, never a badge.
+    vi.mocked(verifyPresentation).mockRejectedValueOnce(
+      new Error("tlsn-verifier returned a transcript with no notary key (keyless/passthrough)"),
+    );
+    const result = await tlsnAttestationPlugin.handleStep(
+      proveState(),
+      { presentation: "BASE64" },
+      ctx(),
+    );
+    expect(result.kind).toBe("error");
+    if (result.kind !== "error") throw new Error("kind");
+    expect(result.message).toContain("no notary key");
+  });
+
   it("errors when input is missing presentation bytes", async () => {
     const result = await tlsnAttestationPlugin.handleStep(proveState(), {}, ctx());
     expect(result.kind).toBe("error");
