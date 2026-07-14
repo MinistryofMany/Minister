@@ -843,3 +843,39 @@ describe("linked accounts (listCredentials)", () => {
     expect(listing.accounts[0]!.linkedAt).toBe("2026-01-01T00:00:00.000Z");
   });
 });
+
+// ---------------------------------------------------------------------------
+// canBootstrapPasskey — the settings UI's "Add a passkey" CTA banner shows
+// while this is true and hides once the user holds any passkey (TODO #27).
+// ---------------------------------------------------------------------------
+
+describe("listCredentials canBootstrapPasskey", () => {
+  beforeEach(() => {
+    setSession(session(2));
+    db.userEmail.findMany.mockResolvedValue([]);
+    db.account.findMany.mockResolvedValue([]);
+  });
+
+  it("is true with zero passkeys", async () => {
+    db.authenticator.findMany.mockResolvedValue([]);
+
+    const listing = await listCredentials();
+    expect(listing.canBootstrapPasskey).toBe(true);
+  });
+
+  it("is false once the user holds a passkey", async () => {
+    db.authenticator.findMany.mockResolvedValue([
+      {
+        credentialID: "cred_1",
+        label: null,
+        status: "active",
+        quarantinedUntil: null,
+        addedAt: new Date(),
+        lastUsedAt: null,
+      },
+    ]);
+
+    const listing = await listCredentials();
+    expect(listing.canBootstrapPasskey).toBe(false);
+  });
+});
