@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 
+import { loadPerAppIds } from "@/app/settings/per-app-ids";
 import { RevokeAllButton } from "@/components/revoke-all-button";
 import { SignOutButton } from "@/components/sign-out-button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -27,6 +28,8 @@ const SECURITY_LINKS = [
 export default async function SettingsPage() {
   const session = await getCurrentSession();
   if (!session?.user) redirect("/");
+
+  const perAppIds = await loadPerAppIds(session.user.id);
 
   return (
     <div className="mx-auto flex max-w-2xl flex-col gap-6 px-4 py-12">
@@ -74,6 +77,38 @@ export default async function SettingsPage() {
               Set a per-app display name and avatar, or clear one to stop sharing it with that app.
             </div>
           </Link>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Your IDs per app</CardTitle>
+          <CardDescription>
+            Each app sees a different pseudonymous ID for you, so they can&apos;t link your activity
+            across apps. These are the IDs Minister issues each app you&apos;ve connected.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {perAppIds.length === 0 ? (
+            <div className="text-sm text-neutral-600 dark:text-neutral-400">
+              You haven&apos;t connected any apps yet. Once you sign into an app with Minister, the
+              unique ID that app sees for you will appear here.
+            </div>
+          ) : (
+            <ul className="flex flex-col gap-2">
+              {perAppIds.map((app) => (
+                <li
+                  key={app.sub}
+                  className="rounded-lg border border-neutral-200 p-3 dark:border-neutral-800"
+                >
+                  <div className="text-sm font-medium">{app.appName}</div>
+                  <div className="mt-1 break-all font-mono text-xs text-neutral-600 dark:text-neutral-400">
+                    {app.sub}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
         </CardContent>
       </Card>
 
