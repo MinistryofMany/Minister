@@ -704,3 +704,75 @@ describe("lazy quarantine expiry (listCredentials)", () => {
     expect(listing.passkeys[0]!.status).toBe("quarantined");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Regression for the workspace bug "add-then-remove a passkey still shows
+// quarantined": add a second (quarantined) passkey, remove the original, and
+// read the list back. The read path must (1) never surface the removed
+// credential, and (2) judge the surviving quarantine against the clock — a
+// lapsed window reads active, so the survivor is not shown as quarantined
+// forever. An in-window survivor DELIBERATELY stays quarantined (DESIGNDECISIONS
+// #5): removal must not promote it, or a graft-then-evict hijack would gain
+// instant AAL2 power. Together these are the read-path fix; the enforcement
+// side is covered by "removePasskey" above.
+// ---------------------------------------------------------------------------
+
+describe("add-then-remove read path (stale quarantine display)", () => {
+  const ORIG = "cred_orig";
+  const GRAFT = "cred_graft";
+
+  function graftRow(quarantinedUntil: Date | null) {
+    return {
+      credentialID: GRAFT,
+      label: null,
+      status: "quarantined",
+      quarantinedUntil,
+      addedAt: new Date(),
+      lastUsedAt: null,
+    };
+  }
+
+  beforeEach(() => {
+    setSession(session(2));
+    db.userEmail.findMany.mockResolvedValue([]);
+    db.account.findMany.mockResolvedValue([]);
+  });
+
+  it("removes the original and never surfaces it, leaving only the survivor", async () => {
+    // Two passkeys on the account: the established original (active) and a
+    // freshly added, still-in-window graft.
+    db.authenticator.findUnique.mockResolvedValue({ credentialID: ORIG, userId: USER });
+    db.authenticator.count.mockResolvedValue(2);
+    db.authenticator.delete.mockResolvedValue({});
+
+    await removePasskey(ORIG);
+    expect(db.authenticator.delete).toHaveBeenCalledWith({
+      where: { userId_credentialID: { userId: USER, credentialID: ORIG } },
+    });
+
+    // Post-removal the DB holds only the surviving graft.
+    db.authenticator.findMany.mockResolvedValue([graftRow(new Date(Date.now() + 3_600_000))]);
+    const listing = await listCredentials();
+
+    expect(listing.passkeys).toHaveLength(1);
+    // The removed credential must not appear at all.
+    expect(listing.passkeys.some((p) => p.credentialID === ORIG)).toBe(false);
+    // The in-window survivor stays quarantined by design (cooldown intact).
+    expect(listing.passkeys[0]!.credentialID).toBe(GRAFT);
+    expect(listing.passkeys[0]!.status).toBe("quarantined");
+  });
+
+  it("shows the sole survivor as active once its quarantine window lapses", async () => {
+    db.authenticator.findUnique.mockResolvedValue({ credentialID: ORIG, userId: USER });
+    db.authenticator.count.mockResolvedValue(2);
+    db.authenticator.delete.mockResolvedValue({});
+    await removePasskey(ORIG);
+
+    // The survivor's window has since lapsed — the read path judges it against
+    // the clock and reports active, so it never reads "quarantined forever".
+    db.authenticator.findMany.mockResolvedValue([graftRow(new Date(Date.now() - 1000))]);
+    const listing = await listCredentials();
+
+    expect(listing.passkeys[0]!.status).toBe("active");
+  });
+});
