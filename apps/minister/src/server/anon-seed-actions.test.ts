@@ -11,6 +11,12 @@ const h = vi.hoisted(() => ({
   env: { ANON_IDENTITY_ENABLED: false as boolean },
   session: { user: { id: "user-123" } } as { user: { id: string } },
   audit: vi.fn((..._args: unknown[]) => Promise.resolve()),
+  // Mocked rate limiter: allowed by default (set in beforeEach), flipped to
+  // denied in the rate-limit describe. Keeps the real process-local limiter's
+  // accumulated state out of these deterministic unit tests.
+  rateLimit: {
+    check: vi.fn(() => ({ allowed: true, retryAfterSeconds: 0 })),
+  },
   db: {
     anonSeedEnrollment: {
       findUnique: vi.fn(),
@@ -32,6 +38,7 @@ const h = vi.hoisted(() => ({
 vi.mock("@/env", () => ({ env: h.env }));
 vi.mock("@/lib/audit", () => ({ audit: h.audit }));
 vi.mock("@/lib/prisma", () => ({ prisma: h.db }));
+vi.mock("@/lib/rate-limit", () => ({ anonSeedActionLimiter: h.rateLimit }));
 vi.mock("@/lib/session", () => ({
   requireSession: vi.fn(async () => h.session),
 }));
@@ -63,6 +70,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   h.env.ANON_IDENTITY_ENABLED = true;
   h.session = { user: { id: "user-123" } };
+  h.rateLimit.check.mockReturnValue({ allowed: true, retryAfterSeconds: 0 });
 });
 
 describe("feature-flag inertness (flag off → every action is a no-op error)", () => {
@@ -271,6 +279,49 @@ describe("resetAnonSeed — epoch bump + blob wipe (anti-rollback I12)", () => {
     h.db.anonSeedBlob.deleteMany.mockResolvedValue({ count: 2 });
     const ok = await resetAnonSeed({ confirmPhrase: "reset my anonymous key" });
     expect(ok.ok).toBe(true);
+  });
+});
+
+describe("rate limiting (spec §13) — per-user, fail closed on the write actions", () => {
+  beforeEach(() => {
+    // Limiter denies: the guard must bail before any DB write.
+    h.rateLimit.check.mockReturnValue({ allowed: false, retryAfterSeconds: 42 });
+  });
+
+  it("putSeedBlob is refused with clear copy and touches no table", async () => {
+    const res = await putSeedBlob({ credentialId: CRED, ciphertext: CT, iv: IV, wrapVersion: 1 });
+    expect(res.ok).toBe(false);
+    if (res.ok) return;
+    expect(res.error).toMatch(/too many requests/i);
+    expect(res.error).toContain("42");
+    // Keyed on the session user id, not an IP.
+    expect(h.rateLimit.check).toHaveBeenCalledWith("user-123");
+    expect(h.db.anonSeedEnrollment.findUnique).not.toHaveBeenCalled();
+    expect(h.db.anonSeedBlob.upsert).not.toHaveBeenCalled();
+    expect(h.audit).not.toHaveBeenCalled();
+  });
+
+  it("beginAnonSeedEnrollment is refused and touches no table", async () => {
+    const res = await beginAnonSeedEnrollment();
+    expect(res.ok).toBe(false);
+    expect(h.db.anonSeedEnrollment.findUnique).not.toHaveBeenCalled();
+    expect(h.db.anonSeedEnrollment.upsert).not.toHaveBeenCalled();
+    expect(h.audit).not.toHaveBeenCalled();
+  });
+
+  it("resetAnonSeed is refused and touches no table", async () => {
+    const res = await resetAnonSeed({ confirmPhrase: "reset my anonymous key" });
+    expect(res.ok).toBe(false);
+    expect(h.db.anonSeedEnrollment.findUnique).not.toHaveBeenCalled();
+    expect(h.db.anonSeedEnrollment.update).not.toHaveBeenCalled();
+    expect(h.audit).not.toHaveBeenCalled();
+  });
+
+  it("read actions are NOT rate limited (getAnonSeedState ignores the limiter)", async () => {
+    h.db.anonSeedEnrollment.findUnique.mockResolvedValue(activeEnrollment(1));
+    const res = await getAnonSeedState();
+    expect(res.ok).toBe(true);
+    expect(h.rateLimit.check).not.toHaveBeenCalled();
   });
 });
 

@@ -7,6 +7,7 @@ import { WRAP_CIPHERTEXT_BYTES, WRAP_IV_BYTES } from "@minister/shared";
 import { env } from "@/env";
 import { audit } from "@/lib/audit";
 import { prisma } from "@/lib/prisma";
+import { anonSeedActionLimiter } from "@/lib/rate-limit";
 import { requireSession } from "@/lib/session";
 
 // Server actions for the anonymous-identity daily-key stack (anon-identity
@@ -46,6 +47,18 @@ type Err = { ok: false; error: string };
 type Result<T> = Ok<T> | Err;
 
 const DISABLED_ERROR = "Anonymous identity is not enabled.";
+
+// Per-user rate-limit guard for the write actions (spec §13). Fail closed: on
+// deny, return an error and the caller bails before any DB write. Keyed on the
+// signed-in user id, since these are authenticated actions, not public routes.
+function rateLimitGuard(userId: string): Err | null {
+  const verdict = anonSeedActionLimiter.check(userId);
+  if (verdict.allowed) return null;
+  return {
+    ok: false,
+    error: `Too many requests. Wait ${verdict.retryAfterSeconds}s and try again.`,
+  };
+}
 
 // At most 5 wrapped blobs per user (spec §7.1). One per (user, credential); a
 // re-wrap of an existing credential updates in place and never counts against
@@ -129,6 +142,9 @@ export async function beginAnonSeedEnrollment(): Promise<Result<{ state: AnonSee
   const session = await requireSession();
   const userId = session.user.id;
 
+  const limited = rateLimitGuard(userId);
+  if (limited) return limited;
+
   const existing = await prisma.anonSeedEnrollment.findUnique({ where: { userId } });
   if (existing && existing.seedGeneratedAt !== null) {
     return {
@@ -185,6 +201,9 @@ export async function putSeedBlob(input: z.infer<typeof PutBlobInput>): Promise<
   if (!env.ANON_IDENTITY_ENABLED) return { ok: false, error: DISABLED_ERROR };
   const session = await requireSession();
   const userId = session.user.id;
+
+  const limited = rateLimitGuard(userId);
+  if (limited) return limited;
 
   const parsed = PutBlobInput.safeParse(input);
   if (!parsed.success) {
@@ -307,6 +326,9 @@ export async function resetAnonSeed(
   if (!env.ANON_IDENTITY_ENABLED) return { ok: false, error: DISABLED_ERROR };
   const session = await requireSession();
   const userId = session.user.id;
+
+  const limited = rateLimitGuard(userId);
+  if (limited) return limited;
 
   const parsed = ResetInput.safeParse(input);
   if (!parsed.success) return { ok: false, error: "Invalid input" };

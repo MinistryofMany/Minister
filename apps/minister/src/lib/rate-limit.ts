@@ -211,3 +211,13 @@ export const shareViewLimiter = createRateLimiter({
   windowMs: MINUTE,
   max: envMax("MINISTER_RL_SHARE_MAX", 60),
 });
+
+// Anon-seed write actions (blob store, reset, enrollment start), keyed PER USER
+// (the signed-in session id) rather than per IP — these are server actions, not
+// public endpoints, so the abuse case is a compromised or runaway session
+// churning writes (spec §13). A human sets up at most a handful of devices, so
+// anything past this in a minute is not a person.
+export const anonSeedActionLimiter = createRateLimiter({
+  windowMs: MINUTE,
+  max: envMax("MINISTER_RL_ANON_SEED_MAX", 20),
+});
