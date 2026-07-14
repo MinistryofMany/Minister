@@ -86,9 +86,9 @@ services:
         --client-secret ${DEMO_CLIENT_SECRET:-dev-only-demo-client-secret-replace-me}
 
   # ---------------------------------------------------------------------------
-  # TLSNotary stack — Stage 6.
-  # notary-server and tlsn-verifier are wired; ws-proxy stays a stub
-  # until the browser-extension prover lands and needs it.
+  # TLSNotary stack — Stage 6: notary-server (upstream image, pinned),
+  # tlsn-verifier (Presentation::verify sidecar), ws-proxy (WS->TCP relay
+  # for the extension prover).
   # ---------------------------------------------------------------------------
   notary-server:
     build:
@@ -106,9 +106,9 @@ services:
     environment:
       VERIFIER_MODE: ${VERIFIER_MODE:-passthrough}
       RUST_LOG: ${RUST_LOG:-info}
-      # In real mode, pin the notary's verifying key (hex) so only OUR notary's
-      # signatures are trusted. Unset => cryptographic validity is still
-      # enforced, but any notary is accepted (dev only; logs a warning).
+      # REQUIRED in real mode: the notary's verifying key (hex) so only OUR
+      # notary's signatures are trusted. VERIFIER_MODE=real refuses to boot
+      # without it (read it from GET http://notary-server:7047/info).
       TLSN_NOTARY_PUBLIC_KEY: ${TLSN_NOTARY_PUBLIC_KEY:-}
     ports:
       - "7048:7048"

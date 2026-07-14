@@ -16,8 +16,9 @@
 //! and signed by *some* notary key. It does NOT decide whether that notary is
 //! *ours*. That is what `TLSN_NOTARY_PUBLIC_KEY` pinning does below — without
 //! it, any notary's signature would pass, so anyone could forge a session by
-//! running their own notary. We therefore fail closed on a key mismatch, and
-//! loudly warn when no key is pinned.
+//! running their own notary. Real mode therefore REQUIRES the pin: an unset
+//! key refuses to verify at all (and refuses to boot, see `main`), and a
+//! mismatched key fails closed.
 //!
 //! This function NEVER returns success for input it could not cryptographically
 //! verify. Every failure path returns `Err`, so a misconfigured `real` mode
@@ -29,14 +30,33 @@ use tlsn_core::{
     presentation::{Presentation, PresentationOutput},
     CryptoProvider,
 };
-use tracing::warn;
 
 use crate::{host_matches, Transcript, VerifyOutcome};
 
 const NOTARY_KEY_ENV: &str = "TLSN_NOTARY_PUBLIC_KEY";
 
-/// Verifies a base64(bincode(Presentation)) against `expected_domain`.
+/// Verifies a base64(bincode(Presentation)) against `expected_domain`,
+/// pinned to the notary key from `TLSN_NOTARY_PUBLIC_KEY` (required).
 pub fn verify_real(presentation_b64: &str, expected_domain: &str) -> Result<VerifyOutcome> {
+    verify_real_with_pin(presentation_b64, expected_domain, pinned_notary_key())
+}
+
+/// Env-free core so the pin handling is unit-testable without process-global
+/// env mutation (racy across parallel tests).
+fn verify_real_with_pin(
+    presentation_b64: &str,
+    expected_domain: &str,
+    pinned: Option<String>,
+) -> Result<VerifyOutcome> {
+    // Notary pinning: the whole trust chain rests on this. `verify()` only
+    // proves the presentation was signed by SOME notary, so an unpinned real
+    // mode would trust anyone who runs a notary. Refuse outright.
+    let pinned = pinned.ok_or_else(|| {
+        anyhow!(
+            "{NOTARY_KEY_ENV} is unset; real mode refuses to verify without a pinned notary key"
+        )
+    })?;
+
     let bytes = B64
         .decode(presentation_b64.as_bytes())
         .map_err(|e| anyhow!("presentation is not valid base64: {e}"))?;
@@ -47,22 +67,10 @@ pub fn verify_real(presentation_b64: &str, expected_domain: &str) -> Result<Veri
     // Capture the notary key before `verify` consumes the presentation.
     let notary_key_hex = hex::encode(&presentation.verifying_key().data);
 
-    // Notary pinning: the whole trust chain rests on this. Enforce a pinned
-    // key when configured; otherwise verify cryptographic validity but warn
-    // that the notary is not being pinned.
-    match pinned_notary_key() {
-        Some(pinned) => {
-            if !constant_time_eq_hex(&pinned, &notary_key_hex) {
-                return Err(anyhow!(
-                    "presentation notary key does not match the pinned {NOTARY_KEY_ENV}"
-                ));
-            }
-        }
-        None => warn!(
-            notary_key = %notary_key_hex,
-            "{NOTARY_KEY_ENV} is unset — verifying cryptographic validity but NOT pinning the \
-             notary. Set it in production or any notary's signature will be accepted."
-        ),
+    if !constant_time_eq_hex(&pinned, &notary_key_hex) {
+        return Err(anyhow!(
+            "presentation notary key does not match the pinned {NOTARY_KEY_ENV}"
+        ));
     }
 
     // Production trust anchors (webpki roots baked into tlsn-core). This is the
@@ -111,7 +119,8 @@ pub fn verify_real(presentation_b64: &str, expected_domain: &str) -> Result<Veri
 }
 
 /// Reads and normalizes the pinned notary key (lowercase hex, optional `0x`).
-fn pinned_notary_key() -> Option<String> {
+/// `pub(crate)` so `main` can refuse to boot real mode unpinned.
+pub(crate) fn pinned_notary_key() -> Option<String> {
     std::env::var(NOTARY_KEY_ENV)
         .ok()
         .map(|s| normalize_hex(&s))
@@ -141,12 +150,22 @@ fn constant_time_eq_hex(a: &str, b: &str) -> bool {
 mod tests {
     use super::*;
 
-    // Guard against a silent env leak between tests: these do not set the env
-    // var, so pinning is off and verification still fails closed on bad input.
+    // Tests inject the pin via `verify_real_with_pin`, never the env var
+    // (process-global, racy across parallel tests).
+
+    fn pin() -> Option<String> {
+        Some("aa".repeat(33))
+    }
+
+    #[test]
+    fn rejects_when_pin_unset() {
+        let err = verify_real_with_pin("", "example.com", None).unwrap_err();
+        assert!(err.to_string().contains(NOTARY_KEY_ENV), "got: {err}");
+    }
 
     #[test]
     fn rejects_non_base64() {
-        let err = verify_real("!!! not base64 !!!", "example.com").unwrap_err();
+        let err = verify_real_with_pin("!!! not base64 !!!", "example.com", pin()).unwrap_err();
         assert!(err.to_string().contains("base64"), "got: {err}");
     }
 
@@ -154,7 +173,7 @@ mod tests {
     fn rejects_valid_base64_that_is_not_a_presentation() {
         // Well-formed base64, but the bytes are not a bincode Presentation.
         let junk = B64.encode(b"this is not a tlsnotary presentation");
-        let err = verify_real(&junk, "example.com").unwrap_err();
+        let err = verify_real_with_pin(&junk, "example.com", pin()).unwrap_err();
         assert!(
             err.to_string().contains("Presentation"),
             "expected a decode error, got: {err}"
@@ -164,14 +183,14 @@ mod tests {
     #[test]
     fn rejects_empty_presentation() {
         let empty = B64.encode(b"");
-        assert!(verify_real(&empty, "example.com").is_err());
+        assert!(verify_real_with_pin(&empty, "example.com", pin()).is_err());
     }
 
     #[test]
     fn rejects_truncated_bincode() {
         // A few arbitrary bytes: enough to pass base64, not a valid struct.
         let truncated = B64.encode([0x01, 0x00, 0x00, 0x00, 0xff]);
-        assert!(verify_real(&truncated, "example.com").is_err());
+        assert!(verify_real_with_pin(&truncated, "example.com", pin()).is_err());
     }
 
     #[test]

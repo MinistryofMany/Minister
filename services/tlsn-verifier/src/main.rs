@@ -101,6 +101,13 @@ async fn main() -> Result<()> {
     let state = AppState {
         mode: Mode::from_env(),
     };
+    // Real mode without a pinned notary key would accept ANY notary's
+    // signature. Fail at boot, not per-request, so the misconfig is loud.
+    if state.mode == Mode::Real && tlsn::pinned_notary_key().is_none() {
+        return Err(anyhow!(
+            "VERIFIER_MODE=real requires TLSN_NOTARY_PUBLIC_KEY (hex); refusing to start unpinned"
+        ));
+    }
     info!(?state.mode, "starting tlsn-verifier sidecar");
 
     let app = Router::new()

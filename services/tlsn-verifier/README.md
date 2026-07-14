@@ -50,13 +50,13 @@ Bytes the prover chose not to reveal are marked with `X` (`set_unauthed`) so a p
 
 **Why `tlsn-core`, not the `tlsn-verifier` crate:** `tlsn-verifier` implements the _interactive_ MPC-verifier role (the verifier IS the notary, and there is no separate presentation to submit later). Minister runs the offline notary + presentation model — a notary co-signs, and the browser submits a `Presentation` after the fact — so `tlsn_core::presentation::Presentation::verify` is the correct entry point.
 
-**Notary pinning (`TLSN_NOTARY_PUBLIC_KEY`).** `verify()` proves a presentation is internally consistent and signed by _some_ notary; it does not decide the notary is ours. Set `TLSN_NOTARY_PUBLIC_KEY` to our notary's verifying key (hex, optional `0x`) to fail closed on any other notary. Read our notary's key from `GET http://notary-server:7047/info` (or the tlsn-js `NotaryServer.publicKey('hex')`). When unset, the sidecar still enforces cryptographic validity but logs a warning that it is not pinning the notary — do not run production unpinned.
+**Notary pinning (`TLSN_NOTARY_PUBLIC_KEY`) — required in real mode.** `verify()` proves a presentation is internally consistent and signed by _some_ notary; it does not decide the notary is ours. Set `TLSN_NOTARY_PUBLIC_KEY` to our notary's verifying key (hex, optional `0x`); any other notary's signature then fails closed. Read our notary's key from `GET http://notary-server:7047/info` (or the tlsn-js `NotaryServer.publicKey('hex')`). When unset, `VERIFIER_MODE=real` refuses to start (and `verify_real` rejects every request as defense in depth) — an unpinned real mode would accept anyone who runs a notary.
 
-**Fail-closed guarantee:** `verify_real` returns `Err` for every input it cannot cryptographically verify (bad base64, non-presentation bytes, failed signature/cert/transcript check, server-name mismatch, missing identity/transcript proof, or notary-key mismatch). It never fabricates a success. A test fixture built from a **real** presentation still needs a live prove run against a notary (tlsn-core's `Secrets` are `pub(crate)`, so a full presentation cannot be synthesized from the public API); the committed tests cover the fail-closed paths.
+**Fail-closed guarantee:** `verify_real` returns `Err` for every input it cannot cryptographically verify (unpinned notary key, bad base64, non-presentation bytes, failed signature/cert/transcript check, server-name mismatch, missing identity/transcript proof, or notary-key mismatch). It never fabricates a success. A test fixture built from a **real** presentation still needs a live prove run against a notary (tlsn-core's `Secrets` are `pub(crate)`, so a full presentation cannot be synthesized from the public API); the committed tests cover the fail-closed paths.
 
 ## Why a Rust sidecar over WASM-in-Node
 
-- Pins one `tlsn-verifier` crate version, isolated from the Next.js dep graph.
+- Pins one `tlsn-core` version, isolated from the Next.js dep graph.
 - Keeps all `tlsn-*` code in Rust (where it lives upstream), so upstream breaking changes don't ripple through the Node app.
 - One small HTTP hop per submission, called only from the wizard runtime on the server side.
 
@@ -73,6 +73,6 @@ cargo run
 
 ## Tests
 
-`cargo test` covers the passthrough path, host-matching helpers, and the real-mode **fail-closed** paths (bad base64, valid base64 that is not a presentation, empty/truncated bincode) plus the notary-key normalization/compare helpers. A real-presentation happy-path fixture is deferred — it requires a live prove session (see the fail-closed note under "Real mode").
+`cargo test` covers the passthrough path, host-matching helpers, and the real-mode **fail-closed** paths (unset notary pin, bad base64, valid base64 that is not a presentation, empty/truncated bincode) plus the notary-key normalization/compare helpers. A real-presentation happy-path fixture is deferred — it requires a live prove session (see the fail-closed note under "Real mode").
 
 Build note: `real` mode pulls `tlsn-core` from git (tag `v0.1.0-alpha.11`); the first `cargo build` fetches and compiles it. `Cargo.lock` pins the exact rev.
