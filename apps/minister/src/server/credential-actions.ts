@@ -90,12 +90,14 @@ export interface CredentialPasskey {
 
 export interface CredentialAccount {
   kind: "oauth";
+  /** Badge id — the stable React list key. */
+  id: string;
+  /** OAuth provider slug: "github" | "google" | … */
   provider: string;
-  providerAccountId: string;
-  label: string | null;
-  status: CredentialStatus;
-  quarantinedUntil: string | null;
-  lastUsedAt: string | null;
+  /** Disclosed handle, when the badge carries one. */
+  handle: string | null;
+  /** When the account was linked (the badge's issuedAt), ISO string. */
+  linkedAt: string;
 }
 
 export interface CredentialListing {
@@ -218,6 +220,31 @@ function verifyLinkBase(): string {
 // listCredentials — the union the management UI renders.
 // ---------------------------------------------------------------------------
 
+// Collapse the user's `oauth-account` badges into one row per linked account.
+// Re-proving a link mints a fresh badge, so the same provider+handle can appear
+// more than once; badges arrive issuedAt-ascending, so the first occurrence is
+// the earliest link and each account is listed exactly once.
+function dedupeAccounts(
+  badges: { id: string; attributes: unknown; issuedAt: Date }[],
+): CredentialAccount[] {
+  const byKey = new Map<string, CredentialAccount>();
+  for (const b of badges) {
+    const attrs = (b.attributes ?? {}) as { provider?: unknown; handle?: unknown };
+    if (typeof attrs.provider !== "string") continue;
+    const handle = typeof attrs.handle === "string" ? attrs.handle : null;
+    const key = `${attrs.provider}:${handle ?? ""}`;
+    if (byKey.has(key)) continue;
+    byKey.set(key, {
+      kind: "oauth",
+      id: b.id,
+      provider: attrs.provider,
+      handle,
+      linkedAt: b.issuedAt.toISOString(),
+    });
+  }
+  return [...byKey.values()];
+}
+
 export async function listCredentials(): Promise<CredentialListing> {
   const session = await requirePrincipal();
   const userId = session.user.id;
@@ -248,23 +275,17 @@ export async function listCredentials(): Promise<CredentialListing> {
         lastUsedAt: true,
       },
     }),
-    prisma.account.findMany({
-      // "Linked accounts" is the OAuth section. Auth.js also writes an Account
-      // row for a registered passkey (type="webauthn", provider="passkey") and
-      // could for a magic-link ("email") — those are NOT OAuth links and have
-      // their own UI (the passkey list). Include only genuine OAuth/OIDC
-      // providers (github/discord => "oauth", google => "oidc") so a passkey
-      // stops masquerading as a linked "passkey" account here.
-      where: { userId, type: { in: ["oauth", "oidc"] } },
-      orderBy: { createdAt: "asc" },
-      select: {
-        provider: true,
-        providerAccountId: true,
-        label: true,
-        status: true,
-        quarantinedUntil: true,
-        lastUsedAt: true,
-      },
+    // "Linked accounts" = the OAuth accounts the user linked. In Minister that
+    // link lives as an `oauth-account` BADGE (provider + optional handle), NOT
+    // an Auth.js Account row: there are no OAuth SIGN-IN providers, so the
+    // Account table only ever holds passkey (type="webauthn") and magic-link
+    // (type="email") rows — never a linked GitHub/Google. Reading Account here
+    // is why the section showed passkeys and never the real linked accounts;
+    // read the badges instead.
+    prisma.badge.findMany({
+      where: { userId, type: "oauth-account" },
+      orderBy: { issuedAt: "asc" },
+      select: { id: true, attributes: true, issuedAt: true },
     }),
   ]);
 
@@ -288,15 +309,7 @@ export async function listCredentials(): Promise<CredentialListing> {
       addedAt: p.addedAt.toISOString(),
       lastUsedAt: p.lastUsedAt?.toISOString() ?? null,
     })),
-    accounts: accounts.map((a) => ({
-      kind: "oauth" as const,
-      provider: a.provider,
-      providerAccountId: a.providerAccountId,
-      label: a.label,
-      status: asStatus(a.status, a.quarantinedUntil),
-      quarantinedUntil: a.quarantinedUntil?.toISOString() ?? null,
-      lastUsedAt: a.lastUsedAt?.toISOString() ?? null,
-    })),
+    accounts: dedupeAccounts(accounts),
     recovered: session.recovered === true,
     canBootstrapPasskey: passkeys.length === 0,
   };

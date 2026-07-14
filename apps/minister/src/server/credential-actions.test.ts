@@ -53,6 +53,7 @@ const h = vi.hoisted(() => {
         count: vi.fn(),
       },
       account: { findMany: vi.fn() },
+      badge: { findMany: vi.fn() },
       user: { update: vi.fn() },
       verificationToken: {
         create: vi.fn(async () => ({})),
@@ -135,6 +136,7 @@ beforeEach(() => {
   process.env.AUTH_SECRET = "credential-actions-test-secret-32chars!!";
   db.verificationToken.create.mockResolvedValue({});
   db.verificationToken.delete.mockResolvedValue({});
+  db.badge.findMany.mockResolvedValue([]);
   db.$transaction.mockImplementation(async (ops: Promise<unknown>[]) => Promise.all(ops));
 });
 
@@ -774,5 +776,70 @@ describe("add-then-remove read path (stale quarantine display)", () => {
     const listing = await listCredentials();
 
     expect(listing.passkeys[0]!.status).toBe("active");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Linked accounts — the section reads `oauth-account` BADGES (provider +
+// optional handle), not Auth.js Account rows. Minister has no OAuth sign-in
+// providers, so the Account table only ever holds passkey/magic-link rows;
+// reading it made the section show passkeys and never the linked GitHub. Each
+// linked account must appear exactly once, correctly labeled.
+// ---------------------------------------------------------------------------
+
+describe("linked accounts (listCredentials)", () => {
+  function oauthBadge(id: string, provider: string, handle: string | null, issuedAt: Date) {
+    return {
+      id,
+      attributes: handle === null ? { provider } : { provider, handle },
+      issuedAt,
+    };
+  }
+
+  beforeEach(() => {
+    setSession(session(2));
+    db.userEmail.findMany.mockResolvedValue([]);
+    db.authenticator.findMany.mockResolvedValue([]);
+  });
+
+  it("maps oauth-account badges to linked accounts with provider + handle", async () => {
+    db.badge.findMany.mockResolvedValue([
+      oauthBadge("b_gh", "github", "octocat", new Date("2026-01-01T00:00:00Z")),
+      oauthBadge("b_gg", "google", null, new Date("2026-02-01T00:00:00Z")),
+    ]);
+
+    const listing = await listCredentials();
+
+    expect(listing.accounts).toEqual([
+      {
+        kind: "oauth",
+        id: "b_gh",
+        provider: "github",
+        handle: "octocat",
+        linkedAt: "2026-01-01T00:00:00.000Z",
+      },
+      {
+        kind: "oauth",
+        id: "b_gg",
+        provider: "google",
+        handle: null,
+        linkedAt: "2026-02-01T00:00:00.000Z",
+      },
+    ]);
+    // Passkeys never leak into the linked-accounts list (root of the dupe bug).
+    expect(listing.accounts.some((a) => a.provider === "passkey")).toBe(false);
+  });
+
+  it("lists a re-proved account once, keeping the earliest link", async () => {
+    db.badge.findMany.mockResolvedValue([
+      oauthBadge("b_old", "github", "octocat", new Date("2026-01-01T00:00:00Z")),
+      oauthBadge("b_new", "github", "octocat", new Date("2026-03-01T00:00:00Z")),
+    ]);
+
+    const listing = await listCredentials();
+
+    expect(listing.accounts).toHaveLength(1);
+    expect(listing.accounts[0]!.id).toBe("b_old");
+    expect(listing.accounts[0]!.linkedAt).toBe("2026-01-01T00:00:00.000Z");
   });
 });
