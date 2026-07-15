@@ -11,7 +11,7 @@ All three components are pinned to `v0.1.0-alpha.11` and must move in lockstep
 
 ## What runs where
 
-- **notary** — the upstream `ghcr.io/tlsnotary/notary-server:v0.1.0-alpha.11`
+- **notary** — the upstream `ghcr.io/tlsnotary/tlsn/notary-server:v0.1.0-alpha.11`
   image. **We do not build it.** Co-signs the TLS session for the extension.
 - **ws-proxy** — our image, `ghcr.io/ministryofmany/ministry-ws-proxy:latest`.
   WS→TCP relay the browser extension tunnels its TLS session through. Built+pushed
@@ -32,7 +32,7 @@ upstream. On the box:
 
 ```sh
 cd /home/ec2-user/ministry
-docker pull ghcr.io/tlsnotary/notary-server:v0.1.0-alpha.11
+docker pull ghcr.io/tlsnotary/tlsn/notary-server:v0.1.0-alpha.11
 docker compose -f docker-compose.lightsail.yml pull ws-proxy tlsn-verifier
 ```
 
@@ -66,7 +66,7 @@ build is pinned to).
 
 ```yaml
   notary:
-    image: ghcr.io/tlsnotary/notary-server:v0.1.0-alpha.11
+    image: ghcr.io/tlsnotary/tlsn/notary-server:v0.1.0-alpha.11
     restart: unless-stopped
     volumes:
       - notary_data:/data

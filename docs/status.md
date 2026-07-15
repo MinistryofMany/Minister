@@ -191,7 +191,7 @@ What's wired:
     misconfigured prod doesn't silently rubber-stamp. TODO: pin the
     `tlsn-verifier` crate and implement the function.
 - `services/notary/` — pinned to
-  `ghcr.io/tlsnotary/notary-server:v0.1.0-alpha.11` in
+  `ghcr.io/tlsnotary/tlsn/notary-server:v0.1.0-alpha.11` in
   docker-compose. Persisted notary key in a named volume.
 - `apps/extension/` — MV3 manifest, background service worker, popup.
   The background already knows how to POST a presentation to
