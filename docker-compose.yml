@@ -12,8 +12,8 @@
 # minister-seed inserts.
 #
 # Magic-link emails are printed to the minister container's stdout in
-# dev (no mailhog). notary, ws-proxy, tlsn-verifier are commented out
-# until Stage 6.
+# dev (no mailhog). notary, ws-proxy, and tlsn-verifier are enabled for
+# the Stage 6 TLSNotary flow.
 
 services:
   postgres:
@@ -86,9 +86,9 @@ services:
         --client-secret ${DEMO_CLIENT_SECRET:-dev-only-demo-client-secret-replace-me}
 
   # ---------------------------------------------------------------------------
-  # TLSNotary stack — Stage 6.
-  # notary-server and tlsn-verifier are wired; ws-proxy stays a stub
-  # until the browser-extension prover lands and needs it.
+  # TLSNotary stack — Stage 6: notary-server (upstream image, pinned),
+  # tlsn-verifier (Presentation::verify sidecar), ws-proxy (WS->TCP relay
+  # for the extension prover).
   # ---------------------------------------------------------------------------
   notary-server:
     build:
@@ -104,8 +104,18 @@ services:
       context: ./services/tlsn-verifier
     restart: unless-stopped
     environment:
-      VERIFIER_MODE: ${VERIFIER_MODE:-passthrough}
+      # Secure by default: `real` cryptographic verification. To run the
+      # no-crypto dev passthrough you must opt in LOUDLY — set both
+      # VERIFIER_MODE=passthrough and ALLOW_INSECURE_PASSTHROUGH=1 (or TLSN_DEV=1)
+      # in your env/.env. A bare VERIFIER_MODE=passthrough stays `real`.
+      VERIFIER_MODE: ${VERIFIER_MODE:-real}
+      ALLOW_INSECURE_PASSTHROUGH: ${ALLOW_INSECURE_PASSTHROUGH:-}
+      TLSN_DEV: ${TLSN_DEV:-}
       RUST_LOG: ${RUST_LOG:-info}
+      # REQUIRED in real mode: the notary's verifying key (hex) so only OUR
+      # notary's signatures are trusted. `real` mode refuses to boot without it
+      # (read it from GET http://notary-server:7047/info).
+      TLSN_NOTARY_PUBLIC_KEY: ${TLSN_NOTARY_PUBLIC_KEY:-}
     ports:
       - "7048:7048"
     healthcheck:
@@ -114,8 +124,26 @@ services:
       timeout: 5s
       retries: 5
 
-  # ws-proxy stays commented until the extension's prover needs it.
-  # ws-proxy: { build: { context: ./services/ws-proxy }, ports: ["55688:55688"] }
+  # WebSocket -> TCP relay the browser extension tunnels its TLSNotary
+  # session through. Exact-match host allowlist keeps it from being an
+  # open proxy; see services/ws-proxy/README.md.
+  ws-proxy:
+    build:
+      context: ./services/ws-proxy
+    restart: unless-stopped
+    environment:
+      WS_PROXY_LISTEN: ":55688"
+      WS_PROXY_ALLOWED_HOSTS: ${WS_PROXY_ALLOWED_HOSTS:-id.me,github.com,example.com}
+      WS_PROXY_ALLOWED_PORTS: ${WS_PROXY_ALLOWED_PORTS:-443}
+    ports:
+      - "55688:55688"
+    healthcheck:
+      test: ["CMD", "/ws-proxy", "-health-check"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      # distroless has no shell; the binary self-checks via -health-check.
+      start_period: 5s
 
 volumes:
   postgres_data:

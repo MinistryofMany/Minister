@@ -1,3 +1,5 @@
+import { timingSafeEqual } from "node:crypto";
+
 import { z } from "zod";
 
 // Client for the `services/tlsn-verifier` Rust HTTP sidecar.
@@ -173,5 +175,42 @@ export async function verifyPresentation(args: VerifyArgs): Promise<VerifiedTran
   if (!parsed.data.ok) {
     throw new TlsnVerifierError(parsed.data.error);
   }
+  // Defense in depth against a passthrough / keyless sidecar: a real
+  // `Presentation::verify` always reports the notary key it validated the
+  // co-signature against; passthrough returns none. Refuse to mint a badge
+  // from a transcript that isn't bound to a notary key, and — when a pin is
+  // configured — from one whose key doesn't match it.
+  assertNotaryKey(parsed.data.notaryKey);
   return parsed.data.transcript;
+}
+
+// Normalize a hex notary key for comparison: lowercase, strip an optional
+// `0x` prefix (the Rust sidecar accepts either form on input).
+function normalizeNotaryKey(key: string): string {
+  const lower = key.trim().toLowerCase();
+  return lower.startsWith("0x") ? lower.slice(2) : lower;
+}
+
+const EXPECTED_NOTARY_KEY_ENV = "MINISTER_TLSN_EXPECTED_NOTARY_KEY";
+
+function assertNotaryKey(notaryKey: string | undefined): void {
+  if (notaryKey === undefined || notaryKey.trim() === "") {
+    throw new TlsnVerifierError(
+      "tlsn-verifier returned a transcript with no notary key (keyless/passthrough); " +
+        "refusing to issue a badge",
+    );
+  }
+
+  const pinRaw = process.env[EXPECTED_NOTARY_KEY_ENV];
+  if (pinRaw === undefined || pinRaw.trim() === "") return;
+
+  const got = Buffer.from(normalizeNotaryKey(notaryKey), "utf8");
+  const want = Buffer.from(normalizeNotaryKey(pinRaw), "utf8");
+  // Length differing is not secret; timingSafeEqual throws on a mismatch, so
+  // guard it. The byte-wise compare below is constant-time.
+  if (got.length !== want.length || !timingSafeEqual(got, want)) {
+    throw new TlsnVerifierError(
+      `tlsn-verifier notary key did not match the pinned ${EXPECTED_NOTARY_KEY_ENV}`,
+    );
+  }
 }

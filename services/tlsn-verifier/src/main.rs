@@ -3,14 +3,18 @@
 //! Accepts POST /verify {presentation, expectedDomain} from the
 //! Minister Next.js app, returns the verified transcript (or an error).
 //!
-//! Two modes, switched by `VERIFIER_MODE`:
-//!   - `passthrough` (default in dev): decodes the presentation as JSON
-//!     of shape `{ sent, received, serverName }` and returns it
-//!     untouched. Lets us exercise the Minister side without a real
-//!     TLSNotary prover.
-//!   - `real`: invokes the `tlsn-verifier` crate to actually verify the
-//!     presentation cryptographically. Crate integration is TODO — the
-//!     entry point is `verify_real()` below.
+//! Two modes:
+//!   - `real` (the DEFAULT): cryptographically verifies the presentation via
+//!     `tlsn-core` (`Presentation::verify`). Entry point is `tlsn::verify_real`;
+//!     it fails closed on any input it cannot verify (never rubber-stamps), and
+//!     refuses to boot without a pinned notary key.
+//!   - `passthrough`: decodes the presentation as JSON of shape
+//!     `{ sent, received, serverName }` and returns it untouched — a no-crypto
+//!     rubber stamp for dev only. It is NOT reachable by a single env var:
+//!     it requires a loud, deliberate opt-in (`VERIFIER_MODE=passthrough`
+//!     together with `ALLOW_INSECURE_PASSTHROUGH=1`, or `TLSN_DEV=1`).
+//!     Anything short of that runs `real`, so a mistyped/missing env var
+//!     fails closed instead of rubber-stamping.
 //!
 //! Listens on `0.0.0.0:7048` by default; override with `LISTEN_ADDR`.
 
@@ -28,6 +32,8 @@ use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
 
+mod tlsn;
+
 #[derive(Clone)]
 struct AppState {
     mode: Mode,
@@ -41,9 +47,29 @@ enum Mode {
 
 impl Mode {
     fn from_env() -> Self {
-        match std::env::var("VERIFIER_MODE").ok().as_deref() {
-            Some("real") => Mode::Real,
-            _ => Mode::Passthrough,
+        Self::resolve(
+            std::env::var("VERIFIER_MODE").ok().as_deref(),
+            std::env::var("ALLOW_INSECURE_PASSTHROUGH").ok().as_deref(),
+            std::env::var("TLSN_DEV").ok().as_deref(),
+        )
+    }
+
+    /// Secure by default. `real` unless the operator has EXPLICITLY and loudly
+    /// opted into the no-crypto passthrough: `VERIFIER_MODE=passthrough` AND
+    /// `ALLOW_INSECURE_PASSTHROUGH=1` together, or `TLSN_DEV=1`. A lone
+    /// `VERIFIER_MODE=passthrough` (or any mistyped/missing var) resolves to
+    /// `real`, which then refuses to boot unpinned — so misconfig fails closed.
+    fn resolve(
+        mode: Option<&str>,
+        allow_passthrough: Option<&str>,
+        tlsn_dev: Option<&str>,
+    ) -> Self {
+        let explicit_passthrough = mode == Some("passthrough") && allow_passthrough == Some("1");
+        let dev = tlsn_dev == Some("1");
+        if explicit_passthrough || dev {
+            Mode::Passthrough
+        } else {
+            Mode::Real
         }
     }
 }
@@ -55,12 +81,21 @@ struct VerifyRequest {
     expected_domain: String,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Debug)]
 struct Transcript {
     sent: String,
     received: String,
     #[serde(rename = "serverName")]
     server_name: String,
+}
+
+/// The result of a verification, plus the notary key the caller may pin.
+#[derive(Debug)]
+pub struct VerifyOutcome {
+    transcript: Transcript,
+    /// Hex-encoded notary verifying key the presentation was signed with.
+    /// `None` in passthrough mode (no real signature).
+    notary_key: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -87,7 +122,16 @@ async fn main() -> Result<()> {
         )
         .init();
 
-    let state = AppState { mode: Mode::from_env() };
+    let state = AppState {
+        mode: Mode::from_env(),
+    };
+    // Real mode without a pinned notary key would accept ANY notary's
+    // signature. Fail at boot, not per-request, so the misconfig is loud.
+    if state.mode == Mode::Real && tlsn::pinned_notary_key().is_none() {
+        return Err(anyhow!(
+            "VERIFIER_MODE=real requires TLSN_NOTARY_PUBLIC_KEY (hex); refusing to start unpinned"
+        ));
+    }
     info!(?state.mode, "starting tlsn-verifier sidecar");
 
     let app = Router::new()
@@ -115,16 +159,19 @@ async fn verify(
 ) -> impl IntoResponse {
     let outcome = match state.mode {
         Mode::Passthrough => verify_passthrough(&req),
-        Mode::Real => verify_real(&req),
+        Mode::Real => tlsn::verify_real(&req.presentation, &req.expected_domain),
     };
 
     match outcome {
-        Ok(transcript) => (
+        Ok(VerifyOutcome {
+            transcript,
+            notary_key,
+        }) => (
             StatusCode::OK,
             Json(VerifyResponse::Ok {
                 ok: true,
                 transcript,
-                notary_key: None,
+                notary_key,
             }),
         ),
         Err(err) => {
@@ -144,7 +191,7 @@ async fn verify(
 /// shape `{ sent, received, serverName }`. Verify only that the server
 /// name matches; trust the rest. Lets Minister plugin flows be tested
 /// end-to-end without a TLSNotary prover in the loop.
-fn verify_passthrough(req: &VerifyRequest) -> Result<Transcript> {
+fn verify_passthrough(req: &VerifyRequest) -> Result<VerifyOutcome> {
     let bytes = B64
         .decode(req.presentation.as_bytes())
         .map_err(|e| anyhow!("presentation is not valid base64: {e}"))?;
@@ -159,10 +206,13 @@ fn verify_passthrough(req: &VerifyRequest) -> Result<Transcript> {
         ));
     }
 
-    Ok(Transcript {
-        sent: transcript.sent,
-        received: transcript.received,
-        server_name: transcript.server_name,
+    Ok(VerifyOutcome {
+        transcript: Transcript {
+            sent: transcript.sent,
+            received: transcript.received,
+            server_name: transcript.server_name,
+        },
+        notary_key: None,
     })
 }
 
@@ -174,20 +224,10 @@ struct PassthroughTranscript {
     server_name: String,
 }
 
-/// Real verification using the `tlsn-verifier` crate. TODO: wire the
-/// crate dependency in Cargo.toml, then implement against its API.
-/// Returns an error for now so a misconfigured prod doesn't silently
-/// rubber-stamp.
-fn verify_real(_req: &VerifyRequest) -> Result<Transcript> {
-    Err(anyhow!(
-        "VERIFIER_MODE=real is not yet wired to the tlsn-verifier crate. \
-         Pin the crate in Cargo.toml and replace this function."
-    ))
-}
-
 /// Exact-match domain check, with the small concession that the
 /// recorded server name is allowed to be `<expected>` or `<expected>:<port>`.
-fn host_matches(server_name: &str, expected: &str) -> bool {
+/// `pub(crate)` so the real-verification module (`tlsn`) reuses the same rule.
+pub(crate) fn host_matches(server_name: &str, expected: &str) -> bool {
     let trimmed = server_name.split(':').next().unwrap_or(server_name);
     trimmed.eq_ignore_ascii_case(expected)
 }
@@ -195,6 +235,50 @@ fn host_matches(server_name: &str, expected: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mode_defaults_to_real_when_unset() {
+        assert_eq!(Mode::resolve(None, None, None), Mode::Real);
+    }
+
+    #[test]
+    fn mode_real_when_explicitly_requested() {
+        assert_eq!(Mode::resolve(Some("real"), None, None), Mode::Real);
+    }
+
+    #[test]
+    fn lone_passthrough_flag_is_not_enough_and_falls_back_to_real() {
+        // The single-env-var footgun the audit flagged: VERIFIER_MODE=passthrough
+        // with no loud opt-in must NOT rubber-stamp.
+        assert_eq!(Mode::resolve(Some("passthrough"), None, None), Mode::Real);
+    }
+
+    #[test]
+    fn passthrough_requires_both_mode_and_allow_flag() {
+        assert_eq!(
+            Mode::resolve(Some("passthrough"), Some("1"), None),
+            Mode::Passthrough
+        );
+    }
+
+    #[test]
+    fn allow_flag_alone_does_not_enable_passthrough() {
+        assert_eq!(Mode::resolve(None, Some("1"), None), Mode::Real);
+        assert_eq!(Mode::resolve(Some("real"), Some("1"), None), Mode::Real);
+    }
+
+    #[test]
+    fn tlsn_dev_enables_passthrough() {
+        assert_eq!(Mode::resolve(None, None, Some("1")), Mode::Passthrough);
+    }
+
+    #[test]
+    fn unrecognized_values_resolve_to_real() {
+        assert_eq!(
+            Mode::resolve(Some("PASSTHROUGH"), Some("true"), Some("yes")),
+            Mode::Real
+        );
+    }
 
     #[test]
     fn host_matches_is_case_insensitive() {
@@ -245,7 +329,7 @@ mod tests {
             presentation: B64.encode(payload),
             expected_domain: "example.com".to_string(),
         };
-        let transcript = verify_passthrough(&req).unwrap();
+        let transcript = verify_passthrough(&req).unwrap().transcript;
         assert_eq!(transcript.server_name, "example.com");
         assert!(transcript.received.contains("hello"));
     }
@@ -260,13 +344,18 @@ mod tests {
     }
 
     #[test]
-    fn real_mode_refuses_without_crate_integration() {
+    fn passthrough_returns_no_notary_key() {
+        let payload = serde_json::to_string(&serde_json::json!({
+            "sent": "",
+            "received": "",
+            "serverName": "example.com",
+        }))
+        .unwrap();
         let req = VerifyRequest {
-            presentation: B64.encode(b"{}"),
+            presentation: B64.encode(payload),
             expected_domain: "example.com".to_string(),
         };
-        let result = verify_real(&req);
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("not yet wired"));
+        let outcome = verify_passthrough(&req).unwrap();
+        assert!(outcome.notary_key.is_none());
     }
 }

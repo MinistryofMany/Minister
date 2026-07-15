@@ -19,13 +19,19 @@ serde_json = "1"
 base64 = "0.22"
 anyhow = "1"
 
-# tlsn-verifier and tlsn-core land when we wire the real verification
-# path. Until then the sidecar runs in a passthrough mode for dev
-# (see VERIFIER_MODE=passthrough). Uncomment + pin once the crate
-# version is decided.
-#
-# tlsn-verifier = { git = "https://github.com/tlsnotary/tlsn", tag = "v0.1.0-alpha.11" }
-# tlsn-core     = { git = "https://github.com/tlsnotary/tlsn", tag = "v0.1.0-alpha.11" }
+# Real presentation verification. The extension produces a
+# `tlsn_core::presentation::Presentation` (bincode-serialized, then base64
+# for our wire), and the notary co-signs it. `Presentation::verify` is the
+# right entry point for the offline notary+presentation model we run — NOT
+# the `tlsn-verifier` crate, which implements the *interactive* MPC-verifier
+# role (verifier == notary, no separate presentation). Pinned to the same
+# tag as the notary-server image (services/notary: v0.1.0-alpha.11) so the
+# serialization + attestation formats match.
+tlsn-core = { git = "https://github.com/tlsnotary/tlsn", tag = "v0.1.0-alpha.11" }
+# bincode 1.3 is what tlsn uses to (de)serialize presentations; the wire
+# format must match exactly.
+bincode = "1.3"
+hex = "0.4"
 
 [profile.release]
 lto = "thin"
