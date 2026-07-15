@@ -1,5 +1,3 @@
-import { timingSafeEqual } from "node:crypto";
-
 import { z } from "zod";
 
 // Client for the `services/tlsn-verifier` Rust HTTP sidecar.
@@ -204,13 +202,21 @@ function assertNotaryKey(notaryKey: string | undefined): void {
   const pinRaw = process.env[EXPECTED_NOTARY_KEY_ENV];
   if (pinRaw === undefined || pinRaw.trim() === "") return;
 
-  const got = Buffer.from(normalizeNotaryKey(notaryKey), "utf8");
-  const want = Buffer.from(normalizeNotaryKey(pinRaw), "utf8");
-  // Length differing is not secret; timingSafeEqual throws on a mismatch, so
-  // guard it. The byte-wise compare below is constant-time.
-  if (got.length !== want.length || !timingSafeEqual(got, want)) {
+  // Pure-JS constant-time compare of the (public) notary-key hex — no node:crypto,
+  // so this module stays bundleable (it is reachable from the plugin/client graph;
+  // a node:crypto import here breaks `next build` with UnhandledSchemeError).
+  if (!constantTimeEqual(normalizeNotaryKey(notaryKey), normalizeNotaryKey(pinRaw))) {
     throw new TlsnVerifierError(
       `tlsn-verifier notary key did not match the pinned ${EXPECTED_NOTARY_KEY_ENV}`,
     );
   }
+}
+
+// Length-then-content compare. The length is not secret (the notary key is
+// public); for equal-length inputs the loop never early-exits.
+function constantTimeEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let r = 0;
+  for (let i = 0; i < a.length; i++) r |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return r === 0;
 }
