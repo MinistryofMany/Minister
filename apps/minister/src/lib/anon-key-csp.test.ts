@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
 import { anonKeyCspResponse, buildAnonKeyCsp, isStrictCspPath } from "@/lib/anon-key-csp";
 
@@ -64,5 +64,55 @@ describe("anonKeyCspResponse", () => {
   it("returns null (no header) for out-of-scope routes", () => {
     expect(anonKeyCspResponse("/settings/profile", new Headers(), false)).toBeNull();
     expect(anonKeyCspResponse("/oidc/token", new Headers(), false)).toBeNull();
+  });
+});
+
+describe("anonKeyCspResponse report-only toggle", () => {
+  const KEY = "MINISTER_CSP_REPORT_ONLY";
+  afterEach(() => {
+    delete process.env[KEY];
+  });
+
+  const ENFORCING = "content-security-policy";
+  const REPORT_ONLY = "content-security-policy-report-only";
+
+  it("emits the enforcing header by default (env unset)", () => {
+    delete process.env[KEY];
+    const res = anonKeyCspResponse("/oidc/authorize", new Headers(), false)!;
+    expect(res.headers.get(ENFORCING)).not.toBeNull();
+    expect(res.headers.get(REPORT_ONLY)).toBeNull();
+  });
+
+  it("emits the enforcing header when explicitly set to false", () => {
+    process.env[KEY] = "false";
+    const res = anonKeyCspResponse("/oidc/authorize", new Headers(), false)!;
+    expect(res.headers.get(ENFORCING)).not.toBeNull();
+    expect(res.headers.get(REPORT_ONLY)).toBeNull();
+  });
+
+  it("emits the Report-Only header when MINISTER_CSP_REPORT_ONLY=true", () => {
+    process.env[KEY] = "true";
+    const res = anonKeyCspResponse("/oidc/authorize", new Headers(), false)!;
+    expect(res.headers.get(REPORT_ONLY)).not.toBeNull();
+    expect(res.headers.get(ENFORCING)).toBeNull();
+  });
+
+  it("uses an identical policy body + nonce shape in both modes", () => {
+    const stripNonce = (s: string) => s.replace(/'nonce-[a-f0-9]+'/, "'nonce-X'");
+
+    delete process.env[KEY];
+    const enforced = anonKeyCspResponse("/oidc/authorize", new Headers(), false)!.headers.get(
+      ENFORCING,
+    )!;
+
+    process.env[KEY] = "true";
+    const reportOnly = anonKeyCspResponse("/oidc/authorize", new Headers(), false)!.headers.get(
+      REPORT_ONLY,
+    )!;
+
+    // Only the header NAME changes: same directives, same nonce format (the
+    // nonce value differs per call since it is freshly generated).
+    expect(stripNonce(reportOnly)).toBe(stripNonce(enforced));
+    expect(reportOnly).toMatch(/'nonce-[a-f0-9]+'/);
   });
 });

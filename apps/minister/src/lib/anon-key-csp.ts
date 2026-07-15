@@ -52,6 +52,22 @@ export function buildAnonKeyCsp(nonce: string, isDev: boolean): string {
   ].join("; ");
 }
 
+// Report-only rollout toggle. When MINISTER_CSP_REPORT_ONLY=true the policy is
+// emitted as `Content-Security-Policy-Report-Only` — the browser logs violations
+// but blocks nothing — so the strict policy can ship and be observed before it is
+// enforced. Unset/false -> the enforcing `Content-Security-Policy` header (the
+// default, current behavior). Only the header NAME changes; the policy body +
+// nonce are identical in both modes. Read from process.env directly (not the
+// zod-parsed `env`) so this stays edge-safe: the middleware graph must not pull
+// the full env schema into the Edge bundle, matching the existing NODE_ENV read.
+// Next reads the nonce from either header name (app-render), so report-only mode
+// still stamps Next's inline bootstrap scripts.
+function cspHeaderName(): string {
+  return process.env.MINISTER_CSP_REPORT_ONLY === "true"
+    ? "content-security-policy-report-only"
+    : "content-security-policy";
+}
+
 // Returns a pass-through response carrying the strict CSP for a seed-bearing
 // route, or null when the path is out of scope (the caller then continues its
 // normal middleware flow). Next reads the nonce from the request-side CSP
@@ -66,12 +82,13 @@ export function anonKeyCspResponse(
 
   const nonce = crypto.randomUUID().replace(/-/g, "");
   const csp = buildAnonKeyCsp(nonce, isDev);
+  const header = cspHeaderName();
 
   const forwarded = new Headers(requestHeaders);
   forwarded.set("x-nonce", nonce);
-  forwarded.set("content-security-policy", csp);
+  forwarded.set(header, csp);
 
   const res = NextResponse.next({ request: { headers: forwarded } });
-  res.headers.set("content-security-policy", csp);
+  res.headers.set(header, csp);
   return res;
 }

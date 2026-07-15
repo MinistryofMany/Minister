@@ -111,6 +111,18 @@ const serverSchema = z
       .optional()
       .transform((v) => v === "true"),
 
+    // Strict-CSP rollout toggle (lib/anon-key-csp.ts). Default false: emit the
+    // enforcing `Content-Security-Policy` header. "true" emits
+    // `Content-Security-Policy-Report-Only` instead — same policy body, browser
+    // logs violations but blocks nothing — so the strict policy can be deployed
+    // and observed before it is flipped to enforcing, no code change. The
+    // header path reads process.env directly (edge-safe); this entry validates
+    // the value and rejects typos at boot.
+    MINISTER_CSP_REPORT_ONLY: z
+      .union([z.literal("true"), z.literal("false")])
+      .optional()
+      .transform((v) => v === "true"),
+
     NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   })
   .superRefine((val, ctx) => {
