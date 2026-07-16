@@ -182,6 +182,10 @@ export function isVaultReady(userId: string): boolean {
  * C2: `userId` and `sessionId` are the caller's OWN authenticated session and
  * OWN optical scan; they must never come from the relay response. The raw root
  * is read from this module's memory and never returned.
+ * W1: the AAD epoch is THIS device's `vaultEpoch` — the epoch its stored root
+ * belongs to, from its own state. A stale device (holding a pre-re-key root)
+ * therefore seals under an old epoch, and the receiver's open fails closed
+ * rather than stamping a soft-bricked identity.
  */
 export async function sealRootToPeer(params: {
   userId: string;
@@ -198,6 +202,7 @@ export async function sealRootToPeer(params: {
     root: seed,
     userId: params.userId,
     sessionId: params.sessionId,
+    epoch: vaultEpoch,
   });
   const encoded = encodeRelayBody(body);
   body.fill(0);
@@ -210,7 +215,10 @@ export async function sealRootToPeer(params: {
  * vault ACTIVE and persist it. The raw root never leaves this module. A tampered
  * or wrong-account/session payload fails GCM and throws — never a silently wrong
  * root. C2: `userId`/`sessionId` are this device's OWN session and OWN generated
- * session id, never the relay response.
+ * session id, never the relay response. W1: `epoch` is this device's OWN current
+ * server epoch, fed into the AAD; a stale sealer's out-of-date epoch makes the
+ * open fail closed, so a soft-bricked root is rejected rather than stamped
+ * ACTIVE at the current epoch.
  */
 export async function receiveRootFromPeer(params: {
   userId: string;
@@ -225,6 +233,7 @@ export async function receiveRootFromPeer(params: {
     relayBody: body,
     userId: params.userId,
     sessionId: params.sessionId,
+    epoch: params.epoch,
   });
   try {
     await unlockVault(params.userId, root, { active: true, epoch: params.epoch });

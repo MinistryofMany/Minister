@@ -15,6 +15,12 @@ import { ipOrNull, jsonError, readContext } from "../_shared";
 // sealPairSession: it conditions on `userId = <this session's user>` (C2), the
 // SOLE barrier against the remote phish.
 //
+// CSRF: this state-changing POST relies on Auth.js's default `SameSite=Lax`
+// session cookie plus the required `application/json` content-type (a
+// cross-site form/simple request cannot set it) — there is no separate CSRF
+// token. If the session cookie's SameSite attribute is ever loosened, this is
+// the only barrier, so revisit CSRF here before changing that config.
+//
 // Response: { ok: true } | { ok: false, error, reason }
 const Body = z.object({
   sessionId: z.string().refine(isValidSessionId, "invalid sessionId"),
@@ -50,6 +56,10 @@ export async function POST(request: Request) {
     payload: parsed.data.payload,
     ip: ipOrNull(ctx.ip),
     ua: ctx.ua,
+    // Coarse geo for the "new device added" alert (FIX 2a) — best-effort, never
+    // stored, only shown in the notification.
+    country: ctx.country,
+    city: ctx.city,
   });
 
   if (result.ok) {

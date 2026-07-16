@@ -3,6 +3,8 @@ import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { generateSessionId } from "@minister/shared/pair-protocol";
 
 import { audit } from "@/lib/audit";
+import { emailInlineLink, emailParagraph, emailText, renderEmail } from "@/lib/email-layout";
+import { sendMail } from "@/lib/mailer";
 import { prisma } from "@/lib/prisma";
 
 // QR device-pairing relay logic (identity plan, "QR pairing"). The route
@@ -15,6 +17,12 @@ import { prisma } from "@/lib/prisma";
 /** Session lifetime: 3 minutes. A long time for a screenshot to travel; short
  * enough to bound a captured QR. */
 export const PAIR_TTL_MS = 3 * 60 * 1000;
+
+/** Opportunistic-sweep grace: rows whose seal window expired this long ago are
+ * dead (even a sealed-but-slow-to-claim row is claimed within seconds in the
+ * happy path). Deleted on the next `create` so the table — and any lingering
+ * sealed ciphertext — cannot grow unbounded without cron infra. */
+const PAIR_SWEEP_GRACE_MS = 60 * 60 * 1000;
 
 /** Length of the creator secret (bytes) before base64url encoding. The display
  * device holds it; only its SHA-256 is stored, and it is the claim capability. */
@@ -100,6 +108,16 @@ export async function createPairSession(args: CreatePairArgs): Promise<CreatePai
   const sessionId = generateSessionId();
   const creatorSecret = randomBytes(CREATOR_SECRET_BYTES).toString("base64url");
   const expiresAt = new Date(Date.now() + PAIR_TTL_MS);
+  // FIX 3: opportunistic TTL sweep — bound table growth (and drop any lingering
+  // sealed ciphertext) without cron infra. Best-effort: a sweep failure must not
+  // block minting a fresh session.
+  try {
+    await prisma.anonPairSession.deleteMany({
+      where: { expiresAt: { lt: new Date(Date.now() - PAIR_SWEEP_GRACE_MS) } },
+    });
+  } catch {
+    // Non-fatal: the row bound is a hygiene property, not a correctness one.
+  }
   await prisma.anonPairSession.create({
     data: {
       id: sessionId,
@@ -186,6 +204,8 @@ export async function sealPairSession(args: {
   payload: string;
   ip: string | null;
   ua: string | null;
+  country: string | null;
+  city: string | null;
 }): Promise<SealPairResult> {
   const now = new Date();
   const res = await prisma.anonPairSession.updateMany({
@@ -204,6 +224,9 @@ export async function sealPairSession(args: {
   });
   if (res.count === 1) {
     await audit(args.sessionUserId, "anon.pair.sealed", { sessionId: args.sessionId });
+    // FIX 2a: root delivery is irreversible, so also alert the owner out of band.
+    // Fail-open — a mail error must never break or roll back a completed pairing.
+    await notifyDeviceAdded(args.sessionUserId, args.sessionId, args.country, args.city);
     return { ok: true };
   }
   // The update above is the barrier. This read exists ONLY to pick the right
@@ -211,10 +234,80 @@ export async function sealPairSession(args: {
   // a "try again". It never widens what the update permits.
   const row = await prisma.anonPairSession.findUnique({ where: { id: args.sessionId } });
   if (!row) return { ok: false, reason: "not_found" };
-  if (row.userId !== args.sessionUserId) return { ok: false, reason: "cross_account" };
+  if (row.userId !== args.sessionUserId) {
+    // FIX 2b: a C2-blocked cross-account deposit is a root-theft phish signature.
+    // Record it against the phished (victim) account whose session was used.
+    await audit(args.sessionUserId, "anon.pair.cross_account_blocked", {
+      sessionId: args.sessionId,
+    });
+    return { ok: false, reason: "cross_account" };
+  }
   if (row.expiresAt <= now) return { ok: false, reason: "expired" };
   if (row.state !== "waiting") return { ok: false, reason: "already_used" };
   return { ok: false, reason: "not_found" };
+}
+
+/**
+ * FIX 2a: out-of-band alert that a new device was added to the user's Private
+ * Identity. Mailed to every verified address (a compromised inbox can't suppress
+ * the others). Fail-open by contract: swallow any transport error and record it
+ * to the audit log — the pairing already succeeded and must never be rolled back
+ * or blocked by a mail failure (mirrors the credential-notify pattern, but
+ * fail-open rather than surfacing). Dev/test degrades to a console log inside the
+ * mailer.
+ */
+async function notifyDeviceAdded(
+  userId: string,
+  sessionId: string,
+  country: string | null,
+  city: string | null,
+): Promise<void> {
+  try {
+    const emails = await prisma.userEmail.findMany({
+      where: { userId, verifiedAt: { not: null } },
+      select: { email: true },
+    });
+    const where = city ?? country ?? "an unknown location";
+    const when = new Date().toUTCString();
+    const subject = "A new device was added to your Private Identity";
+    const text = [
+      `A new device was just added to your Minister Private Identity.`,
+      ``,
+      `Time: ${when}`,
+      `From: ${where}`,
+      ``,
+      `If this wasn't you, someone may have your key. Go to /settings/private-identity and re-key your identity immediately.`,
+    ].join("\n");
+    const html = renderEmail({
+      title: subject,
+      heading: "A new device was added to your Private Identity",
+      blocks: [
+        emailText(`A new device was just added to your Minister Private Identity.`),
+        emailText(`Time: ${when}`, { muted: true }),
+        emailText(`From: ${where}`, { muted: true }),
+        // Trusted static copy plus a pre-rendered inline link — emailParagraph,
+        // not emailText, so the link markup is not double-escaped.
+        emailParagraph(
+          `If this wasn't you, someone may have your key. Go to ${emailInlineLink(
+            "/settings/private-identity",
+            "/settings/private-identity",
+          )} and re-key your identity immediately.`,
+        ),
+      ],
+    });
+    for (const { email } of emails) {
+      await sendMail({ to: email, subject, text, html });
+    }
+  } catch (err) {
+    // Fail-open: never let a mail failure break the pairing. Record it so the
+    // missed alert is at least traceable.
+    await audit(userId, "anon.pair.notify_failed", {
+      sessionId,
+      error: err instanceof Error ? err.message : String(err),
+    }).catch(() => {
+      // Even the audit write is best-effort here; nothing else to do.
+    });
+  }
 }
 
 // --- claim (single-use handoff to the creator) ----------------------------

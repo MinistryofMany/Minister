@@ -28,8 +28,9 @@ export const PAIR_QR_PREFIX = "MP1.";
  * version so a blob from another Ministry HPKE use can never open here. */
 export const PAIR_HPKE_INFO = "ministry/pair/v1";
 
-/** AAD prefix. The full AAD is `PAIR_AAD_PREFIX + userId + "|" + sessionId`; the
- * "|" separator is guarded (S2) so a field cannot straddle a boundary. */
+/** AAD prefix. The full AAD is
+ * `PAIR_AAD_PREFIX + userId + "|" + sessionId + "|" + epoch`; the "|" separator
+ * is guarded (S2) so a field cannot straddle a boundary. */
 export const PAIR_AAD_PREFIX = "ministry/pair/v1|";
 
 /** The AAD field separator. Mirrors `anon-seed-crypto`'s `assertAadPart` (which
@@ -124,15 +125,28 @@ function assertAadField(name: string, value: string): void {
 }
 
 /**
- * `utf8("ministry/pair/v1|" + userId + "|" + sessionId)`. Both fields are
- * separator-guarded (S2). REQUIREMENT (C2): the caller MUST pass `userId` from
- * its own authenticated session and `sessionId` from its own state (the QR it
- * generated, or the QR it optically scanned) — NEVER a value the relay reported.
+ * `utf8("ministry/pair/v1|" + userId + "|" + sessionId + "|" + epoch)`. All
+ * three fields are separator-guarded (S2). REQUIREMENT (C2): the caller MUST
+ * pass `userId` from its own authenticated session and `sessionId` from its own
+ * state (the QR it generated, or the QR it optically scanned) — NEVER a value
+ * the relay reported.
+ *
+ * `epoch` is the enrollment epoch, supplied by each side from ITS OWN state
+ * (W1): the sealer passes the epoch its stored root belongs to, the receiver
+ * passes its own current server epoch. On a healthy pairing both equal the
+ * current epoch and GCM succeeds; a STALE sealer (still holding a pre-re-key
+ * root) supplies a different epoch, the AAD differs, and the open fails closed —
+ * so the receiver rejects the out-of-date key rather than silently stamping a
+ * soft-bricked identity.
  */
-export function buildPairAad(userId: string, sessionId: string): Uint8Array {
+export function buildPairAad(userId: string, sessionId: string, epoch: number): Uint8Array {
+  const epochStr = String(epoch);
   assertAadField("userId", userId);
   assertAadField("sessionId", sessionId);
-  return utf8.encode(`${PAIR_AAD_PREFIX}${userId}${PAIR_AAD_SEPARATOR}${sessionId}`);
+  assertAadField("epoch", epochStr);
+  return utf8.encode(
+    `${PAIR_AAD_PREFIX}${userId}${PAIR_AAD_SEPARATOR}${sessionId}${PAIR_AAD_SEPARATOR}${epochStr}`,
+  );
 }
 
 // --- session id + QR codec ------------------------------------------------
@@ -246,14 +260,16 @@ export async function generateRecipientKeyPair(): Promise<{
 /**
  * SCANNING side: HPKE-seal the 16 root bytes to the DISPLAYING device's
  * scanned public key. Returns the 64-byte relay body `enc || ct`. The AAD binds
- * userId + sessionId (C2): the caller passes userId from its OWN session and
- * sessionId from the QR it OPTICALLY scanned — never from the relay.
+ * userId + sessionId + epoch (C2/W1): the caller passes userId from its OWN
+ * session, sessionId from the QR it OPTICALLY scanned, and `epoch` as the
+ * enrollment epoch of the root it holds — never from the relay.
  */
 export async function sealRoot(params: {
   recipientPublicKey: Uint8Array;
   root: Uint8Array;
   userId: string;
   sessionId: string;
+  epoch: number;
 }): Promise<Uint8Array> {
   if (params.recipientPublicKey.length !== PAIR_PUBLIC_KEY_BYTES) {
     throw new PairProtocolError(`recipientPublicKey must be ${PAIR_PUBLIC_KEY_BYTES} bytes`);
@@ -262,7 +278,7 @@ export async function sealRoot(params: {
     throw new PairProtocolError(`root must be exactly ${PAIR_ROOT_BYTES} bytes`);
   }
   const suite = pairSuite();
-  const aad = buildPairAad(params.userId, params.sessionId);
+  const aad = buildPairAad(params.userId, params.sessionId, params.epoch);
   const pkR = await suite.kem.deserializePublicKey(params.recipientPublicKey);
   const { enc, ct } = await suite.seal(
     { recipientPublicKey: pkR, info: utf8.encode(PAIR_HPKE_INFO) },
@@ -284,21 +300,23 @@ export async function sealRoot(params: {
  * DISPLAYING side: HPKE-open a relay body back to the 16 root bytes with the
  * memory-only recipient key pair. Throws (never returns a wrong root) on any GCM
  * tag or AAD mismatch — a relay that delivered a tampered or substituted payload
- * hard-errors here. The caller passes userId from its OWN session and sessionId
- * from its OWN generated state (C2), so a mismatch means the payload was not
- * sealed for this exact (user, session).
+ * hard-errors here. The caller passes userId from its OWN session, sessionId
+ * from its OWN generated state, and `epoch` as its OWN current server epoch
+ * (C2/W1), so a mismatch means the payload was not sealed for this exact
+ * (user, session, epoch) — including a stale sealer holding a pre-re-key root.
  */
 export async function openRoot(params: {
   recipientKeyPair: CryptoKeyPair;
   relayBody: Uint8Array;
   userId: string;
   sessionId: string;
+  epoch: number;
 }): Promise<Uint8Array> {
   if (params.relayBody.length !== PAIR_RELAY_BODY_BYTES) {
     throw new PairProtocolError(`relay body must be ${PAIR_RELAY_BODY_BYTES} bytes`);
   }
   const suite = pairSuite();
-  const aad = buildPairAad(params.userId, params.sessionId);
+  const aad = buildPairAad(params.userId, params.sessionId, params.epoch);
   const enc = params.relayBody.slice(0, PAIR_ENC_BYTES);
   const ct = params.relayBody.slice(PAIR_ENC_BYTES);
   let ptBuf: ArrayBuffer;

@@ -63,14 +63,24 @@ const h = vi.hoisted(() => {
           return { count };
         },
       ),
+      deleteMany: vi.fn(async () => ({ count: 0 })),
     },
+    // FIX 2a notify path: no verified emails in the fake, so the alert loop is a
+    // no-op (still exercises the fail-open wrapper without a real transport).
+    userEmail: { findMany: vi.fn(async () => [] as Array<{ email: string }>) },
   };
 
-  return { rows, db, audit: vi.fn((..._args: unknown[]) => Promise.resolve()) };
+  return {
+    rows,
+    db,
+    audit: vi.fn((..._args: unknown[]) => Promise.resolve()),
+    sendMail: vi.fn(async () => undefined),
+  };
 });
 
 vi.mock("@/lib/prisma", () => ({ prisma: h.db }));
 vi.mock("@/lib/audit", () => ({ audit: h.audit }));
+vi.mock("@/lib/mailer", () => ({ sendMail: h.sendMail }));
 
 import { createHash } from "node:crypto";
 
@@ -115,6 +125,8 @@ describe("C2 (SECURITY CONTROL): the seal same-account check blocks cross-user d
       payload: PAYLOAD,
       ip: "9.9.9.9",
       ua: "attacker",
+      country: "RU",
+      city: null,
     });
 
     // The atomic update matched zero rows (WHERE userId = user_B), so the payload
@@ -124,6 +136,10 @@ describe("C2 (SECURITY CONTROL): the seal same-account check blocks cross-user d
     expect(row.sealedPayload).toBeNull();
     expect(row.state).toBe("waiting");
     expect(row.sealerIp).toBeNull();
+    // FIX 2b: the blocked phish is recorded against the phished (victim) account.
+    expect(h.audit).toHaveBeenCalledWith("user_B", "anon.pair.cross_account_blocked", {
+      sessionId: "sid_A",
+    });
   });
 
   it("the rightful account's sealer DOES deposit", async () => {
@@ -134,6 +150,8 @@ describe("C2 (SECURITY CONTROL): the seal same-account check blocks cross-user d
       payload: PAYLOAD,
       ip: "1.2.3.4",
       ua: "mine",
+      country: "US",
+      city: "Cleveland",
     });
     expect(result).toEqual({ ok: true });
     const row = h.rows.get("sid_A")!;
@@ -151,6 +169,8 @@ describe("seal failure diagnostics (copy only — the WHERE is the barrier)", ()
       payload: PAYLOAD,
       ip: null,
       ua: null,
+      country: null,
+      city: null,
     });
     expect(r).toEqual({ ok: false, reason: "expired" });
   });
@@ -163,6 +183,8 @@ describe("seal failure diagnostics (copy only — the WHERE is the barrier)", ()
       payload: PAYLOAD,
       ip: null,
       ua: null,
+      country: null,
+      city: null,
     });
     expect(r).toEqual({ ok: false, reason: "already_used" });
   });
@@ -174,6 +196,8 @@ describe("seal failure diagnostics (copy only — the WHERE is the barrier)", ()
       payload: PAYLOAD,
       ip: null,
       ua: null,
+      country: null,
+      city: null,
     });
     expect(r).toEqual({ ok: false, reason: "not_found" });
   });
