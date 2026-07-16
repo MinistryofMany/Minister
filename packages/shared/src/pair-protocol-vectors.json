@@ -1,0 +1,12 @@
+{
+  "_note": "Golden vectors for pair-protocol.ts. Regenerate only with a version bump. recipientIkm/root/userId/sessionId are fixed inputs; sealedRelayBody was captured from one seal (ephemeral, so it is a frozen sample) and MUST open to root under recipientIkm.",
+  "userId": "user_abc123",
+  "sessionId": "AAAAAAAAAAAAAAAAAAAAAA",
+  "recipientIkmHex": "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff",
+  "recipientPublicKeyHex": "2647576b2f538420329f58a19b178f2cafaf825cda4bb6fc948c2f319520d80f",
+  "rootHex": "4d696e6973747279206f66204d616e79",
+  "aadHex": "6d696e69737472792f706169722f76317c757365725f6162633132337c41414141414141414141414141414141414141414141",
+  "qr": "MP1.AAAAAAAAAAAAAAAAAAAAAA.JkdXay9ThCAyn1ihmxePLK-vglzaS7b8lIwvMZUg2A8",
+  "pairCode": "TFPP",
+  "sealedRelayBody": "9XO_FEK8CiY9MRaHwDRaQ2hvElgnFAU1bdRb8_UKfAiPv5qxkoEaMKuInXtb-INOtL2gMGJ-_sSn5o9JMWoTEQ"
+}

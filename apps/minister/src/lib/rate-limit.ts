@@ -221,3 +221,13 @@ export const anonSeedActionLimiter = createRateLimiter({
   windowMs: MINUTE,
   max: envMax("MINISTER_RL_ANON_SEED_MAX", 20),
 });
+
+// QR device-pairing relay endpoints (create / poll / seal / claim). The
+// displaying device polls claim on a short interval for up to 3 minutes, so the
+// ceiling has to clear a healthy poll rate while still capping a runaway or
+// hostile client. Keyed per user for the authenticated create/seal/claim, and
+// per IP for the unauthenticated-facts poll.
+export const anonPairLimiter = createRateLimiter({
+  windowMs: MINUTE,
+  max: envMax("MINISTER_RL_ANON_PAIR_MAX", 120),
+});

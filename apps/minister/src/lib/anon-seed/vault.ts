@@ -27,6 +27,12 @@ import {
   unwrapSeed,
   wrapSeed,
 } from "@minister/shared";
+import {
+  decodeRelayBody,
+  encodeRelayBody,
+  openRoot,
+  sealRoot,
+} from "@minister/shared/pair-protocol";
 
 import {
   getAnonPasskeyCredentialIds,
@@ -157,6 +163,74 @@ export async function purgeVault(userId: string): Promise<void> {
  * consent flow can deliver an anonymous identity right now. */
 export function isVaultReady(userId: string): boolean {
   return seed !== null && seedUserId === userId && active;
+}
+
+// ---------------------------------------------------------------------------
+// QR device pairing (identity plan, "QR pairing"). Seal/open live INSIDE the
+// vault so the raw root never crosses this module boundary — pair-client.ts
+// orchestrates the network and QR but only ever handles the ephemeral key pair
+// (not seed material) and the opaque relay body. No network primitive appears
+// here (the anon-seed invariants test enforces that).
+// ---------------------------------------------------------------------------
+
+/**
+ * SCANNING side: HPKE-seal THIS device's loaded root to a peer's scanned public
+ * key, returning the 86-char base64url relay body for the caller to POST.
+ *
+ * S4: refuses unless this user's vault is unlocked AND ACTIVE — a device that
+ * does not actually hold an unlocked root for its own session cannot seal.
+ * C2: `userId` and `sessionId` are the caller's OWN authenticated session and
+ * OWN optical scan; they must never come from the relay response. The raw root
+ * is read from this module's memory and never returned.
+ */
+export async function sealRootToPeer(params: {
+  userId: string;
+  sessionId: string;
+  recipientPublicKey: Uint8Array;
+}): Promise<string> {
+  if (seed === null || seedUserId !== params.userId || !active) {
+    throw new AnonSeedCryptoError(
+      "vault is not ready: unlock your Private Identity on this device before pairing",
+    );
+  }
+  const body = await sealRoot({
+    recipientPublicKey: params.recipientPublicKey,
+    root: seed,
+    userId: params.userId,
+    sessionId: params.sessionId,
+  });
+  const encoded = encodeRelayBody(body);
+  body.fill(0);
+  return encoded;
+}
+
+/**
+ * DISPLAYING side: HPKE-open a relay body received over the blind relay with
+ * this device's memory-only recipient key pair, then load the root into the
+ * vault ACTIVE and persist it. The raw root never leaves this module. A tampered
+ * or wrong-account/session payload fails GCM and throws — never a silently wrong
+ * root. C2: `userId`/`sessionId` are this device's OWN session and OWN generated
+ * session id, never the relay response.
+ */
+export async function receiveRootFromPeer(params: {
+  userId: string;
+  sessionId: string;
+  recipientKeyPair: CryptoKeyPair;
+  relayBody: string;
+  epoch: number;
+}): Promise<void> {
+  const body = decodeRelayBody(params.relayBody);
+  const root = await openRoot({
+    recipientKeyPair: params.recipientKeyPair,
+    relayBody: body,
+    userId: params.userId,
+    sessionId: params.sessionId,
+  });
+  try {
+    await unlockVault(params.userId, root, { active: true, epoch: params.epoch });
+  } finally {
+    root.fill(0);
+  }
 }
 
 // ---------------------------------------------------------------------------

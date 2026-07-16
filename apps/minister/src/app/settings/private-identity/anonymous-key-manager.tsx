@@ -159,6 +159,26 @@ export function AnonymousKeyManager({
 
       <Card>
         <CardHeader>
+          <CardTitle>Use it on another device</CardTitle>
+          <CardDescription>
+            Move your Private Identity between your own devices with a QR code, like linking a chat
+            app. Your key is sent end-to-end encrypted — Ministry never sees it.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-3 sm:flex-row">
+          <Button asChild variant="outline">
+            <Link href="/settings/private-identity/add-device">
+              Add a device (I have my key here)
+            </Link>
+          </Button>
+          <Button asChild variant="outline">
+            <Link href="/settings/private-identity/get-key">Get my key from another device</Link>
+          </Button>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
           <CardTitle>Lost your Private Identity?</CardTitle>
           <CardDescription>
             If you no longer have your key on any device, you can&apos;t recover it — but you can

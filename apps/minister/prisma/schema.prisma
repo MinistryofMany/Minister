@@ -116,6 +116,8 @@ model User {
   // (governing invariant, spec §2).
   anonSeedEnrollment AnonSeedEnrollment?
   anonSeedBlobs      AnonSeedBlob[]
+  // QR device-pairing relay sessions the user's displaying device created.
+  anonPairSessions   AnonPairSession[]
 }
 
 // A user-uploaded avatar photo, held as a bytea blob. Deliberately a SEPARATE
@@ -569,6 +571,50 @@ model AnonSeedBlob {
   updatedAt    DateTime @updatedAt
 
   @@unique([userId, credentialId])
+}
+
+// A QR device-pairing relay session (identity plan, "QR pairing"). Moves the
+// 16-byte root from a device that HOLDS it to one that does NOT, over a relay
+// Ministry operates but stays cryptographically BLIND to: the server sees the
+// sessionId, two IPs, two user-agents, and a 64-byte opaque HPKE blob — never
+// the recipient public key (it lives only in the displaying page's memory and
+// its screen pixels), never the shared secret, never the root.
+//
+// C2 (CRITICAL): `userId` is the DISPLAYING device's authenticated account, and
+// the seal update is conditioned on `userId = <sealer's own session user>`. That
+// same-account check is the SOLE barrier against the remote phish — not defense
+// in depth. A sealer authenticated as account B must not be able to deposit into
+// account A's session.
+//
+// TTL 3 minutes, single-use: `sealedPayload` is NULLed in the same statement
+// that hands it to the creator (claim).
+model AnonPairSession {
+  // sessionId: 22-char base64url of 16 random bytes (also carried in the QR).
+  id     String @id
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // waiting -> sealed -> claimed; expired is terminal. String, not an enum, to
+  // match the codebase's other lifecycle columns and keep migrations trivial.
+  state         String  @default("waiting")
+  // 86-char base64url HPKE relay body (enc || ct). NULLed on claim (single-use).
+  sealedPayload String?
+  // SHA-256 (hex) of the creatorSecret the displaying device holds; the claim
+  // capability. The secret itself is never stored.
+  creatorSecretHash String
+  expiresAt         DateTime
+  // Connection facts the relay observed, shown to the SCANNER so it can judge
+  // "is this my other device?". Country/city are best-effort (Cloudflare geo
+  // headers; city needs a managed transform and may be absent).
+  creatorIp      String?
+  creatorUa      String?
+  creatorCountry String?
+  creatorCity    String?
+  sealerIp       String?
+  sealerUa       String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([userId])
 }
 
 // Per-user, per-plugin wizard run. Persists across requests (and email
