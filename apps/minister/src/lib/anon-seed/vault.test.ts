@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { encodeSeedToString, encodeSeedToWords } from "@minister/shared";
+import { encodeSeedToString } from "@minister/shared";
 
 // The vault imports the anon-seed server actions; mock them so no env/prisma
 // loads and so the tests can assert exactly what the vault would upload.
@@ -148,12 +148,6 @@ describe("buildAnonRedirect: fail-open for login, fail-closed for identity (8.3)
 describe("L0/L2 entry: unlockWithSeedInput (spec 5.3 parser)", () => {
   it("unlocks from the canonical string", async () => {
     unlockWithSeedInput(USER, SEED_STRING);
-    const secret = await deriveAppSecret("deforum", USER);
-    expect(Buffer.from(secret).toString("hex")).toBe(DEFORUM_SECRET_HEX);
-  });
-
-  it("unlocks from the 12 words", async () => {
-    unlockWithSeedInput(USER, encodeSeedToWords(SEED).join(" "));
     const secret = await deriveAppSecret("deforum", USER);
     expect(Buffer.from(secret).toString("hex")).toBe(DEFORUM_SECRET_HEX);
   });

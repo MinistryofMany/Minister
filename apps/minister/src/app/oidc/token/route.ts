@@ -203,6 +203,9 @@ export async function POST(request: Request) {
     minister_badges: userClaims.ministerBadges.length > 0 ? userClaims.ministerBadges : undefined,
     // undefined when not granted / omitted at consent — mintIdToken drops it.
     sybil_bucket: userClaims.sybilBucket,
+    // Echoed verbatim from the consent snapshot on the auth code; never
+    // recomputed. Null for non-anon clients → coerced to undefined so it drops.
+    minister_anon_epoch: stored.anonEpoch ?? undefined,
   });
 
   // jti links the access JWT to a server-side OidcAccessToken row.
@@ -226,6 +229,8 @@ export async function POST(request: Request) {
       // bucket the ID token carried — never a recomputed one.
       sybilScore: stored.sybilScore,
       sybilBucket: stored.sybilBucket,
+      // Denormalize the anon-identity epoch so /userinfo echoes the same value.
+      anonEpoch: stored.anonEpoch,
       expiresAt: accessTokenExpiresAt,
     },
   });

@@ -1,16 +1,15 @@
 import { createBase58check } from "@scure/base";
 import { sha256 } from "@noble/hashes/sha256";
-import { entropyToMnemonic, mnemonicToEntropy } from "@scure/bip39";
-import { wordlist } from "@scure/bip39/wordlists/english";
 
 // E4 root-secret codec (anon-identity master spec, section 5). One 16-byte root
-// seed renders two ways: a canonical base58check string (what the password
-// manager saves and pairing transfers) and 12 BIP39 words (the write-it-down
-// aid). Both decode to the identical 16 bytes; the parser accepts either.
+// seed renders as a canonical base58check string (what the password manager
+// saves and pairing transfers). The 12-word BIP-39 aid is retired: the fixed
+// 28-char string is the ONLY backup format (decision O-2, 2026-07-16), so the
+// codec no longer carries a mnemonic path or the @scure/bip39 dependency.
 //
 // Pure encode/decode only. No key derivation, storage, or transport lives here
-// (that is the vault module, spec section 7/8). Hand-rolling base58 or the
-// wordlist is prohibited; this leans on audited @scure / @noble primitives.
+// (that is the vault module, spec section 7/8). Hand-rolling base58 is
+// prohibited; this leans on the audited @scure / @noble primitives.
 
 /** The root seed is exactly 128 bits (spec 4). */
 export const ROOT_SEED_BYTES = 16;
@@ -19,9 +18,6 @@ export const ROOT_SEED_BYTES = 16;
  * well-known version bytes while keeping the string a fixed 28 chars. */
 export const SEED_VERSION_BYTE = 0x0a;
 
-/** A 12-word BIP39 mnemonic (128-bit ENT + 4-bit checksum, spec 5.2). */
-export const SEED_WORD_COUNT = 12;
-
 /** Fixed length of the canonical base58check string for any 16-byte payload. */
 export const SEED_STRING_LENGTH = 28;
 
@@ -29,8 +25,7 @@ export const SEED_STRING_LENGTH = 28;
 // createBase58check applies the passed hash twice, matching spec 5.1.
 const base58check = createBase58check(sha256);
 
-/** Thrown for any malformed codec input. Message names both accepted forms so
- * a recovery UI can surface it directly. */
+/** Thrown for any malformed codec input. */
 export class SeedCodecError extends Error {
   constructor(message: string) {
     super(message);
@@ -86,109 +81,15 @@ export function decodeStringToSeed(input: string): Uint8Array {
   return versioned.slice(1);
 }
 
-/** 16 bytes -> 12 BIP39 English words (spec 5.2). */
-export function encodeSeedToWords(seed: Uint8Array): string[] {
-  assertSeedBytes(seed);
-  return entropyToMnemonic(seed, wordlist).split(" ");
-}
-
-/** 12 BIP39 words -> 16 bytes (spec 5.2). Accepts a string or a word array;
- * validates word membership and the BIP39 checksum, hard-rejects otherwise. */
-export function decodeWordsToSeed(input: string | readonly string[]): Uint8Array {
-  const words = (Array.isArray(input) ? input.join(" ") : (input as string))
-    .trim()
-    .toLowerCase()
-    .split(/\s+/)
-    .filter((w) => w.length > 0);
-  if (words.length !== SEED_WORD_COUNT) {
-    throw new SeedCodecError(
-      `invalid Private Identity words: expected ${SEED_WORD_COUNT} words, got ${words.length}`,
-    );
-  }
-  let entropy: Uint8Array;
-  try {
-    // mnemonicToEntropy throws on an unknown word or a bad BIP39 checksum.
-    entropy = mnemonicToEntropy(words.join(" "), wordlist);
-  } catch {
-    throw new SeedCodecError("invalid Private Identity words: unknown word or failed checksum");
-  }
-  if (entropy.length !== ROOT_SEED_BYTES) {
-    // 12 words is always 128-bit entropy; defensive only.
-    throw new SeedCodecError(
-      `invalid Private Identity words: decoded ${entropy.length} bytes, expected ${ROOT_SEED_BYTES}`,
-    );
-  }
-  return entropy;
-}
-
 /**
- * Recovery parser (spec 5.3): accept either encoding and return the 16 bytes.
- * Whitespace with 2+ tokens is treated as words; otherwise as the base58check
- * string. Never silently truncates, pads, or "fixes" input.
+ * Recovery parser (spec 5.3): the base58check string is now the only accepted
+ * form, so this is a thin alias over decodeStringToSeed. Kept as a named entry
+ * point so callers (the vault) need not change. Never silently truncates, pads,
+ * or "fixes" input.
  */
 export function parseSeedInput(input: string): Uint8Array {
-  // Collapse internal whitespace runs to single spaces, trim the ends.
-  const normalized = input.trim().replace(/\s+/g, " ");
-  if (normalized.length === 0) {
-    throw new SeedCodecError(
-      "empty input: enter your Private Identity as the 28-character string or the 12 words",
-    );
+  if (input.trim().length === 0) {
+    throw new SeedCodecError("empty input: enter your Private Identity as the 28-character string");
   }
-  if (normalized.includes(" ")) {
-    return decodeWordsToSeed(normalized);
-  }
-  return decodeStringToSeed(normalized);
-}
-
-/**
- * Sample `count` distinct 1-based word indices in `1..total` via rejection
- * sampling on the CSPRNG (no modulo bias, spec 6.3). Used to build the backup
- * quiz ("type word #3, #7, #11").
- */
-export function sampleWordChallengeIndices(count = 3, total = SEED_WORD_COUNT): number[] {
-  if (count < 0 || count > total) {
-    throw new SeedCodecError(`cannot sample ${count} distinct indices from ${total}`);
-  }
-  const chosen = new Set<number>();
-  // Rejection sampling: draw a byte, discard the biased tail, map to 0..total-1.
-  const limit = Math.floor(256 / total) * total;
-  const buf = new Uint8Array(1);
-  while (chosen.size < count) {
-    crypto.getRandomValues(buf);
-    const b = buf[0]!;
-    if (b >= limit) continue;
-    chosen.add((b % total) + 1);
-  }
-  return [...chosen].sort((a, b) => a - b);
-}
-
-/** One answer in the backup quiz: the 1-based word position and what the user typed. */
-export interface WordChallengeResponse {
-  index: number;
-  answer: string;
-}
-
-/**
- * Verify a backup quiz (spec 6.3): every response's answer, lowercased and
- * trimmed, must equal the word at that 1-based index. Comparison is entirely
- * client-side and is a UX forcing function, never a security control (spec's
- * honesty note): a caller may not build any security property on the result.
- * Returns false (never throws) for out-of-range or duplicate indices.
- */
-export function checkWordChallenge(
-  words: readonly string[],
-  responses: readonly WordChallengeResponse[],
-): boolean {
-  if (words.length !== SEED_WORD_COUNT) return false;
-  if (responses.length === 0) return false;
-  const seen = new Set<number>();
-  for (const { index, answer } of responses) {
-    if (!Number.isInteger(index) || index < 1 || index > SEED_WORD_COUNT) {
-      return false;
-    }
-    if (seen.has(index)) return false;
-    seen.add(index);
-    if (answer.trim().toLowerCase() !== words[index - 1]) return false;
-  }
-  return true;
+  return decodeStringToSeed(input);
 }

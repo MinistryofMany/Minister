@@ -2,13 +2,7 @@
 
 import { useState, useTransition } from "react";
 
-import {
-  checkWordChallenge,
-  encodeSeedToString,
-  encodeSeedToWords,
-  generateRootSeed,
-  sampleWordChallengeIndices,
-} from "@minister/shared";
+import { encodeSeedToString, generateRootSeed } from "@minister/shared";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -22,14 +16,14 @@ import {
 import { PasskeyProtectButton } from "./passkey-protect-button";
 import { PmSave } from "./pm-save";
 
-// Enrollment: generate → forced backup → 3-word quiz → storage offers (anon
-// identity master spec §6.3, §7). A vault-OWNED component (I4): the seed is
+// Enrollment: generate → forced backup → retype-to-confirm → storage offers
+// (anon identity master spec §6.3, §7). A vault-OWNED component (I4): the seed is
 // generated here with crypto.getRandomValues, loaded straight into the vault,
-// and rendered ONLY as the two backup forms (string + words) — the two
-// permitted string surfaces (spec §12 check 14). Nothing here sends any codec
-// form anywhere: no form elements, no fetch; the only server calls are the
-// metadata-only enrollment actions. Backup is download + write-down; email is
-// deliberately not offered (spec §2).
+// and rendered ONLY as the canonical 28-character backup string (the single
+// permitted backup format, decision O-2; the 12-word codec was retired).
+// Nothing here sends any codec form anywhere: no form elements, no fetch; the
+// only server calls are the metadata-only enrollment actions. Backup is
+// download + write-down; email is deliberately not offered (spec §2).
 
 interface Props {
   userId: string;
@@ -42,8 +36,8 @@ interface Props {
 
 type Step =
   | { step: "intro" }
-  | { step: "backup"; seedString: string; words: string[] }
-  | { step: "quiz"; seedString: string; words: string[]; indices: number[] }
+  | { step: "backup"; seedString: string }
+  | { step: "confirm"; seedString: string }
   | { step: "store" };
 
 export function EnrollmentFlow({ userId, needsRestart, onComplete }: Props) {
@@ -65,27 +59,21 @@ export function EnrollmentFlow({ userId, needsRestart, onComplete }: Props) {
       }
       const seed = generateRootSeed();
       const seedString = encodeSeedToString(seed);
-      const words = encodeSeedToWords(seed);
       // Into the vault immediately (not yet ACTIVE — no derivation until the
-      // backup is confirmed, I3). The local copy is zeroized; the string and
-      // words remain for the backup screen only.
+      // backup is confirmed, I3). The local copy is zeroized; the string
+      // remains for the backup screen only.
       unlockVault(userId, seed, { active: false });
       seed.fill(0);
-      setState({ step: "backup", seedString, words });
+      setState({ step: "backup", seedString });
     });
   }
 
-  function startQuiz(seedString: string, words: string[]) {
-    setError(null);
-    setState({ step: "quiz", seedString, words, indices: sampleWordChallengeIndices(3) });
-  }
-
-  function submitQuiz(words: string[], indices: number[], answers: string[]) {
-    const responses = indices.map((index, i) => ({ index, answer: answers[i] ?? "" }));
-    if (!checkWordChallenge(words, responses)) {
-      // Fresh indices on every failure (spec §6.3 step 2).
-      setError("That doesn't match. Check your backup and try the new words below.");
-      setState((s) => (s.step === "quiz" ? { ...s, indices: sampleWordChallengeIndices(3) } : s));
+  function submitConfirm(seedString: string, typed: string) {
+    // Retype-to-confirm is a UX forcing function (spec §6.3), never a security
+    // control: an exact match against the string just shown proves the user
+    // captured it. Compare verbatim (the string is case-sensitive base58check).
+    if (typed.trim() !== seedString) {
+      setError("That doesn't match your Private Identity. Check your backup and try again.");
       return;
     }
     setError(null);
@@ -96,8 +84,8 @@ export function EnrollmentFlow({ userId, needsRestart, onComplete }: Props) {
         return;
       }
       markVaultActive(userId);
-      // Drop the words/string from component state before the storage step —
-      // the backup surfaces are done (best-effort scrubbing; spec check 14).
+      // Drop the string from component state before the storage step — the
+      // backup surface is done (best-effort scrubbing; spec check 14).
       setState({ step: "store" });
     });
   }
@@ -131,23 +119,22 @@ export function EnrollmentFlow({ userId, needsRestart, onComplete }: Props) {
       return (
         <BackupScreen
           seedString={state.seedString}
-          words={state.words}
-          onContinue={() => startQuiz(state.seedString, state.words)}
+          onContinue={() => {
+            setError(null);
+            setState({ step: "confirm", seedString: state.seedString });
+          }}
         />
       );
-    case "quiz":
+    case "confirm":
       return (
-        <QuizScreen
-          // Remount on every fresh index set so stale answers are cleared.
-          key={state.indices.join("-")}
-          indices={state.indices}
+        <ConfirmScreen
           pending={pending}
           error={error}
           onBack={() => {
             setError(null);
-            setState({ step: "backup", seedString: state.seedString, words: state.words });
+            setState({ step: "backup", seedString: state.seedString });
           }}
-          onSubmit={(answers) => submitQuiz(state.words, state.indices, answers)}
+          onSubmit={(typed) => submitConfirm(state.seedString, typed)}
         />
       );
     case "store":
@@ -163,15 +150,7 @@ function ErrorNote({ message }: { message: string }) {
   );
 }
 
-function BackupScreen({
-  seedString,
-  words,
-  onContinue,
-}: {
-  seedString: string;
-  words: string[];
-  onContinue: () => void;
-}) {
+function BackupScreen({ seedString, onContinue }: { seedString: string; onContinue: () => void }) {
   const [copied, setCopied] = useState(false);
   return (
     <div className="space-y-3">
@@ -180,7 +159,7 @@ function BackupScreen({
           Back up your Private Identity — this is the only copy
         </h4>
         <p className="text-sm text-neutral-600 dark:text-neutral-400">
-          Save the file or write down the 12 words. Ministry cannot recover this Private Identity;
+          Save the file or write down this key. Ministry cannot recover this Private Identity;
           losing it means losing your anonymous identities for good.
         </p>
       </div>
@@ -206,21 +185,8 @@ function BackupScreen({
         </div>
       </div>
 
-      <ol className="grid grid-cols-3 gap-x-4 gap-y-1 rounded-md border border-neutral-200 p-3 text-sm dark:border-neutral-800 sm:grid-cols-4">
-        {words.map((w, i) => (
-          <li key={i} className="flex items-baseline gap-1.5">
-            <span className="w-5 text-right text-xs tabular-nums text-neutral-400">{i + 1}.</span>
-            <span className="font-mono">{w}</span>
-          </li>
-        ))}
-      </ol>
-
       <div className="flex flex-wrap gap-2">
-        <Button
-          type="button"
-          variant="outline"
-          onClick={() => downloadBackupFile(seedString, words)}
-        >
+        <Button type="button" variant="outline" onClick={() => downloadBackupFile(seedString)}>
           Download backup file
         </Button>
         <Button type="button" onClick={onContinue}>
@@ -231,58 +197,46 @@ function BackupScreen({
   );
 }
 
-function QuizScreen({
-  indices,
+function ConfirmScreen({
   pending,
   error,
   onBack,
   onSubmit,
 }: {
-  indices: number[];
   pending: boolean;
   error: string | null;
   onBack: () => void;
-  onSubmit: (answers: string[]) => void;
+  onSubmit: (typed: string) => void;
 }) {
-  // The parent remounts this component (keyed on the index set) after a
-  // failure, so answers always start clean for fresh indices.
-  const [answers, setAnswers] = useState<string[]>(() => indices.map(() => ""));
+  const [typed, setTyped] = useState("");
   return (
     <div className="space-y-3">
       <div>
         <h4 className="text-sm font-semibold">Prove you saved it</h4>
         <p className="text-sm text-neutral-600 dark:text-neutral-400">
-          Type these words from your backup to continue.
+          Type or paste your Private Identity key from your backup to continue.
         </p>
       </div>
       {error ? <ErrorNote message={error} /> : null}
-      <div className="flex flex-col gap-2">
-        {indices.map((idx, i) => (
-          <label key={idx} className="flex items-center gap-3 text-sm">
-            <span className="w-20 shrink-0 text-neutral-600 dark:text-neutral-400">
-              Word #{idx}
-            </span>
-            <Input
-              value={answers[i] ?? ""}
-              onChange={(e) => setAnswers((a) => a.map((v, j) => (j === i ? e.target.value : v)))}
-              autoComplete="off"
-              autoCapitalize="none"
-              spellCheck={false}
-              aria-label={`Word number ${idx}`}
-            />
-          </label>
-        ))}
-      </div>
+      <Input
+        value={typed}
+        onChange={(e) => setTyped(e.target.value)}
+        autoComplete="off"
+        autoCapitalize="none"
+        spellCheck={false}
+        aria-label="Your Private Identity key"
+        className="font-mono"
+      />
       <div className="flex gap-2">
         <Button type="button" variant="outline" onClick={onBack} disabled={pending}>
           Back to my Private Identity
         </Button>
         <Button
           type="button"
-          onClick={() => onSubmit(answers)}
-          disabled={pending || answers.some((a) => a.trim().length === 0)}
+          onClick={() => onSubmit(typed)}
+          disabled={pending || typed.trim().length === 0}
         >
-          {pending ? "Working…" : "Check words"}
+          {pending ? "Working…" : "Confirm"}
         </Button>
       </div>
     </div>
@@ -316,15 +270,12 @@ function StoreStep({ userId, onDone }: { userId: string; onDone: () => void }) {
 
 // The backup file (spec §6.3 step 1): built and downloaded entirely
 // client-side via a Blob object URL — no request carries it anywhere.
-function downloadBackupFile(seedString: string, words: string[]): void {
+function downloadBackupFile(seedString: string): void {
   const content = [
     "Ministry Private Identity — backup",
     `Saved: ${new Date().toISOString().slice(0, 10)}`,
     "",
     `Key: ${seedString}`,
-    "",
-    "Words:",
-    ...words.map((w, i) => `${String(i + 1).padStart(2, " ")}. ${w}`),
     "",
     "Ministry cannot recover this Private Identity. Anyone who has it can write as your",
     "anonymous identity in every connected app. Keep it private.",

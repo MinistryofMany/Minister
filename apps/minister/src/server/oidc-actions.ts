@@ -58,7 +58,9 @@ const CODE_TTL_SECONDS = 60; // per CLAUDE.md "Required security" §
 
 export async function approveConsent(
   input: z.infer<typeof ApproveInput>,
-): Promise<never | { error: string } | { redirectTo: string; anonAppId: string }> {
+): Promise<
+  never | { error: string } | { redirectTo: string; anonAppId: string; anonEpoch: number }
+> {
   const session = await getCurrentSession();
   if (!session?.user?.id) {
     return { error: "Not signed in" };
@@ -252,6 +254,34 @@ export async function approveConsent(
     }
   }
 
+  // Anon-identity epoch snapshot. Only an anon-enabled client (feature flag on
+  // AND the client carries an anonAppId) receives a derived branch in the URL
+  // fragment, so only it carries the epoch that gates the app's re-key
+  // decision. Read the client's anonAppId ONCE here (reused for the redirect
+  // below) and, when set, snapshot the user's CURRENT enrollment epoch onto the
+  // auth code. It is echoed on the id_token/userinfo and NEVER recomputed at
+  // /token — the app caches its derived branch against this value and re-keys
+  // only when a later login carries a strictly greater epoch. Null for a
+  // non-anon client → the claim is omitted.
+  let anonAppId: string | null = null;
+  let anonEpoch: number | null = null;
+  if (env.ANON_IDENTITY_ENABLED) {
+    const anonClient = await prisma.oidcClient.findUnique({
+      where: { clientId: request.clientId },
+      select: { anonAppId: true },
+    });
+    anonAppId = anonClient?.anonAppId ?? null;
+    if (anonAppId) {
+      const enrollment = await prisma.anonSeedEnrollment.findUnique({
+        where: { userId: session.user.id },
+        select: { enrollmentEpoch: true },
+      });
+      // Default to epoch 1 when no enrollment row exists yet — mirrors
+      // getAnonSeedState's `?? 1`. The app derives its branch at this epoch.
+      anonEpoch = enrollment?.enrollmentEpoch ?? 1;
+    }
+  }
+
   const code = newAuthCode();
   // The types actually disclosed this round (the minimized set). These — not
   // the whole locked set — are what we record into the grant, so the grant
@@ -288,6 +318,9 @@ export async function approveConsent(
         // is null when omitted (declined / not requested / compute failed).
         sybilScore: approveSybilScore,
         sybilBucket,
+        // Snapshot of the anon-identity epoch (null for non-anon clients).
+        // Echoed as `minister_anon_epoch`; never recomputed at /token.
+        anonEpoch,
         // Echoed back in id_token at /token time — see CLAUDE.md.
         nonce: request.nonce,
         codeChallenge: request.codeChallenge,
@@ -351,14 +384,10 @@ export async function approveConsent(
   // transaction above and never re-issued here. A non-anon client, or the flag
   // off, keeps the existing server-side redirect byte-for-byte (§8.3), so the
   // whole feature is inert until both conditions hold.
-  if (env.ANON_IDENTITY_ENABLED) {
-    const client = await prisma.oidcClient.findUnique({
-      where: { clientId: request.clientId },
-      select: { anonAppId: true },
-    });
-    if (client?.anonAppId) {
-      return { redirectTo: successUrl, anonAppId: client.anonAppId };
-    }
+  if (env.ANON_IDENTITY_ENABLED && anonAppId !== null) {
+    // anonEpoch is always set alongside anonAppId above; `?? 1` only satisfies
+    // the type checker (it can never actually fall through).
+    return { redirectTo: successUrl, anonAppId, anonEpoch: anonEpoch ?? 1 };
   }
 
   redirect(successUrl);

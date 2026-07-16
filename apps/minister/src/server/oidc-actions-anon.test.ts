@@ -30,6 +30,7 @@ const h = vi.hoisted(() => {
     },
     createdCode: null as null | Record<string, unknown>,
     anonAppId: null as string | null,
+    enrollmentEpoch: 1 as number,
     audit: vi.fn(async () => {}),
   };
 });
@@ -90,6 +91,9 @@ vi.mock("@/lib/prisma", () => ({
       }),
     ),
     oidcClient: { findUnique: vi.fn(async () => ({ anonAppId: h.anonAppId })) },
+    anonSeedEnrollment: {
+      findUnique: vi.fn(async () => ({ enrollmentEpoch: h.enrollmentEpoch })),
+    },
     badge: { findMany: vi.fn(async () => []) },
   },
 }));
@@ -108,6 +112,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   h.env.ANON_IDENTITY_ENABLED = false;
   h.anonAppId = null;
+  h.enrollmentEpoch = 1;
   h.createdCode = null;
 });
 
@@ -121,6 +126,8 @@ describe("approveConsent — authorization code properties (unchanged on both pa
     expect(code.codeChallenge).toBe("challenge-123");
     expect(code.nonce).toBe("nonce-abc");
     expect(code.consumedAt).toBeUndefined(); // single-use: unconsumed at mint
+    // Non-anon client: no epoch snapshot, so the claim is omitted downstream.
+    expect(code.anonEpoch).toBeNull();
     // 43-char base64url authorization code (32 random bytes).
     expect(code.code).toMatch(/^[A-Za-z0-9_-]{43}$/);
     // 60-second TTL.
@@ -134,6 +141,7 @@ describe("approveConsent — anon fragment delivery decision (§8.2)", () => {
   it("flag ON + anon-enabled client → RETURNS {redirectTo, anonAppId}, no server redirect", async () => {
     h.env.ANON_IDENTITY_ENABLED = true;
     h.anonAppId = "deforum";
+    h.enrollmentEpoch = 3;
 
     const result = await approveConsent(INPUT);
     expect(result).toBeDefined();
@@ -141,6 +149,10 @@ describe("approveConsent — anon fragment delivery decision (§8.2)", () => {
       throw new Error(`expected a redirectTo result, got ${JSON.stringify(result)}`);
     }
     expect(result.anonAppId).toBe("deforum");
+    // The current enrollment epoch is snapshotted onto the code and returned so
+    // the consent client can bind the derived branch to it.
+    expect(result.anonEpoch).toBe(3);
+    expect(h.createdCode!.anonEpoch).toBe(3);
     // Same success URL: carries the single-use code and the bound state.
     const url = new URL(result.redirectTo);
     expect(url.origin + url.pathname).toBe("https://rp.example/cb");

@@ -155,6 +155,9 @@ export async function GET(request: Request) {
   if (resolved.picture !== undefined) claims.picture = resolved.picture;
   // `!== undefined`, never falsy: bucket 0 is a real disclosed value.
   if (resolved.sybilBucket !== undefined) claims.sybil_bucket = resolved.sybilBucket;
+  // Echoed from the epoch denormalized onto the access-token row at /token —
+  // read back, never recomputed, so /userinfo matches the ID token exactly.
+  if (row.anonEpoch !== null) claims.minister_anon_epoch = row.anonEpoch;
 
   if (resolved.ministerBadges.length > 0) {
     claims.minister_badges = resolved.ministerBadges;
