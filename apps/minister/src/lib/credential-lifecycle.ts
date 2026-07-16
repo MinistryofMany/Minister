@@ -65,9 +65,15 @@ export function describeRemaining(untilMs: number, now: number = Date.now()): st
 // The privileged-action gate (H-1)
 // ---------------------------------------------------------------------------
 
-// The four privileged pivots the quarantine cooldown exists to contain.
+// The privileged pivots the quarantine cooldown exists to contain. `anon-seed.rekey`
+// destroys the current anonymous identity everywhere and mints a new one, so a
+// grafted/quarantined credential must not be able to force it.
 export type PrivilegedActionName =
-  "merge.start" | "merge.confirm" | "recovery-codes.generate" | "email.set-primary";
+  | "merge.start"
+  | "merge.confirm"
+  | "recovery-codes.generate"
+  | "email.set-primary"
+  | "anon-seed.rekey";
 
 // A typed, user-presentable refusal. `message` is finished copy the UI can
 // render as-is; `retryAt` (ISO) is when the refusal clears by itself, when it

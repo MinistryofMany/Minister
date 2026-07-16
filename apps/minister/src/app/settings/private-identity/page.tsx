@@ -44,6 +44,7 @@ export default async function PrivateIdentityPage() {
       <AnonymousKeyManager
         userId={session.user.id}
         initialStatus={status}
+        epoch={enrollment?.enrollmentEpoch ?? 1}
         passkeyBlobs={blobs.map((b) => ({
           credentialId: b.credentialId,
           createdAt: b.createdAt.toISOString(),

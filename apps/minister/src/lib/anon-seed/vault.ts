@@ -504,7 +504,10 @@ export type PmAutofillResult = "unlocked" | "unsupported" | "none";
  * seed with no user gesture. Throws SeedCodecError if the stored value is not
  * a valid key (surfaced, never silently ignored).
  */
-export async function autofillFromPasswordManager(userId: string): Promise<PmAutofillResult> {
+export async function autofillFromPasswordManager(
+  userId: string,
+  epoch: number = DEFAULT_ANON_EPOCH,
+): Promise<PmAutofillResult> {
   if (!passwordCredentialSupported()) return "unsupported";
   const container = navigator.credentials as CredentialsContainerCompat;
   let cred: Credential | null;
@@ -516,7 +519,7 @@ export async function autofillFromPasswordManager(userId: string): Promise<PmAut
   if (!cred || cred.type !== "password") return "none";
   const password = (cred as PasswordCredentialLike).password;
   if (typeof password !== "string") return "none";
-  await unlockWithSeedInput(userId, password);
+  await unlockWithSeedInput(userId, password, epoch);
   return "unlocked";
 }
 

@@ -60,9 +60,10 @@ export function EnrollmentFlow({ userId, needsRestart, onComplete }: Props) {
       const seed = generateRootSeed();
       const seedString = encodeSeedToString(seed);
       // Into the vault immediately (not yet ACTIVE — no derivation until the
-      // backup is confirmed, I3). The local copy is zeroized; the string
-      // remains for the backup screen only.
-      await unlockVault(userId, seed, { active: false });
+      // backup is confirmed, I3), bound to the epoch the server just stamped on
+      // the enrollment row so a later derivation is epoch-consistent (Lane C).
+      // The local copy is zeroized; the string remains for the backup screen only.
+      await unlockVault(userId, seed, { active: false, epoch: begun.state.enrollmentEpoch });
       seed.fill(0);
       setState({ step: "backup", seedString });
     });

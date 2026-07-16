@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState, useTransition } from "react";
 
@@ -31,10 +32,13 @@ export function AnonymousKeyManager({
   userId,
   initialStatus,
   passkeyBlobs,
+  epoch,
 }: {
   userId: string;
   initialStatus: AnonSeedStatus;
   passkeyBlobs: PasskeyBlobItem[];
+  // Server-snapshotted enrollment epoch; threaded into the unlock path (Lane C).
+  epoch: number;
 }) {
   const router = useRouter();
   const [status, setStatus] = useState<AnonSeedStatus>(initialStatus);
@@ -88,6 +92,7 @@ export function AnonymousKeyManager({
             <UnlockPanel
               userId={userId}
               hasPasskeyBlobs={passkeyBlobs.length > 0}
+              epoch={epoch}
               onUnlocked={() => setUnlocked(true)}
             />
           )}
@@ -149,6 +154,21 @@ export function AnonymousKeyManager({
               </span>
             </span>
           </label>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Lost your Private Identity?</CardTitle>
+          <CardDescription>
+            If you no longer have your key on any device, you can&apos;t recover it — but you can
+            re-key: replace it with a new one and keep your account, badges, and memberships.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <Button asChild variant="outline">
+            <Link href="/settings/private-identity/rekey">I lost my key</Link>
+          </Button>
         </CardContent>
       </Card>
 

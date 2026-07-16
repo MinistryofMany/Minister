@@ -172,6 +172,15 @@ describe("L0/L2 entry: unlockWithSeedInput (28-char string, O-2)", () => {
     await expect(unlockWithSeedInput(USER, "not a key")).rejects.toThrow();
     await expect(deriveAppSecret("deforum", USER)).rejects.toThrow(/locked/);
   });
+
+  it("threads the real epoch: a root unlocked at epoch N derives only at N (Lane C)", async () => {
+    // The consent/settings unlock path threads the server-snapshotted epoch
+    // through unlockWithSeedInput; a stale root then fails closed at any other.
+    await unlockWithSeedInput(USER, SEED_STRING, 5);
+    await expect(deriveAppSecret("deforum", USER, 1)).rejects.toThrow(/epoch mismatch/);
+    const secret = await deriveAppSecret("deforum", USER, 5);
+    expect(secret.length).toBe(32);
+  });
 });
 
 describe("L1 enroll: wraps client-side, uploads ciphertext only (I1, 7.1)", () => {

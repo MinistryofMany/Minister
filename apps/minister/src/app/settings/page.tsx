@@ -19,9 +19,10 @@ const SECURITY_LINKS = [
     description: "Manage your sign-in emails and passkeys, and choose a primary email.",
   },
   {
-    href: "/settings/recovery-codes",
-    title: "Recovery codes",
-    description: "Generate single-use codes to recover access if you lose your passkey.",
+    href: "/settings/security",
+    title: "Account recovery",
+    description:
+      "Recover your account with your badges or single-use codes if you lose your passkey.",
   },
 ];
 
@@ -36,7 +37,7 @@ export default async function SettingsPage() {
           href: "/settings/private-identity",
           title: "Private Identity",
           description:
-            "Set up, unlock, and manage your Private Identity — it powers your anonymous identity in connected apps.",
+            "Set up, unlock, and manage your Private Identity. Unlike your account, it can't be recovered — only replaced.",
         },
       ]
     : SECURITY_LINKS;

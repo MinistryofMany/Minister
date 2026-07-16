@@ -6,9 +6,11 @@ import { WRAP_CIPHERTEXT_BYTES, WRAP_IV_BYTES } from "@minister/shared";
 
 import { env } from "@/env";
 import { audit } from "@/lib/audit";
+import { gatePrivilegedAction } from "@/lib/credential-gate";
+import type { QuarantineRefusal } from "@/lib/credential-lifecycle";
 import { prisma } from "@/lib/prisma";
 import { anonSeedActionLimiter } from "@/lib/rate-limit";
-import { requireSession } from "@/lib/session";
+import { getCurrentSession, requireSession } from "@/lib/session";
 
 // Server actions for the anonymous-identity daily-key stack (anon-identity
 // master spec §6, §7.1, §11.2). GOVERNING INVARIANT (spec §2): no action here
@@ -69,6 +71,39 @@ const MAX_BLOBS_PER_USER = 5;
 // seed = a new identity in every app, unrecoverable; require the exact typed
 // phrase so it can never be a one-click accident.
 const RESET_CONFIRM_PHRASE = "reset my anonymous key";
+
+// Re-key ("I lost my key"): its own typed phrase, distinct from the reset
+// phrase so the two destructive surfaces can never be confused for one another.
+const REKEY_CONFIRM_PHRASE = "re-key my identity";
+
+// Re-key cooldown backstop (identity plan, O-6 / re-key section). Matches the
+// merge-reversal horizon; the real bound on double-action is the sub-keying
+// invariant, this only rate-limits the destructive mint. 7 days.
+const REKEY_COOLDOWN_MS = 7 * 24 * 60 * 60 * 1000;
+
+// Recent-auth window the re-key gate demands (identity plan): an AAL2 session
+// can be hours old, so re-key additionally requires a real authentication in
+// the last 5 minutes. Fail closed on a missing/NaN auth_time.
+const REKEY_RECENCY_SECS = 5 * 60;
+
+// The bump-epoch-and-purge transaction shared by reset and re-key: increment the
+// epoch (anti-rollback, I12), null both timestamps (back to `none`), and delete
+// every wrapped blob — atomically. Callers own the authorization; this is the
+// mutation only.
+async function bumpEpochAndPurge(userId: string) {
+  const [row] = await prisma.$transaction([
+    prisma.anonSeedEnrollment.update({
+      where: { userId },
+      data: {
+        enrollmentEpoch: { increment: 1 },
+        seedGeneratedAt: null,
+        backupConfirmedAt: null,
+      },
+    }),
+    prisma.anonSeedBlob.deleteMany({ where: { userId } }),
+  ]);
+  return row;
+}
 
 // A base64url WebAuthn credential id. Capped, charset-restricted; the base64url
 // alphabet excludes ":", which the wrap AAD uses as its field separator (§7.1),
@@ -355,21 +390,110 @@ export async function resetAnonSeed(
     };
   }
 
-  const [row] = await prisma.$transaction([
-    prisma.anonSeedEnrollment.update({
-      where: { userId },
-      data: {
-        enrollmentEpoch: { increment: 1 },
-        seedGeneratedAt: null,
-        backupConfirmedAt: null,
-      },
-    }),
-    prisma.anonSeedBlob.deleteMany({ where: { userId } }),
-  ]);
+  const row = await bumpEpochAndPurge(userId);
 
   await audit(userId, "anon_seed.reset", {
     enrollmentEpoch: row.enrollmentEpoch,
     wasActive,
   });
+  return { ok: true, state: stateOf(row) };
+}
+
+// ---------------------------------------------------------------------------
+// Re-key ("I lost my key") — identity plan, O-6 / re-key section.
+// ---------------------------------------------------------------------------
+
+const RekeyInput = z.object({ confirmPhrase: z.string().optional() });
+
+export type RekeyResult =
+  | { ok: true; state: AnonSeedState }
+  // stepUp: below AAL2 or the auth is too old — route into a passkey re-auth.
+  | { ok: false; stepUp: true; error: string }
+  // The H-1 quarantine gate refused (grafted/quarantined acting credential).
+  | { ok: false; quarantine: QuarantineRefusal; error: string }
+  // A plain refusal (wrong phrase, cooldown, nothing to re-key, disabled, rate).
+  | { ok: false; error: string; retryAt?: string };
+
+// A signed-in user whose account never depended on the seed declares the root
+// lost. Gates, hardest first (a re-key destroys the anonymous identity in every
+// app): AAL2 + a real auth within 5 minutes + an unquarantined acting credential
+// + a 7-day cooldown + the exact typed phrase. Only then bump the epoch and
+// purge blobs. The client then generates a fresh root, is forced to back it up,
+// and the checklist walks the user through re-keying into each connected app on
+// their next login there. Failures are RETURNED, never thrown (prod scrubs a
+// thrown server-action message to an opaque digest).
+export async function rekeyAnonSeed(input: z.infer<typeof RekeyInput> = {}): Promise<RekeyResult> {
+  if (!env.ANON_IDENTITY_ENABLED) return { ok: false, error: DISABLED_ERROR };
+
+  const session = await getCurrentSession();
+  if (!session?.user?.id) return { ok: false, error: "Not signed in." };
+  const userId = session.user.id;
+
+  const limited = rateLimitGuard(userId);
+  if (limited) return limited;
+
+  const parsed = RekeyInput.safeParse(input);
+  if (!parsed.success) return { ok: false, error: "Invalid input" };
+
+  // AAL2 floor.
+  if ((session.aal ?? 0) < 2) {
+    return {
+      ok: false,
+      stepUp: true,
+      error: "Re-keying requires signing in with a passkey first.",
+    };
+  }
+
+  // 5-minute auth recency. Fail closed on a missing / non-finite auth_time.
+  const authTime = session.auth_time;
+  const nowSecs = Math.floor(Date.now() / 1000);
+  if (
+    typeof authTime !== "number" ||
+    !Number.isFinite(authTime) ||
+    nowSecs - authTime > REKEY_RECENCY_SECS
+  ) {
+    return {
+      ok: false,
+      stepUp: true,
+      error: "Confirm it's you: re-authenticate with your passkey, then re-key within 5 minutes.",
+    };
+  }
+
+  // Typed confirmation phrase.
+  if (parsed.data.confirmPhrase?.trim().toLowerCase() !== REKEY_CONFIRM_PHRASE) {
+    return {
+      ok: false,
+      error: `Type "${REKEY_CONFIRM_PHRASE}" to confirm — this permanently replaces your anonymous identity in every app.`,
+    };
+  }
+
+  // H-1 quarantine gate: an unquarantined acting credential is required.
+  const refusal = await gatePrivilegedAction(userId, session.cred, "anon-seed.rekey");
+  if (refusal) return { ok: false, quarantine: refusal, error: refusal.message };
+
+  // Cooldown backstop: refuse if a successful re-key landed within the window.
+  const since = new Date(Date.now() - REKEY_COOLDOWN_MS);
+  const recent = await prisma.auditLog.findFirst({
+    where: { userId, action: "anon_seed.rekey", createdAt: { gt: since } },
+    orderBy: { createdAt: "desc" },
+    select: { createdAt: true },
+  });
+  if (recent) {
+    const retryAt = new Date(recent.createdAt.getTime() + REKEY_COOLDOWN_MS).toISOString();
+    return {
+      ok: false,
+      retryAt,
+      error: "You re-keyed recently. For your security, re-keying is limited to once a week.",
+    };
+  }
+
+  // Only an ACTIVE enrollment can be re-keyed (there is an identity to replace).
+  const existing = await prisma.anonSeedEnrollment.findUnique({ where: { userId } });
+  if (!existing || existing.backupConfirmedAt === null) {
+    return { ok: false, error: "You have no active Private Identity to re-key." };
+  }
+
+  const row = await bumpEpochAndPurge(userId);
+  await audit(userId, "anon_seed.rekey", { enrollmentEpoch: row.enrollmentEpoch });
   return { ok: true, state: stateOf(row) };
 }

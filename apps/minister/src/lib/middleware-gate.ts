@@ -15,7 +15,11 @@ import { buildRequestCsp, cspPassThrough } from "@/lib/anon-key-csp";
 // /oidc/token and /oidc/userinfo authenticate via client_secret / bearer token
 // themselves, so they are NOT gated.
 export function isProtectedPath(pathname: string): boolean {
-  const prefixes = ["/profile", "/settings", "/badges", "/shares", "/admin"];
+  // /welcome is auth-gated (the forced onboarding runs AFTER sign-in) but is
+  // deliberately NOT setup-gated — it is where setup happens. The DB-backed
+  // setup redirect lives in the gated sections' layouts, not here (the Edge
+  // cannot read setupCompletedAt).
+  const prefixes = ["/profile", "/settings", "/badges", "/shares", "/admin", "/welcome"];
   if (prefixes.some((p) => pathname === p || pathname.startsWith(`${p}/`))) return true;
   return pathname === "/oidc/authorize";
 }

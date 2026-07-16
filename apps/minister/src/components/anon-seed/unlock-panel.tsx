@@ -28,13 +28,24 @@ import {
 export interface UnlockPanelProps {
   userId: string;
   hasPasskeyBlobs: boolean;
+  // The server-snapshotted enrollment epoch. A typed/autofilled root unlocks
+  // bound to this epoch, so a stale root fails closed on the next derivation
+  // (identity plan, Lane C). The passkey path reads its epoch off the stored
+  // blob's AAD, so it does not take this.
+  epoch: number;
   // The consent screen stores a cleaner here and runs it before dispatching
   // approve — the W1 "cleared before submit" guarantee.
   clearRef?: React.MutableRefObject<(() => void) | null>;
   onUnlocked: () => void;
 }
 
-export function UnlockPanel({ userId, hasPasskeyBlobs, clearRef, onUnlocked }: UnlockPanelProps) {
+export function UnlockPanel({
+  userId,
+  hasPasskeyBlobs,
+  epoch,
+  clearRef,
+  onUnlocked,
+}: UnlockPanelProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -74,7 +85,7 @@ export function UnlockPanel({ userId, hasPasskeyBlobs, clearRef, onUnlocked }: U
     setMessage(null);
     setBusy(true);
     try {
-      const result = await autofillFromPasswordManager(userId);
+      const result = await autofillFromPasswordManager(userId, epoch);
       if (result === "unlocked") {
         if (inputRef.current) inputRef.current.value = "";
         onUnlocked();
@@ -101,7 +112,7 @@ export function UnlockPanel({ userId, hasPasskeyBlobs, clearRef, onUnlocked }: U
       return;
     }
     try {
-      await unlockWithSeedInput(userId, value);
+      await unlockWithSeedInput(userId, value, epoch);
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "That isn't a valid Private Identity.");
       return;

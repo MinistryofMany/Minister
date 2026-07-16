@@ -55,6 +55,12 @@ model User {
   // sessionGeneration mismatch.
   isBanned Boolean @default(false)
 
+  // Onboarding gate. Null until the forced /welcome setup guide (passkey →
+  // Private Identity backup → profile) is finished; the session loader reads it
+  // off the row it already loads and bounces an unfinished user to /welcome
+  // before any gated page. Stamped once by completeSetup at the final step.
+  setupCompletedAt DateTime?
+
   // Account-merge tombstone. When this user is merged INTO another account
   // it is soft-deleted: `mergedIntoUserId` points at the survivor and the
   // row is retained (with all sessions killed) through the reversal window

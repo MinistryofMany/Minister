@@ -216,6 +216,9 @@ export default async function OidcAuthorizePage({ searchParams }: PageProps) {
         status,
         passkeyBlobCount,
         userId: session.user.id,
+        // The server-snapshotted epoch the unlock path binds against (Lane C).
+        // A row with no enrollment yet reports the day-one epoch.
+        epoch: enrollment?.enrollmentEpoch ?? 1,
       };
     }
   }

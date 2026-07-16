@@ -241,7 +241,12 @@ export function ConsentScreen({
         // (§8.2 step 4). location.assign is the ONLY navigation here — no JS
         // redirect may run after it that could destroy the fragment (S3).
         const target = anon
-          ? await buildAnonRedirect(result.redirectTo, result.anonAppId, anon.userId)
+          ? await buildAnonRedirect(
+              result.redirectTo,
+              result.anonAppId,
+              anon.userId,
+              result.anonEpoch,
+            )
           : result.redirectTo;
         window.location.assign(target);
         return;

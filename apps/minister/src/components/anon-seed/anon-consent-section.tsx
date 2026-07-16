@@ -21,6 +21,10 @@ export interface AnonConsentView {
   status: AnonSeedStatus;
   passkeyBlobCount: number;
   userId: string;
+  // The server-snapshotted enrollment epoch. Threaded into the unlock path so a
+  // stale root fails closed against a bumped server epoch (identity plan, Lane
+  // C); enrollment derives its own epoch from the begin-enrollment response.
+  epoch: number;
 }
 
 export function AnonConsentSection({
@@ -61,6 +65,7 @@ export function AnonConsentSection({
             <UnlockPanel
               userId={anon.userId}
               hasPasskeyBlobs={anon.passkeyBlobCount > 0}
+              epoch={anon.epoch}
               clearRef={clearRef}
               onUnlocked={() => setReady(true)}
             />

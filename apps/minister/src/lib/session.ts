@@ -1,4 +1,5 @@
 import { cache } from "react";
+import { redirect } from "next/navigation";
 import type { Session } from "next-auth";
 
 import { auth } from "@/auth";
@@ -8,6 +9,9 @@ import { prisma } from "@/lib/prisma";
 export interface SessionFlags {
   session: Session;
   isAdmin: boolean;
+  // Onboarding gate: true once the user finished the /welcome setup guide.
+  // Read off the same findUnique the loader already runs (no extra query).
+  setupComplete: boolean;
 }
 
 // Server-side session getter with revocation + ban enforcement.
@@ -37,6 +41,7 @@ const loadSessionFlags = cache(async (): Promise<SessionFlags | null> => {
       isAdmin: true,
       isBanned: true,
       mergedIntoUserId: true,
+      setupCompletedAt: true,
     },
   });
   if (!fresh) return null;
@@ -47,7 +52,11 @@ const loadSessionFlags = cache(async (): Promise<SessionFlags | null> => {
   // user now lives under the survivor account and must sign in there.
   if (fresh.mergedIntoUserId !== null) return null;
 
-  return { session, isAdmin: fresh.isAdmin };
+  return {
+    session,
+    isAdmin: fresh.isAdmin,
+    setupComplete: fresh.setupCompletedAt !== null,
+  };
 });
 
 export async function getCurrentSession(): Promise<Session | null> {
@@ -69,6 +78,19 @@ export async function requireSession(): Promise<Session> {
     throw new Error("Not signed in");
   }
   return session;
+}
+
+// Onboarding gate for gated sections (/profile, /settings, /badges, /shares).
+// A signed-in user who has not finished the forced /welcome setup guide is
+// redirected there before the page renders. No-op for a signed-out visitor —
+// the middleware already bounces those to sign-in, and /welcome itself must
+// never call this (it IS the setup). Reads the flag off the same cached
+// findUnique the session loader runs, so it costs no extra query.
+export async function requireSetupComplete(): Promise<void> {
+  const flags = await loadSessionFlags();
+  if (flags && !flags.setupComplete) {
+    redirect("/welcome");
+  }
 }
 
 // Admin gate for /admin pages and admin server actions. Admin-ness is

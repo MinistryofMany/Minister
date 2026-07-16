@@ -1,7 +1,7 @@
 import { test as setup } from "@playwright/test";
 
 import { ADMIN_EMAIL, STORAGE, USER_EMAIL } from "./env";
-import { grantAdmin, signInViaMagicLink } from "./helpers";
+import { completeSetup, grantAdmin, signInViaMagicLink } from "./helpers";
 
 // Mint the two long-lived sessions the specs reuse. Saves ~10 magic
 // link round-trips per run and keeps the per-IP sign-in rate limiter
@@ -9,6 +9,9 @@ import { grantAdmin, signInViaMagicLink } from "./helpers";
 
 setup("user session", async ({ page }) => {
   await signInViaMagicLink(page, USER_EMAIL);
+  // Skip the forced /welcome onboarding so the shared session lands on gated
+  // pages directly; welcome.spec.ts covers the guide itself.
+  await completeSetup(USER_EMAIL);
   await page.context().storageState({ path: STORAGE.user });
 });
 
@@ -17,5 +20,6 @@ setup("admin session", async ({ page }) => {
   // Bootstrap path — equivalent of scripts/make-admin.ts. The
   // promote-from-UI path is covered in admin.spec.ts.
   await grantAdmin(ADMIN_EMAIL);
+  await completeSetup(ADMIN_EMAIL);
   await page.context().storageState({ path: STORAGE.admin });
 });

@@ -135,6 +135,13 @@ export async function grantAdmin(email: string): Promise<void> {
   await prisma.user.updateMany({ where: { email }, data: { isAdmin: true } });
 }
 
+// Mark a seeded account's onboarding as done directly (the DB equivalent of
+// walking the /welcome guide), so the long-lived sessions the specs reuse are
+// not redirected into onboarding. The welcome flow has its own dedicated spec.
+export async function completeSetup(email: string): Promise<void> {
+  await prisma.user.updateMany({ where: { email }, data: { setupCompletedAt: new Date() } });
+}
+
 // Insert a public (PKCE-only, no secret) OIDC client directly. Enough for
 // the authorize-request validation paths, which never reach token exchange.
 let oidcClientSeq = 0;
