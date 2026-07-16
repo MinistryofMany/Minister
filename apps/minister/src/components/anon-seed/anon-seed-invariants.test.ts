@@ -11,7 +11,9 @@ import { describe, expect, it } from "vitest";
 // regression here should fail CI before it ever reaches a browser.
 
 const COMPONENTS_DIR = join(__dirname);
-const VAULT_PATH = join(__dirname, "..", "..", "lib", "anon-seed", "vault.ts");
+const ANON_SEED_LIB_DIR = join(__dirname, "..", "..", "lib", "anon-seed");
+const VAULT_PATH = join(ANON_SEED_LIB_DIR, "vault.ts");
+const ROOT_STORE_PATH = join(ANON_SEED_LIB_DIR, "root-store.ts");
 const CONSENT_SCREEN_PATH = join(__dirname, "..", "consent-screen.tsx");
 
 function componentSources(): Array<{ file: string; source: string }> {
@@ -21,6 +23,7 @@ function componentSources(): Array<{ file: string; source: string }> {
 }
 
 const vaultSource = readFileSync(VAULT_PATH, "utf8");
+const rootStoreSource = readFileSync(ROOT_STORE_PATH, "utf8");
 const consentSource = readFileSync(CONSENT_SCREEN_PATH, "utf8");
 
 describe("W1: the unlock field is structurally quarantined", () => {
@@ -82,9 +85,19 @@ describe("checklist 10: credential mediation is required, never optional", () =>
 });
 
 describe("I1-adjacent: no transport or storage primitives near seed material", () => {
-  const sources = [{ file: "vault.ts", source: vaultSource }, ...componentSources()];
+  // Every module that can touch root/seed material: the vault, the on-device
+  // root store, and all owned components.
+  const sources = [
+    { file: "vault.ts", source: vaultSource },
+    { file: "root-store.ts", source: rootStoreSource },
+    ...componentSources(),
+  ];
 
-  it("no direct network primitives in the vault or its owned components", () => {
+  it("NEVER transmits: no network primitive in any seed module (governing invariant)", () => {
+    // This is the invariant that survives the move to IndexedDB. "Never persists"
+    // is retired (the root now lives in origin storage on the user's own device);
+    // "never reaches a party other than the user" is not, and origin storage does
+    // not violate it. Do not let retiring the first weaken the second.
     for (const { file, source } of sources) {
       expect(source, `${file}: no fetch`).not.toMatch(/\bfetch\(/);
       expect(source, `${file}: no XHR`).not.toContain("XMLHttpRequest");
@@ -93,20 +106,29 @@ describe("I1-adjacent: no transport or storage primitives near seed material", (
     }
   });
 
-  it("no script-readable storage for seed material (7.3 global rule)", () => {
+  it("indexedDB is named ONLY in the allowlisted root-store, nowhere else", () => {
     for (const { file, source } of sources) {
       expect(source, `${file}: no sessionStorage`).not.toContain("sessionStorage");
-      expect(source, `${file}: no indexedDB`).not.toMatch(/indexedDB/i);
-      if (file === "vault.ts") {
-        // The one permitted localStorage use: the boolean memory-only
-        // preference — every usage sits in the pref helpers.
-        const uses = source.match(/localStorage\.(get|set|remove)Item\(\s*([^)]+)/g) ?? [];
-        expect(uses.length).toBeGreaterThan(0);
-        for (const use of uses) {
-          expect(use).toContain("MEMORY_ONLY_PREF_PREFIX");
-        }
+      if (file === "root-store.ts") {
+        // The single allowlisted file (Lane C): the on-device root store is the
+        // ONLY module permitted to name indexedDB, and it must actually use it.
+        expect(source, "root-store.ts must name indexedDB").toMatch(/indexedDB/);
+        // A string is not zeroizable, so the root store must never fall back to
+        // localStorage — that is the whole reason it is IndexedDB.
+        expect(source, "root-store.ts: no localStorage").not.toContain("localStorage");
       } else {
-        expect(source, `${file}: no localStorage`).not.toContain("localStorage");
+        expect(source, `${file}: no indexedDB`).not.toMatch(/indexedDB/i);
+        if (file === "vault.ts") {
+          // The one permitted localStorage use: the boolean memory-only
+          // preference — every usage sits in the pref helpers.
+          const uses = source.match(/localStorage\.(get|set|remove)Item\(\s*([^)]+)/g) ?? [];
+          expect(uses.length).toBeGreaterThan(0);
+          for (const use of uses) {
+            expect(use).toContain("MEMORY_ONLY_PREF_PREFIX");
+          }
+        } else {
+          expect(source, `${file}: no localStorage`).not.toContain("localStorage");
+        }
       }
     }
   });

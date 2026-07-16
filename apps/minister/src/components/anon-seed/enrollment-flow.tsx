@@ -69,7 +69,7 @@ export function EnrollmentFlow({ userId, needsRestart, onComplete }: Props) {
       // Into the vault immediately (not yet ACTIVE — no derivation until the
       // backup is confirmed, I3). The local copy is zeroized; the string and
       // words remain for the backup screen only.
-      unlockVault(userId, seed, { active: false });
+      await unlockVault(userId, seed, { active: false });
       seed.fill(0);
       setState({ step: "backup", seedString, words });
     });
@@ -95,7 +95,7 @@ export function EnrollmentFlow({ userId, needsRestart, onComplete }: Props) {
         setError(confirmed.error);
         return;
       }
-      markVaultActive(userId);
+      await markVaultActive(userId);
       // Drop the words/string from component state before the storage step —
       // the backup surfaces are done (best-effort scrubbing; spec check 14).
       setState({ step: "store" });

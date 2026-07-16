@@ -1,24 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 
-import { anonKeyCspResponse, buildAnonKeyCsp, isStrictCspPath } from "@/lib/anon-key-csp";
-
-describe("isStrictCspPath", () => {
-  it("matches the anon-key route and its subpaths", () => {
-    expect(isStrictCspPath("/settings/private-identity")).toBe(true);
-    expect(isStrictCspPath("/settings/private-identity/recover")).toBe(true);
-  });
-
-  it("matches the OIDC authorize consent route", () => {
-    expect(isStrictCspPath("/oidc/authorize")).toBe(true);
-  });
-
-  it("does not match sibling settings routes or prefix look-alikes", () => {
-    expect(isStrictCspPath("/settings")).toBe(false);
-    expect(isStrictCspPath("/settings/profile")).toBe(false);
-    expect(isStrictCspPath("/settings/private-identities")).toBe(false);
-    expect(isStrictCspPath("/oidc/token")).toBe(false);
-  });
-});
+import { buildAnonKeyCsp, buildRequestCsp, cspPassThrough } from "@/lib/anon-key-csp";
 
 describe("buildAnonKeyCsp", () => {
   it("locks script to nonce + strict-dynamic and forbids objects/framing in prod", () => {
@@ -31,84 +13,75 @@ describe("buildAnonKeyCsp", () => {
     expect(csp).not.toContain("unsafe-eval");
   });
 
+  it("keeps style inline but allows external images site-wide (avatars)", () => {
+    const csp = buildAnonKeyCsp("abc123", false);
+    expect(csp).toContain("style-src 'self' 'unsafe-inline'");
+    // img-src must allow https: so /u/[userId] + profile external avatars render
+    // under the now site-wide policy; images are not a script/seed-read vector.
+    expect(csp).toContain("img-src 'self' https: data: blob:");
+  });
+
   it("relaxes eval only in dev for Next HMR", () => {
     expect(buildAnonKeyCsp("abc123", true)).toContain("'unsafe-eval'");
   });
 });
 
-describe("anonKeyCspResponse", () => {
-  it("sets the CSP header on the anon-key route with a nonce", () => {
-    const res = anonKeyCspResponse("/settings/private-identity", new Headers(), false);
-    expect(res).not.toBeNull();
-    const csp = res!.headers.get("content-security-policy");
+describe("buildRequestCsp + cspPassThrough", () => {
+  it("stamps a fresh nonce and sets the header on request + response", () => {
+    const requestHeaders = new Headers();
+    const requestCsp = buildRequestCsp(false);
+    const res = cspPassThrough(requestHeaders, requestCsp);
+    const csp = res.headers.get("content-security-policy");
     expect(csp).toContain("script-src 'self'");
     expect(csp).toContain("'strict-dynamic'");
     // A nonce must be present so Next can stamp its own inline bootstrap scripts.
     expect(csp).toMatch(/'nonce-[a-f0-9]+'/);
-  });
-
-  it("sets the CSP header + nonce on /oidc/authorize and forwards it to Next", () => {
-    const requestHeaders = new Headers();
-    const res = anonKeyCspResponse("/oidc/authorize", requestHeaders, false);
-    expect(res).not.toBeNull();
-    // Nonce must ride the outgoing response header so the consent page is locked.
-    const csp = res!.headers.get("content-security-policy");
-    expect(csp).toContain("script-src 'self'");
-    expect(csp).toContain("'strict-dynamic'");
-    expect(csp).toMatch(/'nonce-[a-f0-9]+'/);
-    // style-src must keep 'unsafe-inline' — the consent form and Next/Tailwind
-    // inline critical CSS would white-screen otherwise.
-    expect(csp).toContain("style-src 'self' 'unsafe-inline'");
-  });
-
-  it("returns null (no header) for out-of-scope routes", () => {
-    expect(anonKeyCspResponse("/settings/profile", new Headers(), false)).toBeNull();
-    expect(anonKeyCspResponse("/oidc/token", new Headers(), false)).toBeNull();
+    expect(res.headers.get("content-security-policy")).toBe(csp);
   });
 });
 
-describe("anonKeyCspResponse report-only toggle", () => {
+describe("report-only toggle", () => {
   const KEY = "MINISTER_CSP_REPORT_ONLY";
+  const ENFORCING = "content-security-policy";
+  const REPORT_ONLY = "content-security-policy-report-only";
+
   afterEach(() => {
     delete process.env[KEY];
   });
 
-  const ENFORCING = "content-security-policy";
-  const REPORT_ONLY = "content-security-policy-report-only";
+  function passThrough(): Headers {
+    return cspPassThrough(new Headers(), buildRequestCsp(false)).headers;
+  }
 
   it("emits the enforcing header by default (env unset)", () => {
     delete process.env[KEY];
-    const res = anonKeyCspResponse("/oidc/authorize", new Headers(), false)!;
-    expect(res.headers.get(ENFORCING)).not.toBeNull();
-    expect(res.headers.get(REPORT_ONLY)).toBeNull();
+    const h = passThrough();
+    expect(h.get(ENFORCING)).not.toBeNull();
+    expect(h.get(REPORT_ONLY)).toBeNull();
   });
 
   it("emits the enforcing header when explicitly set to false", () => {
     process.env[KEY] = "false";
-    const res = anonKeyCspResponse("/oidc/authorize", new Headers(), false)!;
-    expect(res.headers.get(ENFORCING)).not.toBeNull();
-    expect(res.headers.get(REPORT_ONLY)).toBeNull();
+    const h = passThrough();
+    expect(h.get(ENFORCING)).not.toBeNull();
+    expect(h.get(REPORT_ONLY)).toBeNull();
   });
 
   it("emits the Report-Only header when MINISTER_CSP_REPORT_ONLY=true", () => {
     process.env[KEY] = "true";
-    const res = anonKeyCspResponse("/oidc/authorize", new Headers(), false)!;
-    expect(res.headers.get(REPORT_ONLY)).not.toBeNull();
-    expect(res.headers.get(ENFORCING)).toBeNull();
+    const h = passThrough();
+    expect(h.get(REPORT_ONLY)).not.toBeNull();
+    expect(h.get(ENFORCING)).toBeNull();
   });
 
   it("uses an identical policy body + nonce shape in both modes", () => {
     const stripNonce = (s: string) => s.replace(/'nonce-[a-f0-9]+'/, "'nonce-X'");
 
     delete process.env[KEY];
-    const enforced = anonKeyCspResponse("/oidc/authorize", new Headers(), false)!.headers.get(
-      ENFORCING,
-    )!;
+    const enforced = passThrough().get(ENFORCING)!;
 
     process.env[KEY] = "true";
-    const reportOnly = anonKeyCspResponse("/oidc/authorize", new Headers(), false)!.headers.get(
-      REPORT_ONLY,
-    )!;
+    const reportOnly = passThrough().get(REPORT_ONLY)!;
 
     // Only the header NAME changes: same directives, same nonce format (the
     // nonce value differs per call since it is freshly generated).

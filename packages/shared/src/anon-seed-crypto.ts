@@ -22,10 +22,16 @@ export const WRAP_CIPHERTEXT_BYTES = ROOT_SEED_BYTES + 16;
 /** `OidcClient.anonAppId` shape (spec 8.1): lowercase slug, immutable. */
 export const ANON_APP_ID_PATTERN = /^[a-z0-9-]{3,32}$/;
 
-// Exact domain-separation strings from the spec. Never edit without a version
-// bump: changing any of these silently forks every derived identity.
-const APP_HKDF_SALT = "minister/anon/hkdf/v1";
-const APP_HKDF_INFO_PREFIX = "minister/anon/v1:app:";
+// Exact domain-separation strings (identity plan, "The derivation tree"; frozen
+// vectors in anon-seed-golden-vectors.json). Never edit without a version bump:
+// changing any of these silently forks every derived identity.
+//
+// L1 info is per-app AND per-epoch: "ministry/v1/rp/" + app_id + "/" + epoch.
+// The epoch (Ministry's AnonSeedEnrollment.enrollmentEpoch) lets a global re-key
+// bump every app's branch at once without a schema change; app_id excludes "/"
+// (ANON_APP_ID_PATTERN), so the app/epoch segment boundary is unambiguous.
+const APP_HKDF_SALT = "ministry/anon/v1";
+const APP_HKDF_INFO_PREFIX = "ministry/v1/rp/";
 const WRAP_KEK_SALT = "minister/anon-seed/wrap/v1";
 const WRAP_KEK_INFO = "minister/anon-seed/wrap/v1:aes-256-gcm";
 const WRAP_AAD_PREFIX = "minister/anon-seed/blob/v1:";
@@ -69,21 +75,30 @@ async function hkdfSha256(
 }
 
 /**
- * Per-app secret (spec 8.1):
- * `HKDF-SHA-256(ikm = seed, salt = "minister/anon/hkdf/v1",
- *  info = "minister/anon/v1:app:" + anonAppId, L = 32)`.
+ * L1 per-app secret (identity plan, "The derivation tree"):
+ * `HKDF-SHA-256(ikm = root, salt = "ministry/anon/v1",
+ *  info = "ministry/v1/rp/" + anonAppId + "/" + epoch, L = 32)`.
  * Secrets for different apps are HKDF-independent, so no coalition of apps can
- * link a user across apps from the secrets alone.
+ * link a user across apps from the secrets alone. `epoch` is the enrollment
+ * epoch (>= 1, validated the same way as the wrap-AAD counters): bumping it
+ * re-keys the whole branch, which is how global re-key propagates.
  */
 export async function deriveAppSecret(
   seed: Uint8Array,
   anonAppId: string,
+  epoch: number,
 ): Promise<Uint8Array<ArrayBuffer>> {
   assertLength("root seed", seed, ROOT_SEED_BYTES);
   if (!ANON_APP_ID_PATTERN.test(anonAppId)) {
     throw new AnonSeedCryptoError("anonAppId must be a lowercase slug matching ^[a-z0-9-]{3,32}$");
   }
-  return hkdfSha256(seed, APP_HKDF_SALT, APP_HKDF_INFO_PREFIX + anonAppId, PER_APP_SECRET_BYTES);
+  assertAadCounter("epoch", epoch);
+  return hkdfSha256(
+    seed,
+    APP_HKDF_SALT,
+    `${APP_HKDF_INFO_PREFIX}${anonAppId}/${epoch}`,
+    PER_APP_SECRET_BYTES,
+  );
 }
 
 /**
@@ -230,7 +245,7 @@ export interface MemoryVault {
   unlock(seed: Uint8Array): void;
   isUnlocked(): boolean;
   /** The spec 7.5 seam: per-app secret out, seed never. Rejects while locked. */
-  deriveAppSecret(anonAppId: string): Promise<Uint8Array>;
+  deriveAppSecret(anonAppId: string, epoch: number): Promise<Uint8Array>;
   /** Zeroize (best effort) and drop the seed. */
   lock(): void;
 }
@@ -246,11 +261,11 @@ export function createMemoryVault(): MemoryVault {
     isUnlocked(): boolean {
       return seed !== null;
     },
-    async deriveAppSecret(anonAppId: string): Promise<Uint8Array> {
+    async deriveAppSecret(anonAppId: string, epoch: number): Promise<Uint8Array> {
       if (seed === null) {
         throw new AnonSeedCryptoError("vault is locked: unlock a seed before deriving");
       }
-      return deriveAppSecret(seed, anonAppId);
+      return deriveAppSecret(seed, anonAppId, epoch);
     },
     lock(): void {
       seed?.fill(0);

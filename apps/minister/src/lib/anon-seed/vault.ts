@@ -18,9 +18,9 @@
 
 import {
   AnonSeedCryptoError,
+  decodeStringToSeed,
   deriveAppSecret as deriveAppSecretFromSeed,
   encodeSeedToString,
-  parseSeedInput,
   PER_APP_SECRET_BYTES,
   PRF_OUTPUT_BYTES,
   ROOT_SEED_BYTES,
@@ -34,6 +34,13 @@ import {
   getSeedBlobs,
   putSeedBlob,
 } from "@/server/anon-seed-actions";
+
+import { deleteRoot, getRoot, putRoot } from "./root-store";
+
+/** The day-one global enrollment epoch (AnonSeedEnrollment.enrollmentEpoch
+ * defaults to 1). The consent client threads the server-snapshotted epoch in a
+ * later phase; until then callers fall back to this. */
+export const DEFAULT_ANON_EPOCH = 1;
 
 /** Fragment prefix for per-app-secret delivery (spec §8.2 grammar). */
 export const ANON_FRAGMENT_PREFIX = "#minister_anon=v1.";
@@ -59,10 +66,33 @@ let seedUserId: string | null = null;
 // I3: no derivation before enrollment is ACTIVE. Set only by the owned
 // enrollment/unlock paths after the server confirms ACTIVE state.
 let active = false;
+// The enrollment epoch this root belongs to. Derivation is fail-closed on a
+// mismatch against the server-snapshotted epoch (identity plan, Lane C): a
+// stale device that kept an old root must NOT derive the new branch and re-key
+// the app to garbage.
+let vaultEpoch = DEFAULT_ANON_EPOCH;
+
+/** Persist the loaded root to the on-device store (root-store.ts), best-effort.
+ * Called only when enrollment is ACTIVE. Storage failure (private mode, no
+ * device storage) degrades to memory-only — never blocks or throws into a
+ * caller. */
+async function persistRoot(userId: string): Promise<void> {
+  if (seed === null || seedUserId !== userId || !active) return;
+  try {
+    await putRoot(userId, seed, vaultEpoch);
+  } catch {
+    // Memory-only degradation: the root simply is not persisted this session.
+  }
+}
 
 /** Load a seed into the vault (copied; the caller should zeroize its own
- * buffer). Only the owned enrollment/unlock components may call this. */
-export function unlockVault(userId: string, input: Uint8Array, opts: { active: boolean }): void {
+ * buffer). Only the owned enrollment/unlock paths may call this. Async because
+ * an ACTIVE load persists the root to the on-device store. */
+export async function unlockVault(
+  userId: string,
+  input: Uint8Array,
+  opts: { active: boolean; epoch?: number },
+): Promise<void> {
   if (input.length !== ROOT_SEED_BYTES) {
     throw new AnonSeedCryptoError(`root seed must be ${ROOT_SEED_BYTES} bytes`);
   }
@@ -70,20 +100,57 @@ export function unlockVault(userId: string, input: Uint8Array, opts: { active: b
   seed = new Uint8Array(input);
   seedUserId = userId;
   active = opts.active;
+  vaultEpoch = opts.epoch ?? DEFAULT_ANON_EPOCH;
+  if (active) await persistRoot(userId);
 }
 
 /** Flip the vault to ACTIVE after the server confirms the backup (spec §6.3
- * step 3). No-op if the vault holds another user's seed. */
-export function markVaultActive(userId: string): void {
-  if (seed !== null && seedUserId === userId) active = true;
+ * step 3), persisting the root to the on-device store. No-op if the vault holds
+ * another user's seed. */
+export async function markVaultActive(userId: string): Promise<void> {
+  if (seed !== null && seedUserId === userId) {
+    active = true;
+    await persistRoot(userId);
+  }
 }
 
-/** Zeroize (best effort) and drop the seed. */
+/**
+ * Load the root from the on-device store for `userId` (identity plan, Lane C).
+ * Returns true when a persisted root was found and loaded ACTIVE; false when
+ * none is stored (or device storage is unavailable). The stored enrollment epoch
+ * rides along, so a later derivation fails closed against a bumped server epoch.
+ */
+export async function unlockFromStore(userId: string): Promise<boolean> {
+  const stored = await getRoot(userId);
+  if (!stored) return false;
+  try {
+    await unlockVault(userId, stored.root, { active: true, epoch: stored.epoch });
+  } finally {
+    stored.root.fill(0);
+  }
+  return true;
+}
+
+/** Zeroize (best effort) and drop the in-memory seed. Does NOT touch the
+ * persisted store — that survives a lock so the next page can re-load it. */
 export function lockVault(): void {
   seed?.fill(0);
   seed = null;
   seedUserId = null;
   active = false;
+  vaultEpoch = DEFAULT_ANON_EPOCH;
+}
+
+/** Zeroize the in-memory seed AND delete the persisted root (re-key / reset /
+ * sign-out). Best-effort on the store; never throws into a caller. */
+export async function purgeVault(userId: string): Promise<void> {
+  lockVault();
+  try {
+    await deleteRoot(userId);
+  } catch {
+    // Best effort: a delete failure leaves the row, which the next enrollment
+    // overwrites (keyed by userId).
+  }
 }
 
 /** True when THIS user's seed is loaded and enrollment is ACTIVE — i.e. the
@@ -98,19 +165,33 @@ export function isVaultReady(userId: string): boolean {
 // ---------------------------------------------------------------------------
 
 /**
- * Derive the 32-byte per-app secret for `anonAppId` (spec §8.1). `userId` is
- * the multi-account guard: it must match the user whose seed unlocked the
- * vault. Refuses while locked or before enrollment is ACTIVE (I3). Callers
- * get the per-app secret only — the seed never crosses this boundary (I4).
+ * Derive the 32-byte L1 per-app secret for `anonAppId` at `epoch` (identity
+ * plan, "The derivation tree"). `userId` is the multi-account guard: it must
+ * match the user whose seed unlocked the vault. Refuses while locked, before
+ * enrollment is ACTIVE (I3), or when `epoch` differs from the epoch this root
+ * was enrolled at — a stale root MUST NOT derive a newer branch (fail closed,
+ * Lane C). Callers get the per-app secret only — the seed never crosses this
+ * boundary (I4).
  */
-export async function deriveAppSecret(anonAppId: string, userId: string): Promise<Uint8Array> {
+export async function deriveAppSecret(
+  anonAppId: string,
+  userId: string,
+  epoch: number = DEFAULT_ANON_EPOCH,
+): Promise<Uint8Array> {
   if (seed === null || seedUserId !== userId) {
     throw new AnonSeedCryptoError("vault is locked");
   }
   if (!active) {
     throw new AnonSeedCryptoError("enrollment is not active"); // I3
   }
-  return deriveAppSecretFromSeed(seed, anonAppId);
+  if (epoch !== vaultEpoch) {
+    // Stale device: this root belongs to an older (or newer) enrollment than the
+    // server says is current. Fail closed rather than derive a wrong identity.
+    throw new AnonSeedCryptoError(
+      `epoch mismatch: this device holds an epoch-${vaultEpoch} root but the server epoch is ${epoch}`,
+    );
+  }
+  return deriveAppSecretFromSeed(seed, anonAppId, epoch);
 }
 
 /** `"#minister_anon=v1." + base64url(secret)` (spec §8.2 step 3). */
@@ -134,9 +215,10 @@ export async function buildAnonRedirect(
   redirectTo: string,
   anonAppId: string,
   userId: string,
+  epoch: number = DEFAULT_ANON_EPOCH,
 ): Promise<string> {
   try {
-    const secret = await deriveAppSecret(anonAppId, userId);
+    const secret = await deriveAppSecret(anonAppId, userId, epoch);
     const target = redirectTo + buildAnonFragment(secret);
     secret.fill(0);
     return target;
@@ -149,12 +231,22 @@ export async function buildAnonRedirect(
 // L0 / L2 entry: parse a typed or autofilled key (string or 12 words).
 // ---------------------------------------------------------------------------
 
-/** Unlock from a typed/autofilled key in either codec form (spec §5.3, §7.4).
- * Throws SeedCodecError on malformed input; the vault stays locked. Only used
- * for ACTIVE enrollments (the unlock UI renders only then). */
-export function unlockWithSeedInput(userId: string, input: string): void {
-  const parsed = parseSeedInput(input);
-  unlockVault(userId, parsed, { active: true });
+/** Unlock from a typed/autofilled key: the canonical 28-character base58check
+ * string (identity plan, O-2 — the 12-word codec is retired). Throws
+ * SeedCodecError on malformed input; the vault stays locked. Only used for
+ * ACTIVE enrollments (the unlock UI renders only then). Async because the ACTIVE
+ * load persists the root to the on-device store.
+ *
+ * ponytail: epoch defaults to the day-one global epoch; the W1 fix (epoch
+ * embedded in a v2 backup string, so an autofilled STALE key fails loudly) is a
+ * codec-side follow-up, tracked separately. */
+export async function unlockWithSeedInput(
+  userId: string,
+  input: string,
+  epoch: number = DEFAULT_ANON_EPOCH,
+): Promise<void> {
+  const parsed = decodeStringToSeed(input);
+  await unlockVault(userId, parsed, { active: true, epoch });
   parsed.fill(0);
 }
 
@@ -338,7 +430,7 @@ export async function unlockWithPasskey(userId: string): Promise<PasskeyUnlockRe
         enrollmentEpoch: blob.enrollmentEpoch,
       },
     );
-    unlockVault(userId, unwrapped, { active: true });
+    await unlockVault(userId, unwrapped, { active: true, epoch: blob.enrollmentEpoch });
     unwrapped.fill(0);
   } catch {
     return {
@@ -424,7 +516,7 @@ export async function autofillFromPasswordManager(userId: string): Promise<PmAut
   if (!cred || cred.type !== "password") return "none";
   const password = (cred as PasswordCredentialLike).password;
   if (typeof password !== "string") return "none";
-  unlockWithSeedInput(userId, password);
+  await unlockWithSeedInput(userId, password);
   return "unlocked";
 }
 

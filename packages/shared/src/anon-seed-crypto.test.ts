@@ -14,16 +14,20 @@ import {
   createMemoryVault,
   type SeedWrapAad,
 } from "./anon-seed-crypto";
+import golden from "./anon-seed-golden-vectors.json";
 
 const hex = (h: string): Uint8Array => Uint8Array.from(h.match(/../g)!.map((b) => parseInt(b, 16)));
 const toHex = (b: Uint8Array): string =>
   Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
 
-// Spec 8.1 golden vectors: seed = ASCII "Ministry of Many".
-const GOLDEN_SEED = hex("4d696e6973747279206f66204d616e79");
+// FROZEN golden vectors: root = ASCII "Ministry of Many" (anon-seed-golden-vectors.json).
+const GOLDEN_SEED = hex(golden.root.hex);
+const L1 = golden.l1.vectors;
+// Convenience aliases for the two most-referenced L1 vectors (deforum/freedink
+// at epoch 1) so the wrap-KEK and memory-vault tests read cleanly.
 const GOLDEN_APP_SECRETS = {
-  deforum: "a6a39187454acc287e62b9eaeabecef8c67bf08500fc53bd5e00912ab0f71a5e",
-  freedink: "8f25c90c8c1c9717e16c2e9bf90951f44e4897c1a6ada79af3ba57de2909e0b0",
+  deforum: L1["deforum:1"],
+  freedink: L1["freedink:1"],
 } as const;
 
 // Spec 7.1/8.1 KEK golden: prfOutput = 0x11 * 32.
@@ -37,23 +41,27 @@ const AAD: SeedWrapAad = {
   enrollmentEpoch: 1,
 };
 
-describe("deriveAppSecret (spec 8.1)", () => {
-  it("matches the deforum golden vector", async () => {
-    expect(toHex(await deriveAppSecret(GOLDEN_SEED, "deforum"))).toBe(GOLDEN_APP_SECRETS.deforum);
+describe("deriveAppSecret (L1, frozen golden vectors)", () => {
+  it("reproduces every frozen L1 vector (app_id + epoch path)", async () => {
+    for (const [key, expected] of Object.entries(L1)) {
+      const [app, epochStr] = key.split(":");
+      const secret = await deriveAppSecret(GOLDEN_SEED, app!, Number(epochStr));
+      expect(toHex(secret), `L1 ${key}`).toBe(expected);
+    }
   });
 
-  it("matches the freedink golden vector", async () => {
-    expect(toHex(await deriveAppSecret(GOLDEN_SEED, "freedink"))).toBe(GOLDEN_APP_SECRETS.freedink);
+  it("the epoch is part of the path: same app, different epoch, unrelated secret", async () => {
+    expect(L1["deforum:1"]).not.toBe(L1["deforum:2"]);
   });
 
   it("returns 32 bytes", async () => {
-    expect((await deriveAppSecret(GOLDEN_SEED, "discreetly")).length).toBe(PER_APP_SECRET_BYTES);
+    expect((await deriveAppSecret(GOLDEN_SEED, "discreetly", 1)).length).toBe(PER_APP_SECRET_BYTES);
   });
 
   it("domain separation: different anonAppId yields an unrelated secret", async () => {
-    const a = await deriveAppSecret(GOLDEN_SEED, "deforum");
-    const b = await deriveAppSecret(GOLDEN_SEED, "deforum-2");
-    const c = await deriveAppSecret(GOLDEN_SEED, "freedink");
+    const a = await deriveAppSecret(GOLDEN_SEED, "deforum", 1);
+    const b = await deriveAppSecret(GOLDEN_SEED, "deforum-2", 1);
+    const c = await deriveAppSecret(GOLDEN_SEED, "freedink", 1);
     expect(toHex(a)).not.toBe(toHex(b));
     expect(toHex(a)).not.toBe(toHex(c));
     expect(toHex(b)).not.toBe(toHex(c));
@@ -64,15 +72,15 @@ describe("deriveAppSecret (spec 8.1)", () => {
     const seed32 = new Uint8Array(32).fill(0x11);
     expect(toHex(await deriveWrapKek(seed32))).toBe(GOLDEN_KEK);
     // Not derivable from any app label: KEK uses different salt+info entirely.
-    const asApp = await deriveAppSecret(GOLDEN_SEED, "deforum");
+    const asApp = await deriveAppSecret(GOLDEN_SEED, "deforum", 1);
     expect(toHex(asApp)).not.toBe(GOLDEN_KEK);
   });
 
   it("rejects a seed that is not 16 bytes", async () => {
-    await expect(deriveAppSecret(new Uint8Array(15), "deforum")).rejects.toThrow(
+    await expect(deriveAppSecret(new Uint8Array(15), "deforum", 1)).rejects.toThrow(
       AnonSeedCryptoError,
     );
-    await expect(deriveAppSecret(new Uint8Array(32), "deforum")).rejects.toThrow(
+    await expect(deriveAppSecret(new Uint8Array(32), "deforum", 1)).rejects.toThrow(
       AnonSeedCryptoError,
     );
   });
@@ -80,9 +88,13 @@ describe("deriveAppSecret (spec 8.1)", () => {
   it.each(["ab", "UPPER", "has space", "has:colon", "x".repeat(33), ""])(
     "rejects invalid anonAppId %j",
     async (bad) => {
-      await expect(deriveAppSecret(GOLDEN_SEED, bad)).rejects.toThrow(AnonSeedCryptoError);
+      await expect(deriveAppSecret(GOLDEN_SEED, bad, 1)).rejects.toThrow(AnonSeedCryptoError);
     },
   );
+
+  it.each([0, -1, 1.5, Number.NaN])("rejects a non-positive/non-integer epoch %j", async (bad) => {
+    await expect(deriveAppSecret(GOLDEN_SEED, "deforum", bad)).rejects.toThrow(AnonSeedCryptoError);
+  });
 });
 
 describe("deriveWrapKek (spec 7.1)", () => {
@@ -215,14 +227,14 @@ describe("createMemoryVault (spec 7.3/7.5 seam)", () => {
   it("refuses to derive while locked", async () => {
     const vault = createMemoryVault();
     expect(vault.isUnlocked()).toBe(false);
-    await expect(vault.deriveAppSecret("deforum")).rejects.toThrow(/locked/);
+    await expect(vault.deriveAppSecret("deforum", 1)).rejects.toThrow(/locked/);
   });
 
   it("derives the same per-app secret as the pure function once unlocked", async () => {
     const vault = createMemoryVault();
     vault.unlock(GOLDEN_SEED);
     expect(vault.isUnlocked()).toBe(true);
-    expect(toHex(await vault.deriveAppSecret("deforum"))).toBe(GOLDEN_APP_SECRETS.deforum);
+    expect(toHex(await vault.deriveAppSecret("deforum", 1))).toBe(GOLDEN_APP_SECRETS.deforum);
   });
 
   it("copies the seed on unlock (later caller mutation cannot corrupt derivation)", async () => {
@@ -230,7 +242,7 @@ describe("createMemoryVault (spec 7.3/7.5 seam)", () => {
     const mine = Uint8Array.from(GOLDEN_SEED);
     vault.unlock(mine);
     mine.fill(0xff);
-    expect(toHex(await vault.deriveAppSecret("freedink"))).toBe(GOLDEN_APP_SECRETS.freedink);
+    expect(toHex(await vault.deriveAppSecret("freedink", 1))).toBe(GOLDEN_APP_SECRETS.freedink);
   });
 
   it("lock() drops the seed and derivation refuses again", async () => {
@@ -238,7 +250,7 @@ describe("createMemoryVault (spec 7.3/7.5 seam)", () => {
     vault.unlock(GOLDEN_SEED);
     vault.lock();
     expect(vault.isUnlocked()).toBe(false);
-    await expect(vault.deriveAppSecret("deforum")).rejects.toThrow(/locked/);
+    await expect(vault.deriveAppSecret("deforum", 1)).rejects.toThrow(/locked/);
   });
 
   it("rejects unlocking with a wrong-size seed", () => {

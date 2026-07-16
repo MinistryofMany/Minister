@@ -1,9 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { encodeSeedToString, encodeSeedToWords } from "@minister/shared";
+import { encodeSeedToString } from "@minister/shared";
 
-// The vault imports the anon-seed server actions; mock them so no env/prisma
-// loads and so the tests can assert exactly what the vault would upload.
+// The vault imports the anon-seed server actions and the on-device root store;
+// mock the actions so no env/prisma loads. The root store is a real module but
+// no-ops under vitest (no IndexedDB), so unlock/persist round-trips stay
+// memory-only here — its own round-trip is covered in root-store.test.ts.
 vi.mock("@/server/anon-seed-actions", () => ({
   getAnonSeedState: vi.fn(),
   getAnonPasskeyCredentialIds: vi.fn(),
@@ -33,11 +35,12 @@ import {
   unlockWithSeedInput,
 } from "./vault";
 
-// Spec §5.4 / §8.1 golden vectors: seed = ASCII "Ministry of Many".
+// Frozen golden vectors (anon-seed-golden-vectors.json): root = "Ministry of Many",
+// deforum at epoch 1.
 const SEED_HEX = "4d696e6973747279206f66204d616e79";
 const SEED = Uint8Array.from(Buffer.from(SEED_HEX, "hex"));
 const SEED_STRING = "dk8QMNVR47r8d2rxXhHFFHLRTj5y";
-const DEFORUM_SECRET_HEX = "a6a39187454acc287e62b9eaeabecef8c67bf08500fc53bd5e00912ab0f71a5e";
+const DEFORUM_SECRET_HEX = "99c3d5190c131b9cb9527bd634465a9bdc426efc5cdd945fa99eab01eebb4d66";
 const DEFORUM_SECRET_B64URL = Buffer.from(DEFORUM_SECRET_HEX, "hex").toString("base64url");
 
 const USER = "user-a";
@@ -79,30 +82,38 @@ describe("the seam: deriveAppSecret gating (I3, I4, multi-account check 15)", ()
   });
 
   it("refuses before enrollment is ACTIVE (I3)", async () => {
-    unlockVault(USER, SEED, { active: false });
+    await unlockVault(USER, SEED, { active: false });
     await expect(deriveAppSecret("deforum", USER)).rejects.toThrow(/not active/);
   });
 
-  it("derives the spec 8.1 golden once unlocked and active", async () => {
-    unlockVault(USER, SEED, { active: false });
-    markVaultActive(USER);
+  it("derives the frozen golden once unlocked and active", async () => {
+    await unlockVault(USER, SEED, { active: false });
+    await markVaultActive(USER);
     const secret = await deriveAppSecret("deforum", USER);
     expect(Buffer.from(secret).toString("hex")).toBe(DEFORUM_SECRET_HEX);
   });
 
+  it("fails closed on an epoch mismatch (stale root, Lane C)", async () => {
+    await unlockVault(USER, SEED, { active: true, epoch: 1 });
+    await expect(deriveAppSecret("deforum", USER, 2)).rejects.toThrow(/epoch mismatch/);
+    // The matching epoch still derives the golden.
+    const secret = await deriveAppSecret("deforum", USER, 1);
+    expect(Buffer.from(secret).toString("hex")).toBe(DEFORUM_SECRET_HEX);
+  });
+
   it("refuses another user's derivation while user A's seed is loaded", async () => {
-    unlockVault(USER, SEED, { active: true });
+    await unlockVault(USER, SEED, { active: true });
     await expect(deriveAppSecret("deforum", "user-b")).rejects.toThrow(/locked/);
   });
 
-  it("markVaultActive is a no-op for a different user", () => {
-    unlockVault(USER, SEED, { active: false });
-    markVaultActive("user-b");
+  it("markVaultActive is a no-op for a different user", async () => {
+    await unlockVault(USER, SEED, { active: false });
+    await markVaultActive("user-b");
     expect(isVaultReady(USER)).toBe(false);
   });
 
   it("lockVault drops the seed", async () => {
-    unlockVault(USER, SEED, { active: true });
+    await unlockVault(USER, SEED, { active: true });
     lockVault();
     await expect(deriveAppSecret("deforum", USER)).rejects.toThrow(/locked/);
   });
@@ -128,38 +139,37 @@ describe("buildAnonRedirect: fail-open for login, fail-closed for identity (8.3)
   });
 
   it("returns the plain URL when enrollment is not active", async () => {
-    unlockVault(USER, SEED, { active: false });
+    await unlockVault(USER, SEED, { active: false });
     await expect(buildAnonRedirect(REDIRECT, "deforum", USER)).resolves.toBe(REDIRECT);
   });
 
   it("appends the golden fragment when unlocked and active", async () => {
-    unlockVault(USER, SEED, { active: true });
+    await unlockVault(USER, SEED, { active: true });
     await expect(buildAnonRedirect(REDIRECT, "deforum", USER)).resolves.toBe(
       REDIRECT + ANON_FRAGMENT_PREFIX + DEFORUM_SECRET_B64URL,
     );
   });
 
+  it("returns the plain URL on an epoch mismatch (stale device fails open for login)", async () => {
+    await unlockVault(USER, SEED, { active: true, epoch: 1 });
+    await expect(buildAnonRedirect(REDIRECT, "deforum", USER, 2)).resolves.toBe(REDIRECT);
+  });
+
   it("returns the plain URL for a malformed app id", async () => {
-    unlockVault(USER, SEED, { active: true });
+    await unlockVault(USER, SEED, { active: true });
     await expect(buildAnonRedirect(REDIRECT, "NOT A SLUG", USER)).resolves.toBe(REDIRECT);
   });
 });
 
-describe("L0/L2 entry: unlockWithSeedInput (spec 5.3 parser)", () => {
+describe("L0/L2 entry: unlockWithSeedInput (28-char string, O-2)", () => {
   it("unlocks from the canonical string", async () => {
-    unlockWithSeedInput(USER, SEED_STRING);
-    const secret = await deriveAppSecret("deforum", USER);
-    expect(Buffer.from(secret).toString("hex")).toBe(DEFORUM_SECRET_HEX);
-  });
-
-  it("unlocks from the 12 words", async () => {
-    unlockWithSeedInput(USER, encodeSeedToWords(SEED).join(" "));
+    await unlockWithSeedInput(USER, SEED_STRING);
     const secret = await deriveAppSecret("deforum", USER);
     expect(Buffer.from(secret).toString("hex")).toBe(DEFORUM_SECRET_HEX);
   });
 
   it("hard-rejects garbage and stays locked", async () => {
-    expect(() => unlockWithSeedInput(USER, "not a key")).toThrow();
+    await expect(unlockWithSeedInput(USER, "not a key")).rejects.toThrow();
     await expect(deriveAppSecret("deforum", USER)).rejects.toThrow(/locked/);
   });
 });
@@ -167,7 +177,7 @@ describe("L0/L2 entry: unlockWithSeedInput (spec 5.3 parser)", () => {
 describe("L1 enroll: wraps client-side, uploads ciphertext only (I1, 7.1)", () => {
   it("uploads a blob that contains no codec form of the seed and round-trips through unlock", async () => {
     // Enroll: vault holds the seed, server says ACTIVE at epoch 1.
-    unlockVault(USER, SEED, { active: true });
+    await unlockVault(USER, SEED, { active: true });
     mocked.getAnonSeedState.mockResolvedValue({
       ok: true,
       state: { status: "active", enrollmentEpoch: 1 },
@@ -241,7 +251,7 @@ describe("L1 enroll: wraps client-side, uploads ciphertext only (I1, 7.1)", () =
   });
 
   it("refuses to enroll before ACTIVE (I3)", async () => {
-    unlockVault(USER, SEED, { active: false });
+    await unlockVault(USER, SEED, { active: false });
     mocked.getAnonSeedState.mockResolvedValue({
       ok: true,
       state: { status: "pending_backup", enrollmentEpoch: 1 },
@@ -253,7 +263,7 @@ describe("L1 enroll: wraps client-side, uploads ciphertext only (I1, 7.1)", () =
   });
 
   it("degrades explicitly when the authenticator yields no PRF (I5)", async () => {
-    unlockVault(USER, SEED, { active: true });
+    await unlockVault(USER, SEED, { active: true });
     mocked.getAnonSeedState.mockResolvedValue({
       ok: true,
       state: { status: "active", enrollmentEpoch: 1 },
@@ -272,12 +282,12 @@ describe("L1 enroll: wraps client-side, uploads ciphertext only (I1, 7.1)", () =
 
 describe("L2 save (spec 7.2)", () => {
   it("reports unsupported outside a PasswordCredential browser (no window here)", async () => {
-    unlockVault(USER, SEED, { active: true });
+    await unlockVault(USER, SEED, { active: true });
     await expect(savePasswordToManager(USER)).resolves.toBe("unsupported");
   });
 
   it("stores via navigator.credentials.store — the no-form path (I11)", async () => {
-    unlockVault(USER, SEED, { active: true });
+    await unlockVault(USER, SEED, { active: true });
     const stored: Array<{ id: string; password: string }> = [];
     class FakePasswordCredential {
       type = "password";

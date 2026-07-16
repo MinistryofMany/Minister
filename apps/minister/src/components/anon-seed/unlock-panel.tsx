@@ -93,15 +93,15 @@ export function UnlockPanel({ userId, hasPasskeyBlobs, clearRef, onUnlocked }: U
     }
   }
 
-  function manualUnlock() {
+  async function manualUnlock() {
     setMessage(null);
     const value = inputRef.current?.value ?? "";
     if (value.trim().length === 0) {
-      setMessage("Enter your 28-character Private Identity or the 12 words.");
+      setMessage("Enter your 28-character Private Identity.");
       return;
     }
     try {
-      unlockWithSeedInput(userId, value);
+      await unlockWithSeedInput(userId, value);
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "That isn't a valid Private Identity.");
       return;
