@@ -41,10 +41,10 @@ export function AnonConsentSection({
     <Card>
       <CardContent className="space-y-3 py-4">
         <div>
-          <h3 className="text-sm font-semibold">Anonymous identity</h3>
+          <h3 className="text-sm font-semibold">Private Identity</h3>
           <p className="text-sm text-neutral-600 dark:text-neutral-400">
-            {clientName} supports anonymous writing. Your key stays in your browser — Ministry never
-            sees it and never sends it anywhere.
+            {clientName} supports anonymous writing. Your Private Identity stays in your browser —
+            Ministry never sees it and never sends it anywhere.
           </p>
         </div>
 

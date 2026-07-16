@@ -90,7 +90,7 @@ function BackupGateNotice({ href }: { href: string }) {
           <div className="space-y-0.5">
             <p className="text-sm font-semibold">Finish backing up your Private Identity first</p>
             <p className="text-sm text-amber-800 dark:text-amber-300/90">
-              You can&apos;t add badges until you back up your Private Identity key. It only takes a
+              You can&apos;t add badges until you back up your Private Identity. It only takes a
               moment, and it protects your anonymous identity in every connected app.
             </p>
           </div>

@@ -107,22 +107,22 @@ export function EnrollmentFlow({ userId, needsRestart, onComplete }: Props) {
       return (
         <div className="space-y-3">
           <p className="text-sm text-neutral-600 dark:text-neutral-400">
-            One key, generated in your browser, gives you a separate anonymous identity in every
-            connected app. Ministry never sees it and can never recover it — you must back it up
-            yourself.
+            Your Private Identity, generated in your browser, gives you a separate anonymous
+            identity in every connected app. Ministry never sees it and can never recover it — you
+            must back it up yourself.
           </p>
           {error ? <ErrorNote message={error} /> : null}
           <Button type="button" onClick={generate} disabled={pending}>
             {pending
               ? "Working…"
               : needsRestart
-                ? "Start over with a fresh key"
-                : "Generate my key"}
+                ? "Start over with a fresh Private Identity"
+                : "Generate my Private Identity"}
           </Button>
           {needsRestart ? (
             <p className="text-xs text-neutral-500 dark:text-neutral-400">
-              You started setting up earlier but never finished the backup, so that key was never
-              used. Starting over is safe.
+              You started setting up earlier but never finished the backup, so that Private Identity
+              was never used. Starting over is safe.
             </p>
           ) : null}
         </div>
@@ -176,10 +176,12 @@ function BackupScreen({
   return (
     <div className="space-y-3">
       <div>
-        <h4 className="text-sm font-semibold">Back up your key — this is the only copy</h4>
+        <h4 className="text-sm font-semibold">
+          Back up your Private Identity — this is the only copy
+        </h4>
         <p className="text-sm text-neutral-600 dark:text-neutral-400">
-          Save the file or write down the 12 words. Ministry cannot recover this key; losing it
-          means losing your anonymous identities for good.
+          Save the file or write down the 12 words. Ministry cannot recover this Private Identity;
+          losing it means losing your anonymous identities for good.
         </p>
       </div>
 
@@ -273,7 +275,7 @@ function QuizScreen({
       </div>
       <div className="flex gap-2">
         <Button type="button" variant="outline" onClick={onBack} disabled={pending}>
-          Back to my key
+          Back to my Private Identity
         </Button>
         <Button
           type="button"
@@ -295,8 +297,8 @@ function StoreStep({ userId, onDone }: { userId: string; onDone: () => void }) {
         <h4 className="text-sm font-semibold">Backed up. Keep it handy on this device?</h4>
         <p className="text-sm text-neutral-600 dark:text-neutral-400">
           {memoryOnly
-            ? "You've chosen never to store your key. It stays in memory for this page only."
-            : "Optional — either option saves you retyping the key next time. Skipping keeps it in memory for this page only."}
+            ? "You've chosen never to store your Private Identity. It stays in memory for this page only."
+            : "Optional — either option saves you retyping your Private Identity next time. Skipping keeps it in memory for this page only."}
         </p>
       </div>
       {memoryOnly ? null : (
@@ -324,7 +326,7 @@ function downloadBackupFile(seedString: string, words: string[]): void {
     "Words:",
     ...words.map((w, i) => `${String(i + 1).padStart(2, " ")}. ${w}`),
     "",
-    "Ministry cannot recover this key. Anyone who has it can write as your",
+    "Ministry cannot recover this Private Identity. Anyone who has it can write as your",
     "anonymous identity in every connected app. Keep it private.",
     "",
   ].join("\n");

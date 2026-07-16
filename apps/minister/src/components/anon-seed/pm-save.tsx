@@ -58,10 +58,10 @@ export function PmSave({ userId }: { userId: string }) {
     <div className="rounded-md border border-neutral-200 p-3 dark:border-neutral-800">
       <div className="text-sm font-medium">Save in your password manager</div>
       <p className="mt-1 rounded-md border border-amber-200 bg-amber-50 p-2 text-sm text-amber-900 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-200">
-        Your key is stored by your browser&apos;s password manager. If it syncs (iCloud Keychain,
-        Google Password Manager, a third-party manager), a copy of your key lives in that
-        vendor&apos;s cloud and is reachable by anyone who can recover that account. Ministry never
-        has your key.
+        Your Private Identity is stored by your browser&apos;s password manager. If it syncs (iCloud
+        Keychain, Google Password Manager, a third-party manager), a copy of your Private Identity
+        lives in that vendor&apos;s cloud and is reachable by anyone who can recover that account.
+        Ministry never has your Private Identity.
       </p>
       <div className="mt-2">
         {state === "stored" ? (
@@ -71,12 +71,12 @@ export function PmSave({ userId }: { userId: string }) {
         ) : state === "manual" ? (
           <p className="text-sm text-neutral-600 dark:text-neutral-400">
             If it didn&apos;t offer to save, add an entry manually: this site, username{" "}
-            <code className="font-mono">{PM_CREDENTIAL_ID}</code>, password = your key string from
-            the backup.
+            <code className="font-mono">{PM_CREDENTIAL_ID}</code>, password = your Private Identity
+            string from the backup.
           </p>
         ) : (
           <Button type="button" variant="outline" onClick={save}>
-            Save my key
+            Save my Private Identity
           </Button>
         )}
         {state === "failed" ? (
@@ -105,7 +105,7 @@ export function PmSave({ userId }: { userId: string }) {
               setState("manual");
             }}
           >
-            <h4 className="text-sm font-semibold">Save your key</h4>
+            <h4 className="text-sm font-semibold">Save your Private Identity</h4>
             <p className="mt-1 max-w-sm text-sm text-neutral-600 dark:text-neutral-400">
               Press save and your browser should offer to remember this as a login for Ministry.
             </p>
@@ -115,7 +115,7 @@ export function PmSave({ userId }: { userId: string }) {
                 autoComplete="username"
                 defaultValue={PM_CREDENTIAL_ID}
                 readOnly
-                aria-label="Key entry username"
+                aria-label="Private Identity entry username"
                 className="rounded-md border border-neutral-300 bg-neutral-50 px-3 py-2 font-mono text-sm dark:border-neutral-700 dark:bg-neutral-900"
               />
               <input

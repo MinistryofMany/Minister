@@ -21,9 +21,9 @@ export async function BackupPendingBanner({ userId }: { userId: string }) {
         <div className="space-y-0.5">
           <p className="text-sm font-semibold">Finish backing up your Private Identity</p>
           <p className="text-sm text-amber-800 dark:text-amber-300/90">
-            You can&apos;t add badges until you back up your Private Identity key. Ministry never
-            sees it and can&apos;t recover it, so this step protects your anonymous identity in
-            every connected app.
+            You can&apos;t add badges until you back up your Private Identity. Ministry never sees
+            it and can&apos;t recover it, so this step protects your anonymous identity in every
+            connected app.
           </p>
         </div>
       </div>

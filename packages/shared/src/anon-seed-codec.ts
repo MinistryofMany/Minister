@@ -70,17 +70,17 @@ export function decodeStringToSeed(input: string): Uint8Array {
     versioned = base58check.decode(trimmed);
   } catch {
     throw new SeedCodecError(
-      "invalid anonymous key string: not valid base58check (checksum failed or bad characters)",
+      "invalid Private Identity string: not valid base58check (checksum failed or bad characters)",
     );
   }
   if (versioned.length !== ROOT_SEED_BYTES + 1) {
     throw new SeedCodecError(
-      `invalid anonymous key string: expected ${ROOT_SEED_BYTES + 1} decoded bytes, got ${versioned.length}`,
+      `invalid Private Identity string: expected ${ROOT_SEED_BYTES + 1} decoded bytes, got ${versioned.length}`,
     );
   }
   if (versioned[0] !== SEED_VERSION_BYTE) {
     throw new SeedCodecError(
-      `invalid anonymous key string: wrong version byte 0x${versioned[0]!.toString(16).padStart(2, "0")} (expected 0x0a)`,
+      `invalid Private Identity string: wrong version byte 0x${versioned[0]!.toString(16).padStart(2, "0")} (expected 0x0a)`,
     );
   }
   return versioned.slice(1);
@@ -102,7 +102,7 @@ export function decodeWordsToSeed(input: string | readonly string[]): Uint8Array
     .filter((w) => w.length > 0);
   if (words.length !== SEED_WORD_COUNT) {
     throw new SeedCodecError(
-      `invalid anonymous key words: expected ${SEED_WORD_COUNT} words, got ${words.length}`,
+      `invalid Private Identity words: expected ${SEED_WORD_COUNT} words, got ${words.length}`,
     );
   }
   let entropy: Uint8Array;
@@ -110,12 +110,12 @@ export function decodeWordsToSeed(input: string | readonly string[]): Uint8Array
     // mnemonicToEntropy throws on an unknown word or a bad BIP39 checksum.
     entropy = mnemonicToEntropy(words.join(" "), wordlist);
   } catch {
-    throw new SeedCodecError("invalid anonymous key words: unknown word or failed checksum");
+    throw new SeedCodecError("invalid Private Identity words: unknown word or failed checksum");
   }
   if (entropy.length !== ROOT_SEED_BYTES) {
     // 12 words is always 128-bit entropy; defensive only.
     throw new SeedCodecError(
-      `invalid anonymous key words: decoded ${entropy.length} bytes, expected ${ROOT_SEED_BYTES}`,
+      `invalid Private Identity words: decoded ${entropy.length} bytes, expected ${ROOT_SEED_BYTES}`,
     );
   }
   return entropy;
@@ -131,7 +131,7 @@ export function parseSeedInput(input: string): Uint8Array {
   const normalized = input.trim().replace(/\s+/g, " ");
   if (normalized.length === 0) {
     throw new SeedCodecError(
-      "empty input: enter your anonymous key as the 28-character string or the 12 words",
+      "empty input: enter your Private Identity as the 28-character string or the 12 words",
     );
   }
   if (normalized.includes(" ")) {

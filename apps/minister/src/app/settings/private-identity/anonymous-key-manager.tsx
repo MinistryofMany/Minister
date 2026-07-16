@@ -49,7 +49,7 @@ export function AnonymousKeyManager({
     return (
       <Card>
         <CardHeader>
-          <CardTitle>Set up your key</CardTitle>
+          <CardTitle>Set up your Private Identity</CardTitle>
           <CardDescription>
             Takes about a minute. You&apos;ll back it up and prove you did.
           </CardDescription>
@@ -75,8 +75,8 @@ export function AnonymousKeyManager({
         <CardHeader>
           <CardTitle>Status</CardTitle>
           <CardDescription>
-            Your key is set up and backed up. It unlocks in your browser when an app asks for your
-            anonymous identity.
+            Your Private Identity is set up and backed up. It unlocks in your browser when an app
+            asks for your anonymous identity.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -117,7 +117,7 @@ export function AnonymousKeyManager({
 
           {memoryOnly ? (
             <p className="text-sm text-neutral-600 dark:text-neutral-400">
-              Storage is off — you&apos;ve chosen to re-enter your key every session.
+              Storage is off — you&apos;ve chosen to re-enter your Private Identity every session.
             </p>
           ) : unlocked ? (
             <div className="flex flex-col gap-3">
@@ -126,7 +126,8 @@ export function AnonymousKeyManager({
             </div>
           ) : (
             <p className="text-sm text-neutral-600 dark:text-neutral-400">
-              Unlock your key above to add a passkey copy or save it to your password manager.
+              Unlock your Private Identity above to add a passkey copy or save it to your password
+              manager.
             </p>
           )}
 
@@ -141,10 +142,10 @@ export function AnonymousKeyManager({
               }}
             />
             <span>
-              <span className="block font-medium">Never store my key</span>
+              <span className="block font-medium">Never store my Private Identity</span>
               <span className="text-neutral-600 dark:text-neutral-400">
-                Skip passkey and password-manager storage. You&apos;ll enter the key (or pair a
-                device) every browser session — that&apos;s the point.
+                Skip passkey and password-manager storage. You&apos;ll enter your Private Identity
+                (or pair a device) every browser session — that&apos;s the point.
               </span>
             </span>
           </label>
@@ -201,10 +202,10 @@ function ResetCard({ onReset }: { onReset: () => void }) {
   return (
     <Card className="border-red-200 dark:border-red-900/40">
       <CardHeader>
-        <CardTitle>Reset your key</CardTitle>
+        <CardTitle>Reset your Private Identity</CardTitle>
         <CardDescription>
-          Destructive: a new key means a new, unrelated identity in every connected app. Your
-          current anonymous identities become permanently unreachable.
+          Destructive: a new Private Identity means a new, unrelated identity in every connected
+          app. Your current anonymous identities become permanently unreachable.
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-2">

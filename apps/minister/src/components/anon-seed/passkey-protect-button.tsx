@@ -50,8 +50,8 @@ export function PasskeyProtectButton({
     <div className="rounded-md border border-neutral-200 p-3 dark:border-neutral-800">
       <div className="text-sm font-medium">Protect with your passkey</div>
       <p className="mt-0.5 text-sm text-neutral-600 dark:text-neutral-400">
-        One tap unlocks your key here later. Ministry stores only an encrypted copy it cannot read;
-        your passkey holds the only way in.
+        One tap unlocks your Private Identity here later. Ministry stores only an encrypted copy it
+        cannot read; your passkey holds the only way in.
       </p>
       <div className="mt-2">
         {state === "stored" ? (

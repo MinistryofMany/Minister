@@ -36,8 +36,8 @@ export default async function PrivateIdentityPage() {
       <header className="space-y-1">
         <h1 className="text-2xl font-semibold tracking-tight">Private Identity</h1>
         <p className="text-sm text-neutral-600 dark:text-neutral-400">
-          One key, generated and kept in your browser, gives you a separate anonymous identity in
-          every connected app. Ministry never sees it and cannot recover it.
+          Your Private Identity, generated and kept in your browser, gives you a separate anonymous
+          identity in every connected app. Ministry never sees it and cannot recover it.
         </p>
       </header>
 

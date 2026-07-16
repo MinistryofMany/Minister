@@ -242,7 +242,7 @@ export type PasskeyEnrollResult =
  */
 export async function enrollPasskeyBlob(userId: string): Promise<PasskeyEnrollResult> {
   if (seed === null || seedUserId !== userId) {
-    return { ok: false, reason: "vault-locked", message: "Unlock your key first." };
+    return { ok: false, reason: "vault-locked", message: "Unlock your Private Identity first." };
   }
   const state = await getAnonSeedState();
   if (!state.ok) return { ok: false, reason: "server", message: state.error };
@@ -250,7 +250,7 @@ export async function enrollPasskeyBlob(userId: string): Promise<PasskeyEnrollRe
     return {
       ok: false,
       reason: "not-active",
-      message: "Finish backing up your key before storing it.",
+      message: "Finish backing up your Private Identity before storing it.",
     };
   }
   const creds = await getAnonPasskeyCredentialIds();
@@ -271,7 +271,7 @@ export async function enrollPasskeyBlob(userId: string): Promise<PasskeyEnrollRe
       ok: false,
       reason: "prf-unsupported",
       message:
-        "This passkey can't protect your key on this device. Use the password manager instead.",
+        "This passkey can't protect your Private Identity on this device. Use the password manager instead.",
     };
   }
   const wrapped = await wrapSeed(seed, assertion.prfOutput, {
@@ -319,7 +319,7 @@ export async function unlockWithPasskey(userId: string): Promise<PasskeyUnlockRe
     return {
       ok: false,
       reason: "prf-unsupported",
-      message: "This passkey can't unlock your key on this device.",
+      message: "This passkey can't unlock your Private Identity on this device.",
     };
   }
   const blob = res.blobs.find((b) => b.credentialId === assertion.credentialId);
@@ -344,7 +344,8 @@ export async function unlockWithPasskey(userId: string): Promise<PasskeyUnlockRe
     return {
       ok: false,
       reason: "mismatch",
-      message: "This passkey cannot unlock your key on this device. Enter it manually instead.",
+      message:
+        "This passkey cannot unlock your Private Identity on this device. Enter it manually instead.",
     };
   } finally {
     assertion.prfOutput.fill(0);

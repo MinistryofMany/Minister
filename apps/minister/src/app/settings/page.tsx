@@ -36,7 +36,7 @@ export default async function SettingsPage() {
           href: "/settings/private-identity",
           title: "Private Identity",
           description:
-            "Set up, unlock, and manage the key behind your anonymous identity in connected apps.",
+            "Set up, unlock, and manage your Private Identity — it powers your anonymous identity in connected apps.",
         },
       ]
     : SECURITY_LINKS;

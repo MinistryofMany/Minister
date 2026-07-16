@@ -46,7 +46,7 @@ type Ok<T> = { ok: true } & T;
 type Err = { ok: false; error: string };
 type Result<T> = Ok<T> | Err;
 
-const DISABLED_ERROR = "Anonymous identity is not enabled.";
+const DISABLED_ERROR = "Private Identity is not enabled.";
 
 // Per-user rate-limit guard for the write actions (spec §13). Fail closed: on
 // deny, return an error and the caller bails before any DB write. Keyed on the
@@ -149,7 +149,7 @@ export async function beginAnonSeedEnrollment(): Promise<Result<{ state: AnonSee
   if (existing && existing.seedGeneratedAt !== null) {
     return {
       ok: false,
-      error: "Anonymous key already enrolled. Reset it before generating a new one.",
+      error: "Private Identity already enrolled. Reset it before generating a new one.",
     };
   }
 
@@ -181,7 +181,7 @@ export async function confirmSeedBackup(): Promise<Result<{ state: AnonSeedState
 
   const existing = await prisma.anonSeedEnrollment.findUnique({ where: { userId } });
   if (!existing || existing.seedGeneratedAt === null) {
-    return { ok: false, error: "Generate an anonymous key before confirming its backup." };
+    return { ok: false, error: "Generate a Private Identity before confirming its backup." };
   }
   if (existing.backupConfirmedAt !== null) {
     return { ok: true, state: stateOf(existing) }; // idempotent: already ACTIVE
@@ -225,7 +225,7 @@ export async function putSeedBlob(input: z.infer<typeof PutBlobInput>): Promise<
   const enrollment = await prisma.anonSeedEnrollment.findUnique({ where: { userId } });
   if (!enrollment || enrollment.backupConfirmedAt === null) {
     // I3: no storage-layer write before ACTIVE.
-    return { ok: false, error: "Finish backing up your anonymous key before storing it." };
+    return { ok: false, error: "Finish backing up your Private Identity before storing it." };
   }
 
   const { credentialId, wrapVersion } = parsed.data;
@@ -236,7 +236,10 @@ export async function putSeedBlob(input: z.infer<typeof PutBlobInput>): Promise<
   if (!existingForCred) {
     const count = await prisma.anonSeedBlob.count({ where: { userId } });
     if (count >= MAX_BLOBS_PER_USER) {
-      return { ok: false, error: `At most ${MAX_BLOBS_PER_USER} devices can store your key.` };
+      return {
+        ok: false,
+        error: `At most ${MAX_BLOBS_PER_USER} devices can store your Private Identity.`,
+      };
     }
   }
 
@@ -341,7 +344,7 @@ export async function resetAnonSeed(
 
   const existing = await prisma.anonSeedEnrollment.findUnique({ where: { userId } });
   if (!existing || existing.seedGeneratedAt === null) {
-    return { ok: false, error: "No anonymous key to reset." };
+    return { ok: false, error: "No Private Identity to reset." };
   }
 
   const wasActive = existing.backupConfirmedAt !== null;

@@ -81,11 +81,13 @@ export function UnlockPanel({ userId, hasPasskeyBlobs, clearRef, onUnlocked }: U
         return;
       }
       if (result === "none") {
-        setMessage("No saved key found — type or paste it below.");
+        setMessage("No saved Private Identity found — type or paste it below.");
         inputRef.current?.focus();
       }
     } catch {
-      setMessage("The saved entry isn't a valid key. Enter it from your backup instead.");
+      setMessage(
+        "The saved entry isn't a valid Private Identity. Enter it from your backup instead.",
+      );
     } finally {
       setBusy(false);
     }
@@ -95,13 +97,13 @@ export function UnlockPanel({ userId, hasPasskeyBlobs, clearRef, onUnlocked }: U
     setMessage(null);
     const value = inputRef.current?.value ?? "";
     if (value.trim().length === 0) {
-      setMessage("Enter your 28-character key or the 12 words.");
+      setMessage("Enter your 28-character Private Identity or the 12 words.");
       return;
     }
     try {
       unlockWithSeedInput(userId, value);
     } catch (err) {
-      setMessage(err instanceof Error ? err.message : "That isn't a valid key.");
+      setMessage(err instanceof Error ? err.message : "That isn't a valid Private Identity.");
       return;
     }
     if (inputRef.current) inputRef.current.value = "";
@@ -124,11 +126,14 @@ export function UnlockPanel({ userId, hasPasskeyBlobs, clearRef, onUnlocked }: U
 
       <div className="space-y-2">
         <label htmlFor="anon-seed-unlock" className="block text-sm font-medium">
-          {hasPasskeyBlobs && !memoryOnly ? "Or enter your key" : "Enter your key"}
+          {hasPasskeyBlobs && !memoryOnly
+            ? "Or enter your Private Identity"
+            : "Enter your Private Identity"}
         </label>
         {memoryOnly ? (
           <p className="text-xs text-neutral-500 dark:text-neutral-400">
-            You&apos;ve chosen never to store your key, so it&apos;s needed once per session.
+            You&apos;ve chosen never to store your Private Identity, so it&apos;s needed once per
+            session.
           </p>
         ) : null}
         {/* W1: no name attribute, outside any form, read only by vault JS. */}
@@ -139,7 +144,7 @@ export function UnlockPanel({ userId, hasPasskeyBlobs, clearRef, onUnlocked }: U
           autoComplete="current-password"
           spellCheck={false}
           autoCapitalize="none"
-          placeholder="28-character key or 12 words"
+          placeholder="28-character Private Identity or 12 words"
           data-anon-seed-input="true"
           className="flex h-10 w-full rounded-md border border-neutral-300 bg-white px-3 py-2 font-mono text-sm placeholder:font-sans placeholder:text-neutral-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-400 dark:border-neutral-700 dark:bg-neutral-950 dark:placeholder:text-neutral-500"
         />
@@ -155,7 +160,7 @@ export function UnlockPanel({ userId, hasPasskeyBlobs, clearRef, onUnlocked }: U
         <div className="flex gap-2">
           {!memoryOnly && pmSupported ? (
             <Button type="button" variant="outline" onClick={autofill} disabled={busy}>
-              Use saved key
+              Use saved Private Identity
             </Button>
           ) : null}
           <Button type="button" variant="outline" onClick={manualUnlock} disabled={busy}>
