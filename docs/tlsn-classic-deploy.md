@@ -47,13 +47,33 @@ then read its key:
 
 ```sh
 docker compose -f docker-compose.lightsail.yml up -d notary
-# the /info endpoint returns the notary's verifying key
-curl -s http://localhost:7047/info
+# /info returns JSON whose `publicKey` is a PEM (SPKI) — NOT hex. The notary
+# publishes no host port, so read it from inside the compose network:
+docker compose -f docker-compose.lightsail.yml exec minister wget -qO- http://notary:7047/info
 ```
 
-Take the hex public key (optional `0x` prefix is accepted) — that is
-`TLSN_NOTARY_PUBLIC_KEY` below. If unset, `VERIFIER_MODE=real` **refuses to
-start**.
+**The `/info` key is PEM; the verifier pins HEX — convert it.** `tlsn-verifier`
+compares `hex(presentation.verifying_key().data)` (`src/tlsn.rs`), and upstream
+sets that `data` to `verifying_key().to_sec1_bytes()` for `KeyAlgId::K256`
+(`tlsn` `crates/attestation/src/signing.rs`) — i.e. the **compressed SEC1 point**,
+which is the 33 bytes carried inside that PEM. Pasting the PEM verbatim would
+make `real` mode reject every genuine presentation (fail-closed, but broken).
+Decode it:
+
+```sh
+# paste the PEM body (the base64 between the -----BEGIN/END----- lines)
+python3 -c 'import base64,sys; d=base64.b64decode(sys.argv[1]); print(d[-33:].hex())' '<PEM_BASE64_BODY>'
+```
+
+That 66-char hex string is `TLSN_NOTARY_PUBLIC_KEY` below (an optional `0x`
+prefix is accepted; the pin is normalized to lowercase hex). If unset,
+`VERIFIER_MODE=real` **refuses to start**.
+
+> Deployed 2026-07-16: notary key pinned as
+> `0309e2ed577187e4ee15ce2ec1177d2659cee9cd7cc0d4b12587ad3cae62c68d12`
+> (public value; notary `gitCommitHash` `878fe7e`, matching the pinned
+> `tlsn-core` tag). Re-derive this whenever the notary's `notary_data` volume is
+> reset, since it regenerates its key.
 
 ## 3. Add the three services to the box compose
 
