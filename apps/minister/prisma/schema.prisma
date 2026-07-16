@@ -369,6 +369,13 @@ model OidcAuthorizationCode {
   // /userinfo time. sybilScore false whenever `sybil-score` not in scopes.
   sybilScore          Boolean   @default(false)
   sybilBucket         Int?
+  // Anonymous-identity epoch, snapshotted at consent from the user's
+  // AnonSeedEnrollment.enrollmentEpoch. Echoed as `minister_anon_epoch` on the
+  // id_token/userinfo and NEVER recomputed at /token — the client caches its
+  // derived branch against it and re-keys only when a later login carries a
+  // strictly greater epoch. Null for non-anon clients (no branch is delivered),
+  // so the claim is omitted.
+  anonEpoch           Int?
   // Required by OIDC Core §3.1.2.1 — echoed back in id_token so RPs can
   // detect replay across user agents.
   nonce               String
@@ -406,6 +413,9 @@ model OidcAccessToken {
   // strictly from these, never recomputing.
   sybilScore       Boolean   @default(false)
   sybilBucket      Int?
+  // Anon-identity epoch, denormalized from the auth code so /userinfo emits the
+  // identical `minister_anon_epoch` the id_token carried — never recomputed.
+  anonEpoch        Int?
   issuedAt         DateTime  @default(now())
   expiresAt        DateTime
   revokedAt        DateTime?

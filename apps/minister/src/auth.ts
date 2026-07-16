@@ -25,6 +25,7 @@ import { prisma } from "@/lib/prisma";
 import { clientIpFrom, signInOtpIdentityLimiter, signInOtpIpLimiter } from "@/lib/rate-limit";
 import { verifyRecoveryTicket } from "@/lib/recovery-ticket";
 import { createSignInOtp, verifySignInOtp } from "@/lib/signin-otp";
+import { webauthnRelayingParty } from "@/lib/webauthn-rp";
 import { autoIssueEmailDomainBadge } from "@/server/auto-issue-email-domain";
 
 // Email sign-in provider. Delivery goes through the app's single mailer
@@ -264,7 +265,14 @@ const RecoveryProvider = Credentials({
 export const { handlers, auth, signIn, signOut } = NextAuth({
   ...authConfig,
   adapter: ministerAdapter(),
-  providers: [Passkey, EmailProvider(), EmailOtpProvider, RecoveryProvider],
+  // Pin the WebAuthn RP ID so it cannot vary per request off a forwarded host
+  // (only `id` is pinned; name/origin still come from the request URL).
+  providers: [
+    Passkey({ relayingParty: { id: webauthnRelayingParty() } }),
+    EmailProvider(),
+    EmailOtpProvider,
+    RecoveryProvider,
+  ],
   experimental: { enableWebAuthn: true },
   events: {
     // Auto-issue the email-domain badge after a successful email sign-in

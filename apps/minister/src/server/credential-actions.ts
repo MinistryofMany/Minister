@@ -565,8 +565,15 @@ export async function canAddPasskey(): Promise<CanAddPasskeyResult> {
     return { allowed: true, bootstrap: true };
   }
 
-  // Second/replacement passkey: AAL2 required.
-  if (aal < 2) {
+  // Second/replacement passkey: AAL2 required — EXCEPT a recovered session,
+  // which must be able to enroll its climb-to-AAL2 passkey even though passkey
+  // rows already exist. Losing a device does not delete its Authenticator row,
+  // so after a device loss the account still has passkeys; without this
+  // exception threshold badge recovery DEADLOCKS (the user re-proves badges,
+  // gets a recovered AAL1 session, and can never add the passkey it needs to
+  // reach AAL2). The new passkey lands quarantined (72h) at write time as
+  // intended (DESIGNDECISIONS #9; matches this function's own header comment).
+  if (aal < 2 && session.recovered !== true) {
     return {
       allowed: false,
       bootstrap: false,

@@ -77,6 +77,9 @@ export interface IdTokenClaims {
   // present; an undefined value means "not granted / omitted at consent" and is
   // dropped from the JWT. 0 is a real value — the `!== undefined` check keeps it.
   sybil_bucket?: number;
+  // Anon-identity epoch, snapshotted at consent and echoed verbatim (never
+  // recomputed). Present only for anon-enabled clients; undefined drops it.
+  minister_anon_epoch?: number;
 }
 
 export async function mintIdToken(issuer: Issuer, claims: IdTokenClaims): Promise<string> {
@@ -90,6 +93,9 @@ export async function mintIdToken(issuer: Issuer, claims: IdTokenClaims): Promis
   }
   // `!== undefined`, never falsy: bucket 0 is a real disclosed value.
   if (claims.sybil_bucket !== undefined) payload.sybil_bucket = claims.sybil_bucket;
+  if (claims.minister_anon_epoch !== undefined) {
+    payload.minister_anon_epoch = claims.minister_anon_epoch;
+  }
 
   // Tokens sign with the in-process token key (#key-3), never KMS: an id_token
   // can exceed KMS's 4096-byte RAW-sign limit once several badges are embedded.

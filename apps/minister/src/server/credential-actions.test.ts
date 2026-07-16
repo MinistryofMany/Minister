@@ -520,6 +520,19 @@ describe("canAddPasskey bootstrap rule", () => {
     expect(r.allowed).toBe(true);
     expect(r.bootstrap).toBe(true);
   });
+
+  it("lets a recovered AAL1 session enroll a climb passkey with existing passkeys", async () => {
+    // The recovery deadlock fix: after device loss the Authenticator rows
+    // survive, so `existing > 0`, yet a recovered AAL1 session must still be
+    // allowed to add the passkey it needs to reach AAL2 (it lands quarantined
+    // at write time). Without this, threshold badge recovery can never
+    // complete for anyone who ever had a passkey.
+    setSession(session(1, { recovered: true }));
+    db.authenticator.count.mockResolvedValue(1);
+    const r = await canAddPasskey();
+    expect(r.allowed).toBe(true);
+    expect(r.bootstrap).toBe(false);
+  });
 });
 
 // ---------------------------------------------------------------------------
