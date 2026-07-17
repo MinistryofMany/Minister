@@ -1,7 +1,13 @@
 import { expect, test, type Page } from "@playwright/test";
 
 import { STORAGE } from "./env";
-import { acceptDialogs, extractUrl, signInViaMagicLink, waitForMailTo } from "./helpers";
+import {
+  acceptDialogs,
+  completeSetup,
+  extractUrl,
+  signInViaMagicLink,
+  waitForMailTo,
+} from "./helpers";
 
 // Phase 5 email model, end-to-end through the real UI + magic-link capture:
 //   - the email-domain and email-exact badges both issue for one address, with
@@ -70,11 +76,15 @@ test.describe("email badges — cross-account dedup + release", () => {
     const pageA = await ctxA.newPage();
     acceptDialogs(pageA);
     await signInViaMagicLink(pageA, "release-a@gmail.com");
+    // Skip the forced /welcome onboarding so the gated /badges wizard renders.
+    await completeSetup("release-a@gmail.com");
     expect((await runEmailWizard(pageA, "email-domain", addr)).issued).toBe(true);
 
     const ctxB = await browser.newContext();
     const pageB = await ctxB.newPage();
     await signInViaMagicLink(pageB, "release-b@gmail.com");
+    // Skip the forced /welcome onboarding so the gated /badges wizard renders.
+    await completeSetup("release-b@gmail.com");
 
     // Second account, same address → refused with the EMAIL-worded copy.
     const refused = await runEmailWizard(pageB, "email-domain", addr);

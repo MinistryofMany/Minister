@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-import { requestMagicLink, signInViaMagicLink, signOut } from "./helpers";
+import { completeSetup, requestMagicLink, signInViaMagicLink, signOut } from "./helpers";
 
 // Fresh-context spec: no storage state on purpose — sign-in IS the
 // thing under test here.
@@ -13,6 +13,11 @@ test("middleware bounces anonymous visitors off protected routes", async ({ page
 
 test("magic-link sign-in lands on /profile; sign-out reverts the nav", async ({ page }) => {
   await signInViaMagicLink(page, "fresh@e2e.test");
+  // The "signed-in nav lands on /profile" intent holds only for a set-up user;
+  // a brand-new user is bounced to /welcome by the onboarding gate. Mark setup
+  // done directly (the /welcome guide has its own coverage) so this test keeps
+  // asserting the normal post-sign-in profile view.
+  await completeSetup("fresh@e2e.test");
   await page.goto("/profile");
   await expect(page.getByRole("heading", { name: "Profile", exact: true })).toBeVisible();
 

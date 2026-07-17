@@ -1,6 +1,12 @@
 import { expect, test } from "@playwright/test";
 
-import { ANON_STATE, acceptDialogs, issueEmailDomainBadge, signInViaMagicLink } from "./helpers";
+import {
+  ANON_STATE,
+  acceptDialogs,
+  completeSetup,
+  issueEmailDomainBadge,
+  signInViaMagicLink,
+} from "./helpers";
 
 // Each test manages its own context. The sign-out-all test mints a
 // throwaway user so revoking sessions never touches the shared fixtures.
@@ -9,6 +15,8 @@ test("'sign out of all devices' revokes the current session", async ({ browser }
   const ctx = await browser.newContext({ storageState: ANON_STATE });
   const page = await ctx.newPage();
   await signInViaMagicLink(page, "signoutall@e2e.test");
+  // Skip the forced /welcome onboarding so the gated /settings page renders.
+  await completeSetup("signoutall@e2e.test");
 
   acceptDialogs(page);
   await page.goto("/settings");
@@ -30,6 +38,8 @@ test("an account-gated share link blocks anonymous viewers", async ({ browser })
   const owner = await browser.newContext({ storageState: ANON_STATE });
   const ownerPage = await owner.newPage();
   await signInViaMagicLink(ownerPage, "gateowner@e2e.test");
+  // Skip the forced /welcome onboarding so the gated /badges + /shares flows render.
+  await completeSetup("gateowner@e2e.test");
   await issueEmailDomainBadge(ownerPage, "gate-proof@example-corp.com");
 
   await ownerPage.goto("/shares");

@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 import { STORAGE } from "./env";
-import { ANON_STATE, acceptDialogs, signInViaMagicLink } from "./helpers";
+import { ANON_STATE, acceptDialogs, completeSetup, signInViaMagicLink } from "./helpers";
 
 test.use({ storageState: STORAGE.admin });
 
@@ -10,6 +10,8 @@ test("ban locks the user out immediately; unban restores access", async ({ page,
   const victim = await browser.newContext({ storageState: ANON_STATE });
   const victimPage = await victim.newPage();
   await signInViaMagicLink(victimPage, "banme@e2e.test");
+  // Skip the forced /welcome onboarding so the gated /profile page renders.
+  await completeSetup("banme@e2e.test");
   await victimPage.goto("/profile");
   await expect(victimPage.getByRole("heading", { name: "Profile", exact: true })).toBeVisible();
 
