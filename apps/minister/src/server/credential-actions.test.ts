@@ -217,6 +217,48 @@ describe("addEmail", () => {
     expect(db.userEmail.create).not.toHaveBeenCalled();
   });
 
+  // Regression tests for the GHSA-7rqj-j65f-68wh class (validate before
+  // canonicalize) in Minister's OWN normalizer. @auth/core 0.41.3 fixed its
+  // magic-link normalizer; addEmail is a second, independent entry point into
+  // the same UserEmail identity store and needs the same ordering.
+  //
+  // The shape check uses `[^\s@]`, which excludes only an ASCII `@`. Each
+  // character below is an `@` homoglyph that NFKC-canonicalizes to a real `@`,
+  // so without normalize-first it reads as an ordinary character and smuggles a
+  // second separator past the one-`@` check. A downstream address parser that
+  // canonicalizes then splits the address differently and can deliver the verify
+  // link to a mailbox the requester does not control.
+  it.each([
+    ["U+FF20 FULLWIDTH COMMERCIAL AT", "victim＠company.com@evil.com"],
+    ["U+FE6B SMALL COMMERCIAL AT", "victim﹫company.com@evil.com"],
+  ])("rejects an @ homoglyph smuggling a second separator (%s)", async (_label, payload) => {
+    setSession(session(2));
+    // Guard the premise: the payload really does canonicalize to two ASCII `@`.
+    expect(payload.normalize("NFKC")).toBe("victim@company.com@evil.com");
+
+    await expect(addEmail(payload)).rejects.toThrow(/valid email/i);
+    expect(db.userEmail.create).not.toHaveBeenCalled();
+    expect(sendMail).not.toHaveBeenCalled();
+  });
+
+  // The other half of normalize-first: UserEmail.email is globally unique and
+  // identity-bearing, so one address must have exactly one spelling. U+FB01
+  // (LATIN SMALL LIGATURE FI) canonicalizes to "fi", and Auth.js's sign-in path
+  // now normalizes too — store it raw here and the two paths would key the same
+  // mailbox to two different rows.
+  it("canonicalizes a compatibility character so one address keeps one row", async () => {
+    setSession(session(2));
+    db.userEmail.create.mockResolvedValue({ id: "ue_new" });
+
+    const result = await addEmail("ﬁnance@Example.com");
+
+    expect(result.email).toBe("finance@example.com");
+    expect(db.userEmail.create.mock.calls[0]![0].data.email).toBe("finance@example.com");
+    // The verify link must go to the canonical mailbox, not the raw spelling.
+    expect(sendMail).toHaveBeenCalledTimes(1);
+    expect(sendMail).toHaveBeenCalledWith(expect.objectContaining({ to: "finance@example.com" }));
+  });
+
   it("maps a P2002 unique violation to a clear in-use error", async () => {
     setSession(session(2));
     const e = Object.assign(new Error("unique"), { code: "P2002" });

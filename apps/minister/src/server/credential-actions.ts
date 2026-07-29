@@ -321,8 +321,21 @@ export async function listCredentials(): Promise<CredentialListing> {
 
 // Minimal, conservative email shape check. The verify round-trip is the real
 // proof of control; this only rejects obvious garbage before we mint a row.
+//
+// Canonicalize with NFKC BEFORE the shape check (same class as GHSA-7rqj-j65f-68wh,
+// which @auth/core fixed in its own magic-link normalizer). The `[^\s@]` classes
+// exclude only an ASCII `@`, so a homoglyph such as U+FF20 FULLWIDTH COMMERCIAL AT
+// reads as an ordinary character and lets a second separator through the
+// one-`@` shape. A downstream address parser that canonicalizes then sees two
+// separators and can route the verify link to a different mailbox. Normalizing
+// first turns any such homoglyph into a real `@`, so the check below rejects it.
+//
+// Normalizing also keeps UserEmail (globally unique, the identity-bearing store)
+// on ONE spelling per address: without it, `finance@…` and `ﬁnance@…` (U+FB01)
+// would occupy two rows that Auth.js's now-normalizing sign-in path collapses
+// into one.
 function normalizeEmail(raw: string): string {
-  const email = raw.trim().toLowerCase();
+  const email = raw.normalize("NFKC").trim().toLowerCase();
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
     throw new Error("Enter a valid email address.");
   }
