@@ -38,7 +38,12 @@ export default auth((req) => {
     pathname,
     search: req.nextUrl.search,
     origin: req.nextUrl.origin,
-    isAuthed: Boolean(req.auth),
+    // Check a concrete session property, never the bare object (GHSA-8fpg-xm3f-6cx3).
+    // An Auth.js configuration error used to surface `req.auth` as a truthy error
+    // object, so `Boolean(req.auth)` gated every protected route open for everyone.
+    // next-auth >= 5.0.0-beta.32 returns no session on a non-OK response; requiring
+    // `user` keeps the check fail-closed regardless.
+    isAuthed: Boolean(req.auth?.user),
     requestHeaders: req.headers,
     isDev: process.env.NODE_ENV !== "production",
   });
